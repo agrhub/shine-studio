@@ -48,12 +48,14 @@ function handleSendReset() {
             placeholder="jane@shinedrama.com"
             class="w-full bg-[var(--el-fill-color-blank)] border border-[var(--el-border-color)] rounded-xl px-4 py-3 text-sm text-[var(--el-text-color-primary)] placeholder-[var(--el-text-color-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--el-color-primary)] transition-all shadow-sm"
             required
+            @keyup.enter="handleSendReset"
           />
         </div>
 
         <el-button
           id="send-reset-btn"
           type="primary"
+          native-type="submit"
           size="large"
           class="!w-full !bg-primary !text-on-primary !border-none !font-extrabold text-sm !h-12 !rounded-full hover:!opacity-95 shadow-md"
           :loading="isLoading"

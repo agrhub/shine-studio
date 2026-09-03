@@ -696,6 +696,7 @@ export const useSeriesStore = defineStore('series', () => {
     // If loading a completely different episode or initial empty state, perform a clean full reset
     if (isNewEpisode || !hasExistingClips) {
       core.reset(projectData);
+      try { core.seek(0); } catch {}
       initTimelineTracks(projectData.tracks, projectData.clips);
       return;
     }

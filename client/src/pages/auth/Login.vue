@@ -182,11 +182,13 @@ const handleDemoLogin = (role: 'admin' | 'test') => {
             class="w-full text-center tracking-[14px] font-mono text-2xl font-bold bg-[var(--el-fill-color-blank)] border border-[var(--el-border-color)] rounded-xl px-4 py-3 text-[var(--el-text-color-primary)] placeholder-[var(--el-text-color-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--el-color-primary)] transition-all shadow-sm"
             autofocus
             required
+            @keyup.enter="handleVerify2FA"
           />
         </div>
 
         <el-button
           type="primary"
+          native-type="submit"
           size="large"
           class="!w-full !bg-primary !text-on-primary !border-none !font-extrabold text-sm !h-12 !rounded-full hover:!opacity-95 shadow-md"
           :loading="isVerifying"
@@ -243,6 +245,7 @@ const handleDemoLogin = (role: 'admin' | 'test') => {
             placeholder="jane@shinedrama.com"
             class="w-full bg-[var(--el-fill-color-blank)] border border-[var(--el-border-color)] rounded-xl px-4 py-3 text-sm text-[var(--el-text-color-primary)] placeholder-[var(--el-text-color-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--el-color-primary)] transition-all shadow-sm"
             required
+            @keyup.enter="handleLogin"
           />
         </div>
 
@@ -263,6 +266,7 @@ const handleDemoLogin = (role: 'admin' | 'test') => {
             placeholder="••••••••"
             class="w-full bg-[var(--el-fill-color-blank)] border border-[var(--el-border-color)] rounded-xl px-4 py-3 text-sm text-[var(--el-text-color-primary)] placeholder-[var(--el-text-color-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--el-color-primary)] transition-all shadow-sm"
             required
+            @keyup.enter="handleLogin"
           />
         </div>
 
@@ -279,6 +283,7 @@ const handleDemoLogin = (role: 'admin' | 'test') => {
         <el-button
           id="login-submit-btn"
           type="primary"
+          native-type="submit"
           size="large"
           class="!w-full !bg-primary !text-on-primary !border-none !font-extrabold text-sm !h-12 !rounded-full hover:!opacity-95 shadow-md"
           :loading="authStore.isLoading"

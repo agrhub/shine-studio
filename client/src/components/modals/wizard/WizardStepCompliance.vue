@@ -35,6 +35,71 @@ function formatDuration(totalSeconds: number): string {
     return t('wizard.durationSecOnly', { s });
   }
 }
+
+/** Map backend category label -> i18n key */
+const catLabelKeyMap: Record<string, string> = {
+  'Violence / Gore': 'wizard.catViolence',
+  'Adult Content': 'wizard.catAdultContent',
+  'Cultural Sensitivity': 'wizard.catCulturalSensitivity',
+  'Copyright / IP': 'wizard.catCopyrightIP',
+  violence: 'wizard.catViolence',
+  adult_content: 'wizard.catAdultContent',
+  cultural_sensitivity: 'wizard.catCulturalSensitivity',
+  copyright_ip: 'wizard.catCopyrightIP',
+};
+function tCatLabel(label: string): string {
+  if (!label) return label;
+  const key = catLabelKeyMap[label] || catLabelKeyMap[label.toLowerCase()];
+  return key ? (t(key) || label) : label;
+}
+
+const statusKeyMap: Record<string, string> = {
+  Passed: 'wizard.statusPassed',
+  Warning: 'wizard.statusWarning',
+  Restricted: 'wizard.statusRestricted',
+  Failed: 'wizard.statusFailed',
+};
+function tStatus(status: string): string {
+  if (!status) return status;
+  const key = statusKeyMap[status];
+  return key ? (t(key) || status) : status;
+}
+
+const checkLabelKeyMap: Record<string, string> = {
+  'Script Origin & Plagiarism': 'wizard.checkScriptOrigin',
+  'Generated Visual Assets': 'wizard.checkVisualAssets',
+  'Audio & Foley Library': 'wizard.checkAudioLibrary',
+  script_origin: 'wizard.checkScriptOrigin',
+  visual_assets: 'wizard.checkVisualAssets',
+  audio_library: 'wizard.checkAudioLibrary',
+};
+function tCheckLabel(label: string): string {
+  if (!label) return label;
+  const key = checkLabelKeyMap[label] || checkLabelKeyMap[label.trim()];
+  return key ? (t(key) || label) : label;
+}
+
+function formatFinding(text?: string): string {
+  if (!text) return '';
+  const trimmed = text.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const results = parsed.results || (Array.isArray(parsed) ? parsed : null);
+      if (Array.isArray(results) && results.length > 0) {
+        return results.slice(0, 3).map((r: any) => {
+          const title = r.title ? r.title.trim() : '';
+          const excerpts = Array.isArray(r.excerpts) ? r.excerpts.join(' ') : (r.snippet || r.body || '');
+          const clean = excerpts.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+          return title && clean ? `• ${title}: ${clean.slice(0, 160)}...` : `• ${clean.slice(0, 180)}...`;
+        }).join('\n');
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return text;
+}
 </script>
 
 <template>
@@ -89,14 +154,82 @@ function formatDuration(totalSeconds: number): string {
           <h3 class="font-black" style="color: var(--el-text-color-primary);">{{ t('wizard.contentSafetyBreakdown') }}</h3>
           <div v-for="(item, key) in (complianceResult.categories || {})" :key="key" class="space-y-1.5">
             <div class="flex justify-between text-xs font-semibold">
-              <span style="color: var(--el-text-color-regular);">{{ item.label }}</span>
-              <span :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">{{ item.status }} ({{ item.score }}%)</span>
+              <span style="color: var(--el-text-color-regular);">{{ tCatLabel(item.label) }}</span>
+              <span :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">{{ tStatus(item.status) }} ({{ item.score }}%)</span>
             </div>
             <div class="h-1.5 w-full rounded-full overflow-hidden" style="background-color: var(--el-fill-color-light);">
               <div class="h-full rounded-full transition-all duration-500" :style="{ width: `${item.score || 95}%`, backgroundColor: item.safe ? 'var(--el-color-primary)' : 'var(--el-color-warning)' }"></div>
             </div>
             <div v-if="item.notes" class="text-[10px]" style="color: var(--el-text-color-placeholder);">{{ item.notes }}</div>
           </div>
+        </div>
+      </div>
+
+      <!-- Market Research & Regulatory Intelligence (Ground Truth) -->
+      <div v-if="complianceResult.market_research" class="rounded-2xl border p-6 space-y-4" style="background-color: var(--el-bg-color-overlay); border-color: var(--el-border-color);">
+        <div class="flex items-center justify-between pb-3 border-b" style="border-color: var(--el-border-color-light);">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold" style="background-color: var(--el-color-primary-light-9); color: var(--el-color-primary);">
+              🌐
+            </div>
+            <div>
+              <h3 class="font-black text-sm" style="color: var(--el-text-color-primary);">{{ t('wizard.marketResearchTitle') }}</h3>
+              <p class="text-[11px]" style="color: var(--el-text-color-placeholder);">
+                {{ t('wizard.marketResearchSubtitle', { country: complianceResult.market_research?.country || formData.country || 'Target Market' }) }}
+              </p>
+            </div>
+          </div>
+          <el-tag type="success" size="small" effect="plain" round class="font-bold">
+            ✓ {{ t('wizard.mcpGroundingVerified') }}
+          </el-tag>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div class="p-3.5 rounded-xl border space-y-1.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+            <span class="font-bold flex items-center gap-1.5" style="color: var(--el-text-color-primary);">
+              📑 {{ t('wizard.copyrightFindings') }}
+            </span>
+            <p class="text-[11px] leading-relaxed whitespace-pre-line" style="color: var(--el-text-color-regular);">
+              {{ formatFinding(complianceResult.market_research?.copyright_findings) }}
+            </p>
+          </div>
+
+          <div class="p-3.5 rounded-xl border space-y-1.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+            <span class="font-bold flex items-center gap-1.5" style="color: var(--el-text-color-primary);">
+              ⚖️ {{ t('wizard.regulatoryFindings') }}
+            </span>
+            <p class="text-[11px] leading-relaxed whitespace-pre-line" style="color: var(--el-text-color-regular);">
+              {{ formatFinding(complianceResult.market_research?.regulatory_findings) }}
+            </p>
+          </div>
+
+          <div class="p-3.5 rounded-xl border space-y-1.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+            <span class="font-bold flex items-center gap-1.5" style="color: var(--el-text-color-primary);">
+              🏛️ {{ t('wizard.culturalFindings') }}
+            </span>
+            <p class="text-[11px] leading-relaxed whitespace-pre-line" style="color: var(--el-text-color-regular);">
+              {{ formatFinding(complianceResult.market_research?.cultural_findings) }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Grounded Citations / Sources -->
+        <div
+          v-if="complianceResult.market_research?.grounded_sources?.length"
+          class="pt-2 flex flex-wrap items-center gap-2 text-[11px]"
+        >
+          <span class="font-bold" style="color: var(--el-text-color-placeholder);">{{ t('wizard.verifiedSources') }}:</span>
+          <a
+            v-for="(src, sIdx) in complianceResult.market_research?.grounded_sources"
+            :key="sIdx"
+            :href="src.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors hover:underline flex items-center gap-1"
+            style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light); color: var(--el-color-primary);"
+          >
+            🔗 {{ src.title || src.url }}
+          </a>
         </div>
       </div>
 
@@ -113,8 +246,8 @@ function formatDuration(totalSeconds: number): string {
               class="flex items-center justify-between pb-2 border-b last:border-0 last:pb-0"
               style="border-color: var(--el-border-color-light);"
             >
-              <span style="color: var(--el-text-color-regular);">{{ item.label }}</span>
-              <span class="font-black" :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">✓ {{ item.status }}</span>
+              <span style="color: var(--el-text-color-regular);">{{ tCheckLabel(item.label) }}</span>
+              <span class="font-black" :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">✓ {{ tStatus(item.status) }}</span>
             </li>
           </ul>
         </div>

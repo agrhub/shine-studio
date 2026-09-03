@@ -37,7 +37,7 @@ http.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('shine_token');
       localStorage.removeItem('shine_user');
-      toast.error(i18n.global.t('toast.sessionExpired'));
+      toast.error(i18n.global.t('toast.authFailed'));
       if (window.location.pathname !== '/auth/login') {
         window.location.href = '/auth/login';
       }

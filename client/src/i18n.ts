@@ -17,7 +17,7 @@ export const SUPPORTED_LOCALES = [
 
 export type SupportedLocale = typeof SUPPORTED_LOCALES[number]['code'];
 
-const savedLocale = (localStorage.getItem('shine_language') as SupportedLocale) || (localStorage.getItem('shine_locale') as SupportedLocale) || 'en';
+const savedLocale = (localStorage.getItem('shine_language') as SupportedLocale) || 'en';
 
 const i18n = createI18n({
   legacy: false,

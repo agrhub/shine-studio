@@ -9,30 +9,30 @@
       @show="onPopoverShow"
     >
       <template #reference>
-        <el-button
-          :type="isJobRunning ? 'primary' : hasFailedJobs ? 'danger' : 'default'"
-          size="default" text round bg
-          title="Background Tasks & Pipeline Monitor"
-          class="!flex items-center gap-1.5"
-        >
-          <span class="relative flex h-2 w-2">
-            <span
-              v-if="isJobRunning"
-              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
-            ></span>
-            <span
-              class="relative inline-flex rounded-full h-2 w-2"
-              :class="isJobRunning ? 'bg-primary' : hasFailedJobs ? 'bg-destructive' : 'bg-muted-foreground/50'"
-            ></span>
-          </span>
+        <el-badge :value="pipelineStore.activeJobs.length" :max="10" is-dot
+          :type="isJobRunning ? 'primary' : hasFailedJobs ? 'danger' : 'warning'">
+          <el-button
+            size="large" circle icon="Bell" plain bg
+            title="Background Tasks & Pipeline Monitor" />
+            <!-- <span class="relative flex h-2 w-2">
+              <span
+                v-if="isJobRunning"
+                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
+              ></span>
+              <span
+                class="relative inline-flex rounded-full h-2 w-2"
+                :class="isJobRunning ? 'bg-primary' : hasFailedJobs ? 'bg-destructive' : 'bg-muted-foreground/50'"
+              ></span>
+            </span>
 
-          <component :is="isJobRunning ? Loader2 : hasFailedJobs ? AlertCircle : Activity" class="w-3.5 h-3.5" :class="{ 'animate-spin': isJobRunning }" />
-          
-          <span v-if="isJobRunning" class="font-semibold">{{ topActiveJob?.progress || 0 }}%</span>
-          <span v-else-if="hasFailedJobs" class="font-semibold text-destructive">{{ failedJobsCount }} {{ $t('common.failed') }}</span>
-          <span v-else-if="hasCompletedJobs" class="font-semibold text-emerald-500">{{ $t('pipeline.jobs') }} ({{ pipelineStore.activeJobs.length }})</span>
-          <span v-else class="hidden md:inline font-medium">{{ $t('pipeline.jobs') }}</span>
-        </el-button>
+            <component :is="isJobRunning ? Loader2 : hasFailedJobs ? AlertCircle : Activity" class="w-3.5 h-3.5" :class="{ 'animate-spin': isJobRunning }" />
+            
+            <span v-if="isJobRunning" class="font-semibold">{{ topActiveJob?.progress || 0 }}%</span>
+            <span v-else-if="hasFailedJobs" class="font-semibold text-destructive">{{ failedJobsCount }} {{ $t('common.failed') }}</span>
+            <span v-else-if="hasCompletedJobs" class="font-semibold text-emerald-500">{{ $t('pipeline.jobs') }} ({{ pipelineStore.activeJobs.length }})</span>
+            <span v-else class="hidden md:inline font-medium">{{ $t('pipeline.jobs') }}</span> -->
+          <!-- </el-button> -->
+        </el-badge>
       </template>
 
       <!-- Popover Content -->
@@ -508,11 +508,25 @@ function toggleJobExpand(jobId: string) {
 
 // Extract all produced AssetJobItems from a job
 function getJobAssets(job: any): AssetJobItem[] {
-  if (!job?.step_progress) return [];
   const assets: AssetJobItem[] = [];
-  for (const step of Object.values(job.step_progress) as any[]) {
-    if (Array.isArray(step?.assets)) {
-      assets.push(...step.assets);
+  if (job?.step_progress) {
+    for (const step of Object.values(job.step_progress) as any[]) {
+      if (Array.isArray(step?.assets)) {
+        assets.push(...step.assets);
+      }
+    }
+  }
+  if (job?.outputs?.published_urls) {
+    for (const [platform, url] of Object.entries(job.outputs.published_urls as Record<string, string>)) {
+      if (url) {
+        assets.push({
+          id: `pub_${platform}_${job.id}`,
+          name: `${platform.toUpperCase()} Post`,
+          type: 'publish_link',
+          status: 'completed',
+          url: url,
+        });
+      }
     }
   }
   return assets;
@@ -545,6 +559,7 @@ function formatJobType(type?: string): string {
   if (!type) return 'Pipeline Task';
   if (type === 'full_pipeline') return 'Full Pipeline Production';
   if (type === 'render') return 'Master Video Export';
+  if (type === 'publish') return 'Social Media Publish';
   if (type.startsWith('step_')) return `Step ${type.replace('step_', '').toUpperCase()}`;
   return type;
 }
@@ -558,8 +573,8 @@ function formatTime(isoString?: string): string {
     const diffMin = Math.floor(diffMs / 60000);
     if (diffMin < 1) return 'just now';
     if (diffMin < 60) return `${diffMin}m ago`;
-    const hours = Math.floor(diffMin / 60);
-    if (hours < 24) return `${hours}h ago`;
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour}h ago`;
     return d.toLocaleDateString();
   } catch {
     return '';
@@ -571,6 +586,10 @@ function isImageType(type?: string): boolean {
 }
 
 function openAssetPreview(asset: AssetJobItem) {
+  if (asset.type === 'publish_link' || (asset.url && (asset.url.includes('youtube.com') || asset.url.includes('tiktok.com') || asset.url.includes('facebook.com') || asset.url.includes('instagram.com')))) {
+    window.open(asset.url, '_blank');
+    return;
+  }
   previewAsset.value = asset;
   previewDialogOpen.value = true;
 }
@@ -643,22 +662,6 @@ function onPopoverShow() {
     expandedJobIds.value.add(topActiveJob.value.id);
   }
 }
-
-watch(
-  () => [seriesStore.currentSeries?.id, seriesStore.activeEpisodeId],
-  ([sid, eid]) => {
-    if (sid) {
-      pipelineStore.startJobPolling(sid as string, (eid as string) || undefined);
-    } else {
-      pipelineStore.startJobPolling('all');
-    }
-  },
-  { immediate: true }
-);
-
-onUnmounted(() => {
-  pipelineStore.stopJobPolling();
-});
 </script>
 
 <style scoped>

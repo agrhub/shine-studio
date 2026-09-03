@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import http from '@/utils/http';
 import { useSeriesStore } from '@/stores/useSeriesStore';
 import { getVisualStyleById } from '@/constants/visualStyles';
@@ -1334,8 +1334,9 @@ export const usePipelineStore = defineStore('pipeline', () => {
         timeout: 60000,
       });
       const data = res?.data || res;
-      if (data && Array.isArray(data.jobs)) {
-        activeJobs.value = data.jobs;
+      const jobsList = data?.jobs || data?.data?.jobs || (Array.isArray(data) ? data : []);
+      if (Array.isArray(jobsList)) {
+        activeJobs.value = jobsList;
       }
       return activeJobs.value;
     } catch (err: any) {
@@ -1477,56 +1478,88 @@ export const usePipelineStore = defineStore('pipeline', () => {
     if (socketListenersInitialized) return;
     socketListenersInitialized = true;
     try {
-      const { onPipelineJobUpdated, onPipelineJobCompleted, onEpisodeUpdated } = useWebSocket();
-      onPipelineJobUpdated((updatedJob: any) => {
+      const ws = useWebSocket();
+      // Ensure socket room connection for current series
+      const sid = seriesStore.currentSeries?.id;
+      if (sid) {
+        ws.connect(sid);
+      } else {
+        ws.connect();
+      }
+
+      watch(
+        () => seriesStore.currentSeries?.id,
+        (newSid) => {
+          if (newSid) {
+            ws.connect(newSid);
+          }
+        },
+        { immediate: true }
+      );
+
+      ws.onPipelineJobUpdated((updatedJob: any) => {
         if (!updatedJob?.id) return;
+        console.log('[usePipelineStore] Realtime update for job:', updatedJob.id, updatedJob.status, `${updatedJob.progress}%`);
         const idx = activeJobs.value.findIndex(j => j.id === updatedJob.id);
         if (idx >= 0) {
-          activeJobs.value[idx] = updatedJob;
+          activeJobs.value[idx] = { ...activeJobs.value[idx], ...updatedJob };
           activeJobs.value = [...activeJobs.value];
         } else {
           activeJobs.value = [updatedJob, ...activeJobs.value];
         }
-        const sid = seriesStore.currentSeries?.id;
-        const eid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
-        if (sid && eid) {
-          syncStepStatusesWithEpisode(seriesStore.activeEpisode, seriesStore.charactersList);
-          window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
-        }
-      });
-
-      onPipelineJobCompleted((completedJob: any) => {
-        if (!completedJob?.id) return;
-        const idx = activeJobs.value.findIndex(j => j.id === completedJob.id);
-        if (idx >= 0) {
-          activeJobs.value[idx] = completedJob;
-          activeJobs.value = [...activeJobs.value];
-        } else {
-          activeJobs.value = [completedJob, ...activeJobs.value];
-        }
-        const sid = seriesStore.currentSeries?.id;
-        const eid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
-        if (sid) {
-          seriesStore.loadWorkspaceData(sid).then(() => {
-            if (eid) {
-              seriesStore.loadEpisodeScript(sid, eid);
+        const currentSid = seriesStore.currentSeries?.id;
+        const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
+        if (currentSid) {
+          // Sync workspace and episode script so new assets from each finished step show up immediately
+          seriesStore.loadWorkspaceData(currentSid).then(() => {
+            if (currentEid) {
+              seriesStore.loadEpisodeScript(currentSid, currentEid);
+            }
+            if (seriesStore.activeEpisode) {
+              syncStepStatusesWithEpisode(seriesStore.activeEpisode, seriesStore.charactersList);
             }
             window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
           });
         }
       });
 
-      onEpisodeUpdated((latestEp: any) => {
+      ws.onPipelineJobCompleted((completedJob: any) => {
+        if (!completedJob?.id) return;
+        console.log('[usePipelineStore] Realtime completed for job:', completedJob.id);
+        const idx = activeJobs.value.findIndex(j => j.id === completedJob.id);
+        if (idx >= 0) {
+          activeJobs.value[idx] = { ...activeJobs.value[idx], ...completedJob };
+          activeJobs.value = [...activeJobs.value];
+        } else {
+          activeJobs.value = [completedJob, ...activeJobs.value];
+        }
+        const currentSid = seriesStore.currentSeries?.id;
+        const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
+        if (currentSid) {
+          seriesStore.loadWorkspaceData(currentSid).then(() => {
+            if (currentEid) {
+              seriesStore.loadEpisodeScript(currentSid, currentEid);
+            }
+            window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+          });
+        }
+      });
+
+      ws.onEpisodeUpdated((latestEp: any) => {
         if (latestEp?.id) {
           const idx = seriesStore.episodesList.findIndex((ep: any) => ep.id === latestEp.id);
           if (idx >= 0) {
-            seriesStore.episodesList[idx] = latestEp;
+            seriesStore.episodesList[idx] = { ...seriesStore.episodesList[idx], ...latestEp };
             seriesStore.episodesList = [...seriesStore.episodesList];
           } else {
             seriesStore.episodesList.push(latestEp);
           }
-          if (latestEp.id === seriesStore.activeEpisodeId) {
+          if (latestEp.id === (seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId)) {
             syncStepStatusesWithEpisode(latestEp, seriesStore.charactersList);
+            const currentSid = seriesStore.currentSeries?.id;
+            if (currentSid) {
+              seriesStore.loadEpisodeScript(currentSid, latestEp.id);
+            }
             window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
           }
         }
@@ -1536,7 +1569,10 @@ export const usePipelineStore = defineStore('pipeline', () => {
     }
   }
 
-  function startJobPolling(seriesId?: string, episodeId?: string, intervalMs = 60000) {
+  // Eagerly initialize WebSocket listeners immediately when store is created
+  initJobSocketListeners();
+
+  function startJobPolling(seriesId?: string, episodeId?: string, runningIntervalMs = 60000, idleIntervalMs = 120000) {
     initJobSocketListeners();
     stopJobPolling();
     isPollingActive = true;
@@ -1550,6 +1586,9 @@ export const usePipelineStore = defineStore('pipeline', () => {
       const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId || eid;
 
       try {
+        const ws = useWebSocket();
+        // If WebSocket is connected, we don't need rapid HTTP polling!
+        // We only do a light fallback check at very relaxed intervals (60s-120s)
         const jobs = await fetchActiveJobs(currentSid, currentEid);
         const runningJob = jobs.find((j: any) => j.status === 'running' || j.status === 'queued');
         if (runningJob && seriesStore.activeEpisode) {
@@ -1559,14 +1598,15 @@ export const usePipelineStore = defineStore('pipeline', () => {
         console.warn('[usePipelineStore] Polling tick notice:', err);
       } finally {
         if (isPollingActive) {
-          const hasRunning = activeJobs.value.some((j: any) => j.status === 'running' || j.status === 'queued');
-          const delay = hasRunning ? intervalMs : Math.max(intervalMs * 2.5, 10000);
+          const ws = useWebSocket();
+          // If WS is healthy and connected, relax polling to 2 minutes; if disconnected, fallback to 30s
+          const delay = ws.isConnected.value ? idleIntervalMs : (runningIntervalMs || 30000);
           jobPollingTimeout = setTimeout(pollTick, delay);
         }
       }
     }
 
-    // Launch first poll immediately
+    // Launch first poll immediately to initialize initial state
     pollTick();
   }
 

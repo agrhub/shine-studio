@@ -123,3 +123,15 @@ export function findCountry(query?: string): WorldCountry {
   );
   return partial || WORLD_COUNTRIES[0];
 }
+
+export function getDefaultCountryForLocale(localeStr?: string): WorldCountry {
+  if (!localeStr) return findCountry('United States');
+  const clean = localeStr.toLowerCase().trim();
+  if (clean.startsWith('vi')) return findCountry('Vietnam');
+  if (clean.startsWith('zh')) return findCountry('China');
+  if (clean.startsWith('ja') || clean.startsWith('jp')) return findCountry('Japan');
+  if (clean.startsWith('es')) return findCountry('Spain');
+  if (clean.startsWith('fr')) return findCountry('France');
+  return findCountry('United States');
+}
+

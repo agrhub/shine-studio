@@ -8,6 +8,7 @@ import type { ChatMessage, Command, CostGuardrails } from '@/types/api';
 import i18n from '@/i18n';
 import { ElMessage } from 'element-plus';
 import { toast } from 'vue-sonner';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 export interface AssistantSuggestion {
   text: string;
@@ -89,6 +90,7 @@ export const useChatStore = defineStore('chat', {
     isThinking: false,
     isStreaming: false,
     isLoadingHistory: false,
+    loadedUserId: null as string | null,
     costGuardrails: {
       max_budget_usd: 3.50,
       current_spend_usd: 1.25,
@@ -113,6 +115,14 @@ export const useChatStore = defineStore('chat', {
   },
 
   actions: {
+    clearUserSession() {
+      this.messages = [];
+      this.dynamicSuggestions = [];
+      this.activeProgress = null;
+      this.loadedUserId = null;
+      this.setDefaultWelcomeMessage();
+    },
+
     toggleSidebar() {
       this.isSidebarOpen = !this.isSidebarOpen;
       localStorage.setItem('shine_assistant_open', String(this.isSidebarOpen));
@@ -149,11 +159,27 @@ export const useChatStore = defineStore('chat', {
       }
     },
 
-    async loadHistory(targetIdOverride?: string) {
+    async loadHistory(targetIdOverride?: string, page = 1, limit = 50) {
+      const authStore = useAuthStore();
+      const currentUserId = authStore.user?.id || null;
+
+      // If active user changed, purge in-memory messages before loading
+      if (this.loadedUserId !== currentUserId) {
+        this.messages = [];
+        this.dynamicSuggestions = [];
+        this.loadedUserId = currentUserId;
+      }
+
+      if (!currentUserId) {
+        this.setDefaultWelcomeMessage();
+        return;
+      }
+
       const targetId = targetIdOverride || (this.scope === 'series' && this.activeSeriesId ? this.activeSeriesId : 'global');
       this.isLoadingHistory = true;
       try {
-        const res: any = await http.get(`/ai/agentic/history/${targetId}`);
+        const offset = (page - 1) * limit;
+        const res: any = await http.get(`/ai/agentic/history/${targetId}?limit=${limit}&offset=${offset}`);
         const data = res?.data || res;
         let historyList: any[] = [];
 
@@ -164,7 +190,7 @@ export const useChatStore = defineStore('chat', {
         }
 
         if (historyList.length > 0) {
-          this.messages = historyList.map((m: any) => ({
+          const loaded = historyList.map((m: any) => ({
             id: m.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
             role: m.role || 'assistant',
             content: m.content || m.text || '',
@@ -174,6 +200,12 @@ export const useChatStore = defineStore('chat', {
               .map((tc: any) => tc.status === 'running' ? { ...tc, status: 'success' } : tc),
             suggestions: m.suggestions || [],
           }));
+
+          if (page > 1) {
+            this.messages = [...loaded, ...this.messages];
+          } else {
+            this.messages = loaded;
+          }
 
           // Restore dynamic suggestions from last assistant message
           for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -197,7 +229,7 @@ export const useChatStore = defineStore('chat', {
               }
             }
           }
-        } else {
+        } else if (page === 1) {
           this.setDefaultWelcomeMessage();
         }
       } catch (err) {
@@ -219,8 +251,8 @@ export const useChatStore = defineStore('chat', {
           id: `msg-welcome-${Date.now()}`,
           role: 'assistant',
           content: isSeries
-            ? `👋 **Hello! I am Shine AI Production Copilot.**\nI have loaded the full episode & asset context for this project. You can command me to:\n- 🚀 **Run the Full Pipeline** automatically\n- 👗 **Generate Character Anchors & Wardrobes**\n- 🎬 **Generate Storyboard frames & Image-to-Video shots**\n- 🎙️ **Generate TTS Voiceovers & BGM soundtrack**\n- 📊 **Audit and render final episode**`
-            : `👋 **Welcome to Shine Assistant (${contextTitle} context).**\nI am your global studio AI copilot. I can help you direct stories, generate ideas, analyze viewer retention, review storage & credits, or navigate between your projects.`,
+            ? i18n.global.t('chatbot.welcomeSeries')
+            : i18n.global.t('chatbot.welcomeGlobal', { context: contextTitle }),
           timestamp: Date.now(),
         },
       ];
@@ -264,9 +296,12 @@ export const useChatStore = defineStore('chat', {
       const pipelineStore = usePipelineStore();
       const timelineStore = useTimelineStore();
       const collabStore = useCollaborationStore();
+      const authStore = useAuthStore();
 
       const seriesId = this.scope === 'series' ? this.activeSeriesId || undefined : 'global';
       const episodeId = this.scope === 'series' ? this.activeEpisodeId || undefined : 'main';
+      const currentLocale = String((i18n.global.locale as any)?.value || (i18n.global as any).locale || 'en');
+      const userProfileLang = authStore.user?.language || currentLocale;
 
       try {
         await http.post(
@@ -279,6 +314,9 @@ export const useChatStore = defineStore('chat', {
             context: {
               pageContext: this.currentPageContext,
               scope: this.scope,
+              appLanguage: currentLocale,
+              profileLanguage: userProfileLang,
+              language: userProfileLang || currentLocale,
             },
           },
           {

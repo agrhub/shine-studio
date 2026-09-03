@@ -15,7 +15,7 @@ import WizardStepMasterPlan from './wizard/WizardStepMasterPlan.vue';
 import WizardStepCompliance from './wizard/WizardStepCompliance.vue';
 import { WizardFormData, PlanChatMessage, ComplianceResult } from './wizard/types';
 import { Film, Check, Right, Promotion } from '@element-plus/icons-vue';
-import { findCountry } from '@/constants/countries';
+import { findCountry, getDefaultCountryForLocale } from '@/constants/countries';
 import router from '@/router/index.ts';
 
 const props = defineProps<{ 
@@ -27,7 +27,7 @@ const emit = defineEmits<{
   (e: 'created', seriesId: string): void;
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const seriesStore = useSeriesStore();
 const authStore = useAuthStore();
 const visualStyleStore = useVisualStyleStore();
@@ -39,6 +39,7 @@ onMounted(() => {
 // ─── Step Control ──────────────────────────────────────────────────────────────
 const currentStep = ref(0); // 0=MODE, 1=CONFIG, 2=MASTER PLAN, 3=COMPLIANCE
 const masterPlan = ref<any>(null);
+const complianceResult = ref<ComplianceResult>({});
 
 const isGeneratingPlan = ref(false);
 const isPlanChatSending = ref(false);
@@ -51,12 +52,14 @@ const stepLabels = computed(() => [
   t('wizard.stepCompliance'),
 ]);
 
+const initialCountry = getDefaultCountryForLocale(locale.value);
+
 // ─── Form Data ────────────────────────────────────────────────────────────────
 const formData = ref<WizardFormData>({
   mode: 'viral',
-  country: 'United States',
-  countryCode: 'us',
-  language: 'en-US',
+  country: initialCountry.name,
+  countryCode: initialCountry.code,
+  language: initialCountry.primaryLang || 'en-US',
   selectedTrend: null,
   title: '',
   genre: 'Revenge / Drama',
@@ -99,6 +102,10 @@ watch(() => props.modelValue, (isOpen) => {
       formData.value.title = '';
       formData.value.synopsis = '';
       formData.value.selectedTrend = null;
+      const defCountry = getDefaultCountryForLocale(locale.value);
+      formData.value.country = defCountry.name;
+      formData.value.countryCode = defCountry.code;
+      formData.value.language = defCountry.primaryLang || 'en-US';
     }
   }
 });
@@ -351,22 +358,6 @@ function retryPlanChat(failedPrompt: string, errorIdx: number) {
 // ─── Step 3: Compliance State & Actions (Agentic) ─────────────────────────────
 const isVerifyingCompliance = ref(false);
 const complianceError = ref('');
-const complianceResult = ref<ComplianceResult>({
-  overall_score: 0,
-  is_compliant: false,
-  categories: {
-    violence: { label: t('compliance.violenceGore'), score: 0, status: 'Failed', safe: false, notes: 'No prohibited violence' },
-    adult_content: { label: t('compliance.adultContent'), score: 0, status: 'Failed', safe: false, notes: 'Compliant with commercial standards' },
-    cultural_sensitivity: { label: t('compliance.culturalSensitivity'), score: 0, status: 'Failed', safe: false, notes: 'Aligned with regional norms' },
-    copyright_ip: { label: t('compliance.copyrightIP'), score: 0, status: 'Failed', safe: false, notes: 'Original tropes' },
-  },
-  copyright_checks: [
-    { label: t('compliance.scriptOrigin'), status: 'Failed', safe: false },
-    { label: t('compliance.generatedVisualAssets'), status: 'Failed', safe: false },
-    { label: t('compliance.audioFoleyLibrary'), status: 'Failed', safe: false },
-  ],
-  recommendations: [],
-});
 
 async function runComplianceVerification() {
   if (!masterPlan.value) return;
@@ -375,8 +366,9 @@ async function runComplianceVerification() {
   try {
     const res: any = await http.post('/ai/verify-compliance', {
       master_plan: masterPlan.value,
-      country: formData.value.country || 'United States',
+      country: formData.value.language || 'United States',
       ratio: formData.value.ratio || '9:16',
+      language: localStorage.getItem('shine_language') || 'en',
     });
     if (res?.data) {
       complianceResult.value = res.data;

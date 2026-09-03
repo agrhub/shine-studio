@@ -75,7 +75,12 @@ export function useExport() {
   const studioStore = useStudioStore();
   const downloadStore = useDownloadStore();
 
-  const startExport = async (settings: ExportSettings, targetPreset?: any, onProgress?: (p: number) => void) => {
+  const startExport = async (
+    settings: ExportSettings,
+    targetPreset?: any,
+    onProgress?: (p: number) => void,
+    customProjectData?: any
+  ) => {
     const studio = studioStore.state.value.studio;
     if (!studio) return null;
 
@@ -89,7 +94,7 @@ export function useExport() {
       created_at: Date.now(),
     });
 
-    toast.info('Download has started');
+    toast.info('Export render in progress...');
     downloadStore.updateDownload(downloadId, { status: 'processing' });
 
     const wasPlaying = (studio as any).getIsPlaying?.() ?? false;
@@ -100,7 +105,7 @@ export function useExport() {
       (studio as any).pause?.();
       (studio as any).suspendRendering?.();
 
-      const json = core.project.export();
+      const json = customProjectData || core.project.export();
       if (!json || !json.clips || Object.keys(json.clips).length === 0) {
         throw new Error('No clips to export');
       }

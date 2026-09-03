@@ -321,7 +321,21 @@ export interface CaptionSettings {
   enable_background_box?: boolean;
   bg_color?: string;
   highlight_animate?: boolean;
+}
   // [key: string]: any;
+export interface EpisodePublishedPlatform {
+  platform: 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'twitter' | string;
+  language?: string;
+  channel_id?: string;
+  channel_name?: string;
+  account_id?: string;
+  url: string;
+  video_id?: string;
+  published_at: string;
+  views?: number;
+  likes?: number;
+  comments_count?: number;
+  shares?: number;
 }
 
 export interface Episode {
@@ -352,6 +366,8 @@ export interface Episode {
   video_url?: string;
   video_urls?: Record<string, string>;
   render_versions?: RenderVersionEntity[];
+  published_urls?: Record<string, string>;
+  published_platforms?: EpisodePublishedPlatform[];
   created_at?: string;
   updated_at?: string;
 }

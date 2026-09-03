@@ -62,16 +62,35 @@ const filteredVisualStyles = computed(() => {
   });
 });
 
+/** Map raw category string → i18n key */
+function catI18nKey(cat: string): string {
+  const map: Record<string, string> = {
+    'All': 'styles.cat_all',
+    'Featured': 'styles.cat_featured',
+    'Realistic': 'styles.cat_realistic',
+    'Animation': 'styles.cat_animation',
+    '3D & CGI': 'styles.cat_3dcgi',
+    'Illustrated': 'styles.cat_illustrated',
+    'Artistic': 'styles.cat_artistic',
+    'Retro': 'styles.cat_retro',
+  };
+  return map[cat] || '';
+}
+function tCat(cat: string): string {
+  const key = catI18nKey(cat);
+  return key ? (t(key) || cat) : cat;
+}
+
 // ─── Genres List ──────────────────────────────────────────────────────────────
 const genresList = computed(() => {
   return GENRE_OPTIONS.map((g) => ({
     name: g.name,
     label: t(g.labelKey) || g.name,
     emoji: g.emoji,
-    tagline: g.tagline,
-    desc: g.desc,
+    tagline: g.taglineKey ? (t(g.taglineKey) || g.tagline) : g.tagline,
+    desc: g.descKey ? (t(g.descKey) || g.desc) : g.desc,
     image: g.image,
-    badge: g.badge,
+    badge: g.badgeKey ? (t(g.badgeKey) || g.badge) : g.badge,
   }));
 });
 </script>
@@ -189,7 +208,7 @@ const genresList = computed(() => {
           :plain="selectedStyleCategory !== cat"
           @click="selectedStyleCategory = cat"
         >
-          {{ cat }}
+          {{ tCat(cat) }}
         </el-button>
       </div>
 
@@ -217,14 +236,14 @@ const genresList = computed(() => {
             <!-- Category Tag -->
             <div class="absolute top-2 left-2">
               <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-black/60 backdrop-blur-sm text-white border border-white/10">
-                {{ s.category }}
+                {{ tCat(s.category) }}
               </span>
             </div>
 
             <!-- Badge -->
             <div v-if="s.badge" class="absolute top-2 right-2">
               <span class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500 text-black shadow-xs">
-                {{ s.badge }}
+                {{ t('styles.badge_' + s.badge.toLowerCase().replace(/\s+/g, '_')) || s.badge }}
               </span>
             </div>
 
@@ -240,10 +259,10 @@ const genresList = computed(() => {
           <!-- Info Box -->
           <div class="p-2.5 flex-1 flex flex-col justify-between">
             <h4 class="font-bold text-xs leading-snug line-clamp-1" style="color: var(--el-text-color-primary);">
-              {{ s.name }}
+              {{ t('styles.name_' + s.id) || s.name }}
             </h4>
             <p class="text-[10px] leading-tight line-clamp-2 mt-1" style="color: var(--el-text-color-secondary);">
-              {{ s.description }}
+              {{ t('styles.desc_' + s.id) || s.description }}
             </p>
           </div>
         </div>

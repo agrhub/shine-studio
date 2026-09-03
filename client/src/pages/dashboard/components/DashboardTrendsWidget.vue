@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import CountryFlag from '@/components/common/CountryFlag.vue';
-import { WORLD_COUNTRIES, findCountry } from '@/constants/countries';
+import { WORLD_COUNTRIES, findCountry, getDefaultCountryForLocale } from '@/constants/countries';
 import http from '@/utils/http';
 import { useTrendStore } from '@/stores/useTrendStore';
-import { localeContextKey } from 'element-plus';
 
 const { t, locale } = useI18n();
 
@@ -15,24 +14,39 @@ const emit = defineEmits<{
 
 // Hot Trend Widget state
 const trendStore = useTrendStore();
-const selectedTrendCountry = ref<string>('United States');
+const selectedTrendCountry = ref<string>(getDefaultCountryForLocale(locale.value).name);
 const selectedCountryObj = computed(() => findCountry(selectedTrendCountry.value));
 const viralTopics = ref<any[]>([]);
 const isFetchingTrends = ref<boolean>(false);
 const trendsError = ref<string>('');
 
-const popularCountries = computed(() => WORLD_COUNTRIES.filter((c) => c.isPopular));
+const popularCountries = computed(() => {
+  const current = selectedCountryObj.value;
+  const list = WORLD_COUNTRIES.filter((c) => c.isPopular);
+  if (current && !list.some(c => c.code === current.code)) {
+    return [current, ...list];
+  }
+  // Put active country first in chips
+  if (current) {
+    return [current, ...list.filter(c => c.code !== current.code)];
+  }
+  return list;
+});
 const allCountries = WORLD_COUNTRIES;
 
-async function fetchViralTrends(countryName?: string) {
-  console.log("fetchViralTrends", countryName);
+async function fetchViralTrends(countryName?: string, pageNumber: number = 1) {
   if (countryName && typeof countryName === 'string') {
     selectedTrendCountry.value = countryName;
   }
   isFetchingTrends.value = true;
   trendsError.value = '';
   try {
-    const res = await trendStore.fetchViralTopics(selectedTrendCountry.value, locale.value);
+    const res = await trendStore.fetchViralTopics({
+      country: selectedTrendCountry.value,
+      language: locale.value,
+      page: pageNumber,
+      pageSize: 8,
+    });
     if (res && Array.isArray(res)) {
       viralTopics.value = res;
     }
@@ -43,13 +57,23 @@ async function fetchViralTrends(countryName?: string) {
   }
 }
 
+function handlePageChange(newPage: number) {
+  fetchViralTrends(selectedTrendCountry.value, newPage);
+}
+
 function handleCreateFromTrend(topic: any) {
   const topicCopy = { ...topic, country: selectedTrendCountry.value };
   emit('selectTrend', topicCopy);
 }
 
+watch(locale, (newLocale) => {
+  const targetCountry = getDefaultCountryForLocale(newLocale).name;
+  selectedTrendCountry.value = targetCountry;
+  fetchViralTrends(targetCountry, 1);
+});
+
 onMounted(() => {
-  fetchViralTrends();
+  fetchViralTrends(undefined, 1);
 });
 </script>
 
@@ -193,13 +217,29 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- Pagination Controls -->
+    <div v-if="trendStore.total > trendStore.pageSize" class="mt-6 flex items-center justify-between gap-4 border-t border-[var(--el-border-color)]/40 pt-4">
+      <div class="text-xs text-[var(--el-text-color-secondary)]">
+        {{ t('common.showing') }} {{ ((trendStore.page - 1) * trendStore.pageSize) + 1 }} - {{ Math.min(trendStore.page * trendStore.pageSize, trendStore.total) }} {{ t('common.of') }} {{ trendStore.total }} {{ t('trends.hotTrendsTitle') }}
+      </div>
+      <el-pagination
+        v-model:current-page="trendStore.page"
+        :page-size="trendStore.pageSize"
+        :total="trendStore.total"
+        layout="prev, pager, next"
+        background
+        size="small"
+        @current-change="handlePageChange"
+      />
+    </div>
+
     <!-- Empty / Error state -->
     <div
-      v-else
+      v-else-if="!isFetchingTrends && viralTopics.length === 0"
       class="py-8 text-center text-xs text-[var(--el-text-color-secondary)]"
     >
       <p class="mb-3">{{ trendsError || t('wizard.noTrendsMsg') }}</p>
-      <el-button type="primary" round size="small" @click="fetchViralTrends()">
+      <el-button type="primary" round size="small" @click="fetchViralTrends(undefined, 1)">
         {{ t('common.refresh') }}
       </el-button>
     </div>

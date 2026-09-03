@@ -229,11 +229,41 @@ function handleSeriesAction(command: string, series: any) {
       </div>
     </div>
 
+    <!-- Loading State Skeleton -->
+    <div v-if="seriesStore.isLoading || loading" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
+      <!-- Add New Drama skeleton -->
+      <div class="rounded-[24px] border-2 border-dashed border-[var(--el-border-color)] bg-[var(--el-card-bg-color)]/40 p-6 flex flex-col items-center justify-center text-center min-h-[300px] shadow-soft animate-pulse">
+        <div class="w-14 h-14 rounded-2xl bg-[var(--el-fill-color)] mb-4"></div>
+        <div class="h-4 bg-[var(--el-fill-color-dark)] rounded w-28 mb-2"></div>
+        <div class="h-3 bg-[var(--el-fill-color)] rounded w-36"></div>
+      </div>
+      <!-- Shimmer cards -->
+      <div
+        v-for="n in 4"
+        :key="n"
+        class="rounded-[24px] overflow-hidden border border-[var(--el-border-color)] shadow-soft bg-[var(--el-card-bg-color)] p-0 animate-pulse flex flex-col justify-between min-h-[300px]"
+      >
+        <div>
+          <div class="aspect-[1/1] bg-[var(--el-fill-color)] relative">
+            <div class="absolute top-3.5 left-3.5 w-16 h-5 rounded-full bg-[var(--el-fill-color-darker)]"></div>
+          </div>
+          <div class="p-5 space-y-2.5">
+            <div class="h-4 bg-[var(--el-fill-color-dark)] rounded w-3/4"></div>
+            <div class="h-3 bg-[var(--el-fill-color)] rounded w-1/2"></div>
+          </div>
+        </div>
+        <div class="px-5 pb-5 pt-3 border-t border-[var(--el-border-color)]/40 flex items-center justify-between">
+          <div class="h-3 bg-[var(--el-fill-color)] rounded w-20"></div>
+          <div class="h-3 bg-[var(--el-fill-color)] rounded w-16"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Projects Grid -->
-    <div v-if="paginatedSeries.length > 0" :v-loading="loading" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
+    <div v-else-if="paginatedSeries.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
       <!-- Add New Series Quick Card -->
       <div
-        class="rounded-[24px] border-2 border-dashed border-[var(--el-border-color)] hover:border-[var(--el-color-primary)] bg-[var(--el-card-bg-color)]/50 hover:bg-[var(--el-card-bg-color)] transition-all cursor-pointer p-6 flex flex-col items-center justify-center text-center group min-h-[300px] shadow-soft"
+        class="rounded-[24px] border-2 border-dashed border-[var(--el-border-color)] hover:border-[var(--el-color-primary)] bg-[var(--el-card-bg-color)]/50 hover:bg-[var(--el-card-bg-color)] transition-all cursor-pointer p-6 flex flex-col items-center justify-center text-center group min-h-[300px] shadow-soft hover:shadow-md hover:-translate-y-1 duration-300"
         @click="emit('openWizard')"
       >
         <div class="w-14 h-14 rounded-2xl bg-[var(--el-color-primary)]/15 text-[var(--el-text-color-primary)] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -247,7 +277,7 @@ function handleSeriesAction(command: string, series: any) {
       <div
         v-for="series in paginatedSeries"
         :key="series.id"
-        class="group rounded-[24px] overflow-hidden border border-[var(--el-border-color)] shadow-soft bg-[var(--el-card-bg-color)] hover:shadow-md transition-all cursor-pointer flex flex-col justify-between relative"
+        class="group rounded-[24px] overflow-hidden border border-[var(--el-border-color)] hover:border-[var(--el-color-primary-light-5)] shadow-soft bg-[var(--el-card-bg-color)] hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col justify-between relative"
         @click="router.push(`/project/${series.id}`)"
       >
         <div>
@@ -260,7 +290,7 @@ function handleSeriesAction(command: string, series: any) {
                 <img src="/images/dashboard/poster-1.jpg" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
               </template>
             </el-image>
-            <el-tag class="absolute top-3.5 left-3.5" type="primary" size="small" round>{{ series.tag }}</el-tag>
+            <el-tag class="absolute top-3.5 left-3.5 !border-none font-bold" type="primary" size="small" round>{{ series.tag }}</el-tag>
             <!-- 3-Dots Action Menu -->
             <div class="absolute top-3.5 right-3.5 z-20" @click.stop>
               <el-dropdown trigger="click" @command="(cmd: string) => handleSeriesAction(cmd, series)">

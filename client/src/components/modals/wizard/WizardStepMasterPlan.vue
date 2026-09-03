@@ -258,85 +258,145 @@ const displayedSuggestions = computed(() => {
           <div class="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
             <!-- ─── SUB-TAB 1: Story Core & Psychological Hooks ─── -->
             <div v-if="activeStudioTab === 'storyCore'" class="space-y-4">
-              <div class="p-4 rounded-xl border space-y-3" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+              <!-- 1. Hero Card: Series Synopsis & Commercial Overview -->
+              <div
+                class="p-5 rounded-2xl border space-y-3 relative overflow-hidden"
+                style="background: linear-gradient(135deg, var(--el-fill-color-light), var(--el-fill-color)); border-color: var(--el-color-primary-light-7);"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1.5 rounded-lg text-white text-xs flex items-center justify-center shadow-sm" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                      <el-icon><Film /></el-icon>
+                    </span>
+                    <h3 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
+                      {{ t('wizard.seriesSynopsis') }}
+                    </h3>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <el-tag size="small" type="primary" effect="plain" round class="!text-[10px] font-bold">
+                      {{ masterPlan.genre || formData.genre }}
+                    </el-tag>
+                    <el-tag v-if="masterPlan.estimated_retention" size="small" type="success" effect="plain" round class="!text-[10px] font-bold">
+                      📈 {{ t('wizard.estimatedRetention') }}: {{ masterPlan.estimated_retention }}
+                    </el-tag>
+                  </div>
+                </div>
+
+                <!-- Synopsis Text -->
+                <p class="text-xs leading-relaxed font-medium pl-3 border-l-2" style="border-color: var(--el-color-primary); color: var(--el-text-color-primary);">
+                  {{ masterPlan.synopsis || masterPlan.story_core?.core_attraction }}
+                </p>
+              </div>
+
+              <!-- 2. Franchise Core Attraction -->
+              <div v-if="masterPlan.story_core?.core_attraction" class="p-4 rounded-xl border space-y-2.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
                 <div class="flex items-center justify-between">
                   <h4 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-color-primary);">
-                    <el-icon><Aim /></el-icon> {{ t('wizard.storyCore') }}
+                    <el-icon><Aim /></el-icon> {{ t('wizard.franchiseCoreAttraction') }}
                   </h4>
-                  <el-tag size="small" type="primary" effect="plain" round class="!text-[10px]">
-                    {{ masterPlan.genre || formData.genre }}
-                  </el-tag>
                 </div>
-                <p class="text-xs leading-relaxed font-semibold" style="color: var(--el-text-color-primary);">
-                  {{ masterPlan.story_core?.core_attraction || masterPlan.storyCore?.coreAttraction || masterPlan.seriesOverview || masterPlan.synopsis }}
+                <p class="text-xs leading-relaxed" style="color: var(--el-text-color-primary);">
+                  {{ masterPlan.story_core.core_attraction }}
                 </p>
               </div>
 
-              <!-- Strategic Rule Boundary & Goldfinger -->
-              <div v-if="masterPlan.story_core?.gold_finger_rule || masterPlan.storyCore?.goldFingerRule" class="p-3.5 rounded-xl border" style="background-color: var(--el-color-danger-light-9); border-color: var(--el-color-danger-light-7);">
-                <div class="text-xs font-bold mb-1 flex items-center gap-1" style="color: var(--el-color-danger);">
+              <!-- 3. Strategic Rule Boundary & Goldfinger Rule -->
+              <div v-if="masterPlan.story_core?.gold_finger_rule" class="p-4 rounded-xl border space-y-2.5" style="background: linear-gradient(135deg, var(--el-color-danger-light-9), var(--el-fill-color-light)); border-color: var(--el-color-danger-light-7);">
+                <div class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-color-danger);">
                   ⚡ {{ t('wizard.keyLeverageRule') }}
                 </div>
-                <p class="text-xs leading-relaxed" style="color: var(--el-text-color-primary);">
-                  {{ masterPlan.story_core?.gold_finger_rule || masterPlan.storyCore?.goldFingerRule }}
+                <p class="text-xs leading-relaxed font-medium" style="color: var(--el-text-color-primary);">
+                  {{ masterPlan.story_core.gold_finger_rule }}
                 </p>
               </div>
 
-              <!-- Psychological Pleasure Hook -->
-              <div v-if="masterPlan.story_core?.psychological_pleasure || masterPlan.storyCore?.psychologicalPleasure" class="p-3.5 rounded-xl border" style="background-color: var(--el-color-success-light-9); border-color: var(--el-color-success-light-7);">
-                <div class="text-xs font-bold mb-1 flex items-center gap-1" style="color: var(--el-color-success);">
-                  🎯 Catharsis & Psychological Hook:
+              <!-- 4. Catharsis & Psychological Pleasure Hook -->
+              <div v-if="masterPlan.story_core?.psychological_pleasure" class="p-4 rounded-xl border space-y-2.5" style="background: linear-gradient(135deg, var(--el-color-success-light-9), var(--el-fill-color-light)); border-color: var(--el-color-success-light-7);">
+                <div class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-color-success);">
+                  🎯 {{ t('wizard.catharsisHookLabel') }}
                 </div>
-                <p class="text-xs leading-relaxed" style="color: var(--el-text-color-primary);">
-                  {{ masterPlan.story_core?.psychological_pleasure || masterPlan.storyCore?.psychologicalPleasure }}
+                <p class="text-xs leading-relaxed font-medium" style="color: var(--el-text-color-primary);">
+                  {{ masterPlan.story_core.psychological_pleasure }}
                 </p>
               </div>
 
-              <!-- Hidden Character Growth Arc -->
-              <div v-if="masterPlan.hidden_line || masterPlan.hiddenLine" class="p-3.5 rounded-xl border" style="background-color: var(--el-color-warning-light-9); border-color: var(--el-color-warning-light-7);">
-                <div class="text-xs font-bold mb-1 flex items-center gap-1" style="color: var(--el-color-warning);">
+              <!-- 5. Hidden Character Growth Arc -->
+              <div v-if="masterPlan.hidden_line" class="p-4 rounded-xl border space-y-2.5" style="background: linear-gradient(135deg, var(--el-color-warning-light-9), var(--el-fill-color-light)); border-color: var(--el-color-warning-light-7);">
+                <div class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-color-warning);">
                   🌱 {{ t('wizard.hiddenArcGrowth') }}
                 </div>
-                <p class="text-xs leading-relaxed" style="color: var(--el-text-color-primary);">
-                  {{ masterPlan.hidden_line || masterPlan.hiddenLine }}
+                <p class="text-xs leading-relaxed font-medium" style="color: var(--el-text-color-primary);">
+                  {{ masterPlan.hidden_line }}
                 </p>
               </div>
 
-              <!-- Visual Aesthetic Prompt Note -->
-              <div v-if="masterPlan.visual_style_prompt || masterPlan.visualStylePrompt || formData.visualStylePrompt" class="p-3.5 rounded-xl border" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
-                <div class="text-xs font-bold mb-1 flex items-center gap-1" style="color: var(--el-text-color-secondary);">
+              <!-- 6. Target Audience & 3-Second Viral Hook Grid -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <div v-if="masterPlan.target_audience" class="p-3.5 rounded-xl border space-y-1.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+                  <div class="text-xs font-bold flex items-center gap-1" style="color: var(--el-text-color-secondary);">
+                    👥 {{ t('wizard.targetAudienceLabel') }}
+                  </div>
+                  <p class="text-[11px] leading-relaxed" style="color: var(--el-text-color-primary);">
+                    {{ masterPlan.target_audience }}
+                  </p>
+                </div>
+
+                <div v-if="masterPlan.viral_hook" class="p-3.5 rounded-xl border space-y-1.5" style="background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-light)); border-color: var(--el-color-primary-light-7);">
+                  <div class="text-xs font-bold flex items-center gap-1" style="color: var(--el-color-primary);">
+                    🔥 {{ t('wizard.viralHookLabel') }}
+                  </div>
+                  <p class="text-[11px] leading-relaxed font-medium" style="color: var(--el-text-color-primary);">
+                    {{ masterPlan.viral_hook }}
+                  </p>
+                </div>
+              </div>
+
+              <!-- 7. Visual Aesthetic Prompt Note -->
+              <div v-if="masterPlan.visual_style_prompt || formData.visualStylePrompt" class="p-3.5 rounded-xl border space-y-1.5" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
+                <div class="text-xs font-bold flex items-center gap-1" style="color: var(--el-text-color-secondary);">
                   <el-icon><Picture /></el-icon> {{ t('wizard.visualStyleLabel') }}
                 </div>
                 <p class="text-[11px] font-mono leading-relaxed" style="color: var(--el-text-color-regular);">
-                  {{ masterPlan.visual_style_prompt || masterPlan.visualStylePrompt || formData.visualStylePrompt }}
+                  {{ masterPlan.visual_style_prompt || formData.visualStylePrompt }}
                 </p>
               </div>
             </div>
 
             <!-- ─── SUB-TAB 2: Characters Triangle ─── -->
-            <div v-else-if="activeStudioTab === 'characters'" class="space-y-3">
+            <div v-else-if="activeStudioTab === 'characters'" class="space-y-3.5">
               <div
                 v-for="char in (masterPlan.characters || [])"
                 :key="char.name"
-                class="p-4 rounded-xl border space-y-2.5"
+                class="p-4 rounded-xl border space-y-3 transition-all hover:border-[var(--el-color-primary-light-5)] shadow-xs"
                 style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
               >
-                <div class="flex items-start justify-between">
+                <!-- Character Header Bar -->
+                <div class="flex items-start justify-between gap-3">
                   <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-black shrink-0" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                    <div
+                      class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-black shrink-0 shadow-sm"
+                      :style="char.role?.toLowerCase() === 'protagonist'
+                        ? 'background: linear-gradient(135deg, #10b981, #059669);'
+                        : char.role?.toLowerCase() === 'antagonist'
+                        ? 'background: linear-gradient(135deg, #ef4444, #b91c1c);'
+                        : 'background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);'"
+                    >
                       {{ char.name?.[0] || '?' }}
                     </div>
                     <div>
                       <div class="text-xs font-bold flex flex-wrap items-center gap-1.5" style="color: var(--el-text-color-primary);">
-                        <span>{{ char.name }}</span>
+                        <span class="text-sm font-black">{{ char.name }}</span>
                         <el-tag
                           size="small"
                           :type="char.role?.toLowerCase() === 'protagonist' ? 'success' : char.role?.toLowerCase() === 'antagonist' ? 'danger' : 'primary'"
                           effect="plain"
                           round
-                          class="!text-[10px]"
+                          class="!text-[10px] font-bold uppercase"
                         >
                           {{ char.role ? t('wizard.' + char.role.toLowerCase(), char.role) : t('wizard.protagonist') }}
+                        </el-tag>
+                        <el-tag v-if="char.age" size="small" effect="plain" round class="!text-[10px]" type="info">
+                          {{ char.age }} y/o
                         </el-tag>
                         <el-tag v-if="char.gender" size="small" effect="plain" round class="!text-[10px]" :type="char.gender === 'female' ? 'warning' : 'info'">
                           {{ char.gender === 'female' ? '♀ ' + t('wizard.female') : char.gender === 'male' ? '♂ ' + t('wizard.male') : t('wizard.neutral') }}
@@ -344,40 +404,57 @@ const displayedSuggestions = computed(() => {
                         <el-tag v-if="char.nationality" size="small" effect="plain" round class="!text-[10px]">
                           🌐 {{ char.nationality }}
                         </el-tag>
-                        <el-tag v-if="char.voice_id || char.voiceId" size="small" type="primary" effect="plain" round class="!text-[10px]">
-                          🎙️ {{ char.voice_id || char.voiceId }}
+                        <el-tag v-if="char.voice_id" size="small" type="primary" effect="plain" round class="!text-[10px]">
+                          🎙️ {{ char.voice_id }}
                         </el-tag>
                       </div>
                       <div class="text-[10px] font-mono mt-0.5" style="color: var(--el-text-color-placeholder);">
-                        {{ char.loraAnchor || 'anchor_lora_' + char.name.toLowerCase().replace(/\s+/g, '_') }}
+                        {{ char.lora_model || 'anchor_lora_' + char.name.toLowerCase().replace(/\s+/g, '_') }}
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <!-- Identity & Bio -->
-                <div class="text-xs leading-relaxed font-semibold" style="color: var(--el-text-color-primary);">
-                  {{ char.identity || char.bio }}
+                <div v-if="char.identity" class="text-xs leading-relaxed font-semibold pl-2.5 border-l-2" style="border-color: var(--el-color-primary); color: var(--el-text-color-primary);">
+                  {{ char.identity }}
                 </div>
 
-                <!-- Traits -->
-                <div v-if="char.traits" class="text-[11px] leading-relaxed" style="color: var(--el-text-color-regular);">
-                  <span class="font-bold text-[10px] uppercase tracking-wider" style="color: var(--el-color-primary);">✨ {{ t('wizard.traits') }}:</span> {{ char.traits }}
+                <!-- Traits & Speech Style Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  <div v-if="char.traits" class="p-2.5 rounded-lg border text-[11px] leading-relaxed" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-[10px] uppercase tracking-wider" style="color: var(--el-color-primary);">✨ {{ t('wizard.traits') }}:</span>
+                    <p class="mt-0.5">{{ char.traits }}</p>
+                  </div>
+                  <div v-if="char.speech_style" class="p-2.5 rounded-lg border text-[11px] leading-relaxed" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-indigo-400">💬 {{ t('wizard.charSpeechStyle') }}</span>
+                    <p class="mt-0.5">{{ char.speech_style }}</p>
+                  </div>
                 </div>
 
-                <!-- Circumstance -->
-                <div v-if="char.circumstance" class="text-[11px] leading-relaxed" style="color: var(--el-text-color-regular);">
-                  <span class="font-bold text-[10px] uppercase tracking-wider text-amber-500">📍 {{ t('wizard.circumstance') }}:</span> {{ char.circumstance }}
+                <!-- Appearance & Signature Wardrobe Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  <div v-if="char.visual_traits || char.appearance || char.physical_characteristics" class="p-2.5 rounded-lg border text-[11px] leading-relaxed" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-purple-400">👤 {{ t('wizard.charAppearance') }}</span>
+                    <p class="mt-0.5">{{ char.visual_traits || char.appearance || char.physical_characteristics }}</p>
+                  </div>
+                  <div v-if="char.clothing_and_accessories" class="p-2.5 rounded-lg border text-[11px] leading-relaxed" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-teal-400">👗 {{ t('wizard.charWardrobe') }}</span>
+                    <p class="mt-0.5">{{ char.clothing_and_accessories }}</p>
+                  </div>
                 </div>
 
-                <!-- Action / Goal -->
-                <div v-if="char.action" class="text-[11px] leading-relaxed" style="color: var(--el-text-color-regular);">
-                  <span class="font-bold text-[10px] uppercase tracking-wider text-sky-400">🎯 {{ t('wizard.action') }}:</span> {{ char.action }}
-                </div>
-
-                <!-- Ending / Fate -->
-                <div v-if="char.ending" class="text-[11px] leading-relaxed" style="color: var(--el-text-color-regular);">
-                  <span class="font-bold text-[10px] uppercase tracking-wider text-emerald-400">🏁 {{ t('wizard.ending') }}:</span> {{ char.ending }}
+                <!-- Circumstance & Action -->
+                <div class="space-y-1.5 text-[11px] leading-relaxed" style="color: var(--el-text-color-regular);">
+                  <div v-if="char.circumstance">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-amber-500">📍 {{ t('wizard.circumstance') }}:</span> {{ char.circumstance }}
+                  </div>
+                  <div v-if="char.action">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-sky-400">🎯 {{ t('wizard.action') }}:</span> {{ char.action }}
+                  </div>
+                  <div v-if="char.ending">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-emerald-400">🏁 {{ t('wizard.ending') }}:</span> {{ char.ending }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -385,73 +462,168 @@ const displayedSuggestions = computed(() => {
             <!-- ─── SUB-TAB 3: Three Acts & Paywall Structure ─── -->
             <div v-else-if="activeStudioTab === 'structure'" class="space-y-4">
               <!-- Three Acts Section -->
-              <div v-if="(masterPlan.three_acts || masterPlan.threeActs) && (masterPlan.three_acts || masterPlan.threeActs).length > 0" class="space-y-2.5">
-                <h4 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
-                  <el-icon><Files /></el-icon> {{ t('wizard.threeActStructure') }}
-                </h4>
-                <div
-                  v-for="act in (masterPlan.three_acts || masterPlan.threeActs)"
-                  :key="act.act_number || act.actNumber"
-                  class="p-3.5 rounded-xl border space-y-1.5"
-                  style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
-                >
-                  <div class="flex items-center justify-between text-xs font-bold" style="color: var(--el-text-color-primary);">
-                    <span>{{ t('wizard.actLabel', { number: act.act_number || act.actNumber, name: act.name }) }}</span>
-                    <span class="text-[10px] font-mono px-2 py-0.5 rounded-md" style="background-color: var(--el-color-primary-light-9); color: var(--el-color-primary);">
-                      {{ act.episode_range || act.episodeRange }}
-                    </span>
+              <div v-if="masterPlan.three_acts && masterPlan.three_acts.length > 0" class="space-y-2.5">
+                <div class="flex items-center gap-2">
+                  <span class="p-1 rounded text-white text-xs flex items-center justify-center" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                    <el-icon><Files /></el-icon>
+                  </span>
+                  <h4 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
+                    {{ t('wizard.threeActStructure') }}
+                  </h4>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3">
+                  <div
+                    v-for="act in masterPlan.three_acts"
+                    :key="act.act_number"
+                    class="p-4 rounded-xl border space-y-2 transition-all hover:border-[var(--el-color-primary-light-5)]"
+                    style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
+                  >
+                    <div class="flex items-center justify-between text-xs font-bold" style="color: var(--el-text-color-primary);">
+                      <div class="flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[11px] font-black" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                          {{ act.act_number }}
+                        </span>
+                        <span class="font-black text-sm">{{ act.name }}</span>
+                      </div>
+                      <span class="text-[10px] font-mono px-2.5 py-1 rounded-lg font-bold" style="background-color: var(--el-color-primary-light-9); color: var(--el-color-primary);">
+                        {{ act.episode_range }}
+                      </span>
+                    </div>
+
+                    <div class="text-[11px] leading-relaxed pl-8" style="color: var(--el-text-color-secondary);">
+                      {{ act.function }}
+                    </div>
+
+                    <div v-if="act.core_question" class="text-[11px] leading-relaxed pl-8" style="color: var(--el-text-color-regular);">
+                      <span class="font-bold text-sky-400">❓ {{ t('wizard.actCoreQuestion') }}</span> {{ act.core_question }}
+                    </div>
+
+                    <div v-if="act.act_climax" class="pt-1 pl-8">
+                      <el-tag size="small" type="warning" effect="plain" round class="!text-[10px] font-bold p-1.5 whitespace-normal h-auto w-full justify-start">
+                        ⚡ {{ act.act_climax }}
+                      </el-tag>
+                    </div>
                   </div>
-                  <div class="text-[11px] leading-relaxed" style="color: var(--el-text-color-secondary);">{{ act.function }}</div>
-                  <div v-if="act.act_climax || act.actClimax" class="text-[11px] font-semibold pt-1">
-                    <el-tag size="small" type="warning" effect="plain" round class="!text-[10px]">⚡ {{ act.act_climax || act.actClimax }}</el-tag>
+                </div>
+              </div>
+
+              <!-- Major Reversals Section -->
+              <div v-if="masterPlan.major_reversals && masterPlan.major_reversals.length > 0" class="space-y-2.5 pt-2">
+                <div class="flex items-center gap-2">
+                  <span class="p-1 rounded text-white text-xs flex items-center justify-center bg-amber-500">
+                    <el-icon><TrendCharts /></el-icon>
+                  </span>
+                  <h4 class="text-xs font-black uppercase tracking-wider text-amber-500">
+                    {{ t('wizard.majorReversals') }}
+                  </h4>
+                </div>
+
+                <div class="grid grid-cols-1 gap-2.5">
+                  <div
+                    v-for="rev in masterPlan.major_reversals"
+                    :key="rev.reversal_index"
+                    class="p-3.5 rounded-xl border space-y-1.5"
+                    style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
+                  >
+                    <div class="flex items-center justify-between text-xs font-bold">
+                      <span class="text-amber-500 font-black">{{ t('wizard.reversalBadge', { index: rev.reversal_index, ep: rev.episode_number }) }}</span>
+                      <span class="text-[10px] font-mono px-2 py-0.5 rounded-md" style="background-color: var(--el-color-warning-light-9); color: var(--el-color-warning);">
+                        {{ rev.setup_hook }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] leading-relaxed font-medium" style="color: var(--el-text-color-primary);">{{ rev.reversal_event }}</div>
+                    <div class="text-[11px] font-semibold pt-0.5" style="color: var(--el-color-primary);">
+                      💥 {{ t('wizard.audienceImpact') }} {{ rev.audience_impact }}
+                    </div>
                   </div>
                 </div>
               </div>
 
               <!-- Paywall & Ad Retention Hooks -->
-              <div v-if="(masterPlan.paywall_hooks || masterPlan.paywallHooks) && (masterPlan.paywall_hooks || masterPlan.paywallHooks).length > 0" class="space-y-2.5 pt-2">
-                <h4 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
-                  <el-icon><Key /></el-icon> {{ t('wizard.paywallHooks') }}
-                </h4>
-                <div
-                  v-for="hook in (masterPlan.paywall_hooks || masterPlan.paywallHooks)"
-                  :key="hook.percentage"
-                  class="p-3 rounded-xl border text-[11px] space-y-1.5"
-                  style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
-                >
-                  <div class="flex items-center justify-between font-bold">
-                    <span style="color: var(--el-color-danger);">{{ t('wizard.paywallHookBadge', { percentage: hook.percentage, ep: hook.episode_number || hook.episodeNumber }) }}</span>
-                    <span class="text-[10px] font-mono" style="color: var(--el-text-color-placeholder);">{{ hook.type }}</span>
-                  </div>
-                  <p class="leading-relaxed" style="color: var(--el-text-color-regular);">{{ hook.hook_description || hook.hookDescription }}</p>
-                  <div v-if="hook.ad_hook_30s_prompt || hook.adHook30sPrompt" class="pt-0.5">
-                    <el-tag size="small" type="danger" effect="plain" round class="p-1.5 !text-[10px] whitespace-normal h-auto w-full justify-start">
-                      {{ t('wizard.adHook30s') }} {{ hook.ad_hook_30s_prompt || hook.adHook30sPrompt }}
-                    </el-tag>
+              <div v-if="masterPlan.paywall_hooks && masterPlan.paywall_hooks.length > 0" class="space-y-2.5 pt-2">
+                <div class="flex items-center gap-2">
+                  <span class="p-1 rounded text-white text-xs flex items-center justify-center bg-rose-500">
+                    <el-icon><Key /></el-icon>
+                  </span>
+                  <h4 class="text-xs font-black uppercase tracking-wider text-rose-500">
+                    {{ t('wizard.paywallHooks') }}
+                  </h4>
+                </div>
+
+                <div class="grid grid-cols-1 gap-2.5">
+                  <div
+                    v-for="hook in masterPlan.paywall_hooks"
+                    :key="hook.percentage"
+                    class="p-3.5 rounded-xl border text-[11px] space-y-2"
+                    style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
+                  >
+                    <div class="flex items-center justify-between font-bold">
+                      <span style="color: var(--el-color-danger);" class="font-black text-xs">
+                        {{ t('wizard.paywallHookBadge', { percentage: hook.percentage, ep: hook.episode_number }) }}
+                      </span>
+                      <span class="text-[10px] font-mono px-2 py-0.5 rounded" style="background-color: var(--el-fill-color-darker); color: var(--el-text-color-placeholder);">
+                        {{ hook.type }}
+                      </span>
+                    </div>
+                    <p class="leading-relaxed" style="color: var(--el-text-color-regular);">{{ hook.hook_description }}</p>
+                    <div v-if="hook.ad_hook_30s_prompt" class="pt-0.5">
+                      <el-tag size="small" type="danger" effect="plain" round class="p-2 !text-[10px] whitespace-normal h-auto w-full justify-start font-mono leading-relaxed">
+                        📢 {{ t('wizard.adHookCallout') }} {{ hook.ad_hook_30s_prompt }}
+                      </el-tag>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             <!-- ─── SUB-TAB 4: Episode Blueprint ─── -->
-            <div v-else-if="activeStudioTab === 'episodes'" class="space-y-2.5">
+            <div v-else-if="activeStudioTab === 'episodes'" class="space-y-3">
               <div
                 v-for="ep in (masterPlan.episodes || [])"
-                :key="ep.episode_number || ep.episodeNumber"
-                class="p-3 rounded-xl border space-y-1.5 transition-all hover:border-[var(--el-color-primary)]"
+                :key="ep.episode_number"
+                class="p-4 rounded-xl border space-y-2.5 transition-all hover:border-[var(--el-color-primary-light-5)] shadow-xs"
                 style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
               >
-                <div class="flex items-start gap-2.5">
-                  <el-tag size="small" type="primary" effect="plain" round class="!text-[10px] w-8 shrink-0 font-bold text-center">
-                    # {{ ep.episode_number || ep.episodeNumber }}
-                  </el-tag>
-                  <div class="flex-1 min-w-0">
-                    <div class="text-xs font-bold truncate" style="color: var(--el-text-color-primary);">{{ ep.title }}</div>
-                    <div class="text-[11px] mt-0.5 leading-snug" style="color: var(--el-text-color-secondary);">{{ ep.synopsis || ep.hook }}</div>
-                    <div v-if="ep.cliffhanger_hook || ep.cliffhangerHook" class="mt-1">
-                      <el-tag size="small" type="warning" effect="plain" round class="!text-[10px] p-1.5 whitespace-normal h-auto w-full justify-start">
-                        <el-icon class="mr-1"><TrendCharts /></el-icon> {{ ep.cliffhanger_hook || ep.cliffhangerHook }}
-                      </el-tag>
+                <!-- Episode Header -->
+                <div class="flex items-center justify-between gap-2.5">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0 shadow-sm" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                      #{{ ep.episode_number }}
+                    </div>
+                    <div class="text-xs font-bold truncate" style="color: var(--el-text-color-primary);">
+                      {{ ep.title }}
+                    </div>
+                  </div>
+                  <span v-if="ep.phase" class="text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0" style="background-color: var(--el-fill-color); color: var(--el-text-color-secondary);">
+                    {{ ep.phase }}
+                  </span>
+                </div>
+
+                <!-- Synopsis -->
+                <div class="text-[11px] leading-relaxed pl-1" style="color: var(--el-text-color-secondary);">
+                  {{ ep.synopsis }}
+                </div>
+
+                <!-- Scene Core & Escalation Dual Chips -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 pt-0.5">
+                  <div v-if="ep.scene_core" class="p-2 rounded-lg border text-[11px] leading-snug" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-amber-500">🎬 {{ t('wizard.sceneCoreLabel') }}</span>
+                    <p class="mt-0.5">{{ ep.scene_core }}</p>
+                  </div>
+                  <div v-if="ep.conflict_escalation" class="p-2 rounded-lg border text-[11px] leading-snug" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                    <span class="font-bold text-rose-400">⚡ {{ t('wizard.conflictEscalationLabel') }}</span>
+                    <p class="mt-0.5">{{ ep.conflict_escalation }}</p>
+                  </div>
+                </div>
+
+                <!-- Cliffhanger Hook Banner -->
+                <div v-if="ep.cliffhanger_hook" class="pt-0.5">
+                  <div class="p-2 rounded-lg border flex items-start gap-2" style="background: linear-gradient(135deg, var(--el-color-warning-light-9), var(--el-fill-color-light)); border-color: var(--el-color-warning-light-7);">
+                    <el-icon class="text-amber-500 shrink-0 mt-0.5"><TrendCharts /></el-icon>
+                    <div class="text-[11px] font-semibold leading-relaxed" style="color: var(--el-text-color-primary);">
+                      <span class="font-bold text-amber-500 uppercase tracking-wider text-[10px] mr-1">{{ t('wizard.cliffhangerBadge') }}:</span>
+                      {{ ep.cliffhanger_hook }}
                     </div>
                   </div>
                 </div>

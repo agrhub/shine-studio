@@ -17,6 +17,9 @@ const { t, locale } = useI18n();
 const viralTopics = ref<any[]>([]);
 const isFetchingTrends = ref(false);
 const trendsError = ref('');
+const trendPage = ref(1);
+const trendPageSize = ref(6);
+const trendTotal = ref(0);
 
 const popularCountries = computed(() => TOP_COUNTRIES.filter((c) => c.isPopular));
 const allCountries = WORLD_COUNTRIES;
@@ -28,6 +31,7 @@ function selectCountry(c: WorldCountry) {
   props.formData.country = c.name;
   props.formData.countryCode = c.code;
   props.formData.language = c.primaryLang || 'en-US';
+  trendPage.value = 1;
 }
 
 function onCountrySelectChange(countryName: string) {
@@ -35,16 +39,23 @@ function onCountrySelectChange(countryName: string) {
   props.formData.country = c.name;
   props.formData.countryCode = c.code;
   props.formData.language = c.primaryLang || 'en-US';
+  trendPage.value = 1;
 }
 
-async function fetchViralTrends() {
+async function fetchViralTrends(pageNumber: number = 1) {
   isFetchingTrends.value = true;
   trendsError.value = '';
-  const currentLang = locale.value || localStorage.getItem('shine_language') || localStorage.getItem('shine_locale') || 'en';
+  trendPage.value = pageNumber;
+  const currentLang = locale.value || localStorage.getItem('shine_language') || 'en';
   try {
     const targetCountry = props.formData.country || 'United States';
-    const res: any = await http.get(`/ai/trends/viral-topics?region=${encodeURIComponent(targetCountry)}&lang=${currentLang}`);
+    const res: any = await http.get(`/ai/trends/viral-topics?region=${encodeURIComponent(targetCountry)}&lang=${currentLang}&page=${pageNumber}&pageSize=${trendPageSize.value}`);
     viralTopics.value = res?.data || [];
+    if (res?.pagination) {
+      trendTotal.value = res.pagination.total || viralTopics.value.length;
+    } else {
+      trendTotal.value = viralTopics.value.length;
+    }
     if (viralTopics.value.length === 0) trendsError.value = t('wizard.noTrendsMsg');
   } catch {
     trendsError.value = t('wizard.trendsErrorMsg');
@@ -181,7 +192,7 @@ function selectTrend(topic: any) {
             icon="MagicStick"
             round
             :loading="isFetchingTrends"
-            @click="fetchViralTrends"
+            @click="() => fetchViralTrends()"
           >
             {{ isFetchingTrends ? t('wizard.scanning') : (t('wizard.fetchTrends') || 'Fetch Trends') }}
           </el-button>
@@ -233,9 +244,25 @@ function selectTrend(topic: any) {
             </div>
             <div class="pt-3 border-t flex items-center justify-between" style="border-color: var(--el-border-color-light);">
               <span class="text-[10px] font-semibold" style="color: var(--el-text-color-placeholder);">{{ t('wizard.engagement') }}</span>
-              <span class="text-sm font-black" style="color: var(--el-color-primary);">{{ topic.engagementScore || 85 }}%</span>
+              <span class="text-sm font-black" style="color: var(--el-color-primary);">{{ topic.engagementScore || topic.engagement_score || 85 }}%</span>
             </div>
           </div>
+        </div>
+
+        <!-- Pagination for Wizard Modal Trends -->
+        <div v-if="trendTotal > trendPageSize" class="mt-5 flex items-center justify-between gap-4 border-t border-[var(--el-border-color-light)] pt-3">
+          <div class="text-[11px] text-[var(--el-text-color-secondary)]">
+            {{ t('common.showing') }} {{ ((trendPage - 1) * trendPageSize) + 1 }} - {{ Math.min(trendPage * trendPageSize, trendTotal) }} / {{ trendTotal }}
+          </div>
+          <el-pagination
+            v-model:current-page="trendPage"
+            :page-size="trendPageSize"
+            :total="trendTotal"
+            layout="prev, pager, next"
+            background
+            small
+            @current-change="(n: number) => fetchViralTrends(n)"
+          />
         </div>
       </div>
 

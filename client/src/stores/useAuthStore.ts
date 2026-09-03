@@ -3,7 +3,8 @@ import { ref, computed } from 'vue';
 import { useDark, useToggle } from '@vueuse/core';
 import http from '@/utils/http';
 import i18n from '@/i18n';
-import { User } from '@/types/api';
+import { useChatStore } from '@/stores/chatStore';
+import { User } from '../types';
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(
@@ -29,11 +30,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   function applyUserPreferences(usr: User | null) {
     const theme = usr?.theme || localStorage.getItem('shine_theme') || 'dark';
-    const language = usr?.language || localStorage.getItem('shine_language') || localStorage.getItem('shine_locale') || 'en';
+    const language = usr?.language || localStorage.getItem('shine_language') || 'en';
 
     isDark.value = theme === 'dark';
     localStorage.setItem('shine_language', language);
-    localStorage.setItem('shine_locale', language);
 
     try {
       if (i18n && i18n.global && i18n.global.locale) {
@@ -80,6 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('shine_token', data.token);
       localStorage.setItem('shine_user', JSON.stringify(data.user));
       applyUserPreferences(data.user);
+      useChatStore().loadHistory();
       return data;
     } finally {
       isLoading.value = false;
@@ -96,6 +97,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('shine_token', data.token);
       localStorage.setItem('shine_user', JSON.stringify(data.user));
       applyUserPreferences(data.user);
+      useChatStore().loadHistory();
       return data;
     } finally {
       isLoading.value = false;
@@ -111,27 +113,46 @@ export const useAuthStore = defineStore('auth', () => {
     isLoading.value = true;
     try {
       const res: any = await http.post('/auth/signup', payload);
+      return res?.data || res;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  async function verifySignupOTP(payload: { temp_token: string; otp: string }) {
+    isLoading.value = true;
+    try {
+      const res: any = await http.post('/auth/signup/verify-otp', payload);
       const data = res?.data || res;
       token.value = data.token;
       user.value = data.user;
       localStorage.setItem('shine_token', data.token);
       localStorage.setItem('shine_user', JSON.stringify(data.user));
       applyUserPreferences(data.user);
+      useChatStore().loadHistory();
       return data;
     } finally {
       isLoading.value = false;
     }
   }
 
+  async function resendSignupOTP(temp_token: string) {
+    const res: any = await http.post('/auth/signup/resend-otp', { temp_token });
+    return res?.data || res;
+  }
+
   async function updatePreferences(prefs: { theme?: string; language?: string }) {
+    if (prefs.theme) localStorage.setItem('shine_theme', prefs.theme);
+    if (prefs.language) {
+      localStorage.setItem('shine_language', prefs.language);
+    }
+
     if (user.value) {
       if (prefs.theme) user.value.theme = prefs.theme;
       if (prefs.language) user.value.language = prefs.language;
       localStorage.setItem('shine_user', JSON.stringify(user.value));
       applyUserPreferences(user.value);
     } else {
-      if (prefs.theme) localStorage.setItem('shine_theme', prefs.theme);
-      if (prefs.language) localStorage.setItem('shine_language', prefs.language);
       applyUserPreferences({ theme: prefs.theme, language: prefs.language } as any);
     }
 
@@ -140,9 +161,9 @@ export const useAuthStore = defineStore('auth', () => {
         const res: any = await http.patch('/auth/preferences', prefs);
         const data = res?.data || res;
         if (data?.user) {
-          user.value = data.user;
-          localStorage.setItem('shine_user', JSON.stringify(data.user));
-          applyUserPreferences(data.user);
+          user.value = { ...user.value, ...data.user };
+          localStorage.setItem('shine_user', JSON.stringify(user.value));
+          applyUserPreferences(user.value);
         }
       } catch {
         // silent fallback
@@ -165,6 +186,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null;
     localStorage.removeItem('shine_token');
     localStorage.removeItem('shine_user');
+    useChatStore().clearUserSession();
   }
 
   return {
@@ -180,6 +202,8 @@ export const useAuthStore = defineStore('auth', () => {
     verifyLogin2FA,
     resendLogin2FA,
     signup,
+    verifySignupOTP,
+    resendSignupOTP,
     updatePreferences,
     forgotPassword,
     logout,

@@ -13,6 +13,7 @@ import { toast } from 'vue-sonner';
 import { ElMessageBox, ElLoading } from 'element-plus';
 import { Bot } from 'lucide-vue-next';
 import http from '@/utils/http';
+import { Clapperboard } from 'lucide-vue-next';
 
 // Components & Modals
 import CanvasPanel from '@/components/editor/CanvasPanel.vue';
@@ -31,7 +32,7 @@ import CountryFlag from '@/components/common/CountryFlag.vue';
 import JobStatusPopover from '@/components/workspace/JobStatusPopover.vue';
 import SeriesMasterPlanDialog from '@/components/workspace/SeriesMasterPlanDialog.vue';
 import BulkExportPublishDialog from '@/components/workspace/BulkExportPublishDialog.vue';
-import { getLanguageByCode } from '@/constants/geminiLanguages';
+import { getLanguageByCode, parseRenderVersionKey } from '@/constants/geminiLanguages';
 import { nextTick } from 'vue';
 import { data, sanitizeTimelineData } from '@/components/editor/data';
 
@@ -286,9 +287,19 @@ async function runPipelineStep(stepId: string) {
 }
 
 // Called by ExportModal when local render completes — opens review dialog
-function onLocalExportDone(blobUrl: string, thumbnail: string) {
+function onLocalExportDone(blobUrl: string | Record<string, string>, thumbnail: string) {
   isExportModalOpen.value = false;
-  renderReviewUrl.value = blobUrl;
+  if (typeof blobUrl === 'object' && blobUrl !== null) {
+    renderReviewOutputs.value = blobUrl;
+    const firstLang = Object.keys(blobUrl)[0] || 'en-US';
+    renderReviewSelectedLang.value = firstLang;
+    renderReviewUrl.value = blobUrl[firstLang] || '';
+  } else {
+    const currentLang = seriesStore.currentSeries?.language || 'en-US';
+    renderReviewOutputs.value = { [currentLang]: blobUrl };
+    renderReviewSelectedLang.value = currentLang;
+    renderReviewUrl.value = blobUrl;
+  }
   renderReviewThumbnail.value = thumbnail;
   isRenderReviewOpen.value = true;
   pipelineStore.setStepStatus('b8', 'done');
@@ -341,25 +352,47 @@ async function queueServerRender() {
 
 const isUploadingRenderVersion = ref(false);
 
-async function uploadLocalRenderToVersions() {
-  if (!renderReviewUrl.value || !activeEpisodeId.value) return;
+async function uploadLocalRenderToVersions(uploadAll = false) {
+  if (!activeEpisodeId.value) return;
   isUploadingRenderVersion.value = true;
   try {
-    let blob: Blob | undefined;
-    if (renderReviewUrl.value.startsWith('blob:')) {
-      const resp = await fetch(renderReviewUrl.value);
-      blob = await resp.blob();
+    if (uploadAll && Object.keys(renderReviewOutputs.value).length > 1) {
+      const entries = Object.entries(renderReviewOutputs.value);
+      for (const [lang, url] of entries) {
+        if (!url) continue;
+        let blob: Blob | undefined;
+        if (url.startsWith('blob:')) {
+          const resp = await fetch(url);
+          blob = await resp.blob();
+        }
+        await seriesStore.addRenderVersion(seriesId.value, activeEpisodeId.value, {
+          language: lang,
+          voice: `Rendered Audio (${lang})`,
+          subtitles: [`Caption: ${lang} (Burned-in)`],
+          resolution: '1080x1920 (9:16 Vertical HD)',
+          thumbnail_url: renderReviewThumbnail.value,
+          video_url: url.startsWith('blob:') ? '' : url,
+        }, blob);
+      }
+      toast.success(t('toast.allRenderVersionsUploaded', { count: entries.length }));
+    } else {
+      if (!renderReviewUrl.value) return;
+      let blob: Blob | undefined;
+      if (renderReviewUrl.value.startsWith('blob:')) {
+        const resp = await fetch(renderReviewUrl.value);
+        blob = await resp.blob();
+      }
+      const currentLang = renderReviewSelectedLang.value || seriesStore.currentSeries?.language || 'en-US';
+      await seriesStore.addRenderVersion(seriesId.value, activeEpisodeId.value, {
+        language: currentLang,
+        voice: `Rendered Audio (${currentLang})`,
+        subtitles: [`Caption: ${currentLang} (Burned-in)`],
+        resolution: '1080x1920 (9:16 Vertical HD)',
+        thumbnail_url: renderReviewThumbnail.value,
+        video_url: renderReviewUrl.value.startsWith('blob:') ? '' : renderReviewUrl.value,
+      }, blob);
+      toast.success(t('toast.renderVersionUploaded'));
     }
-    const currentLang = renderReviewSelectedLang.value || seriesStore.currentSeries?.language || 'en-US';
-    await seriesStore.addRenderVersion(seriesId.value, activeEpisodeId.value, {
-      language: currentLang,
-      voice: `Rendered Audio (${currentLang})`,
-      subtitles: [`Caption: ${currentLang} (Burned-in)`],
-      resolution: '1080x1920 (9:16 Vertical HD)',
-      thumbnail_url: renderReviewThumbnail.value,
-      video_url: renderReviewUrl.value.startsWith('blob:') ? '' : renderReviewUrl.value,
-    }, blob);
-    toast.success(t('toast.renderVersionUploaded', 'Rendered video uploaded to Render Versions successfully!'));
   } catch (err: any) {
     toast.error(t('toast.uploadFailed', 'Failed to upload render version: ') + (err?.message || ''));
   } finally {
@@ -529,6 +562,13 @@ async function loadEpisodeTimeline(epId: string, silent = false, forceReset = fa
         if (projectData.settings.duration) {
           await setDuration(projectData.settings.duration / 1_000_000);
         }
+        seek(0);
+        nextTick(() => {
+          if (studioState.value.studio) {
+            (studioState.value.studio as any).updateArtboardLayout?.();
+            (studioState.value.studio as any).requestRender?.();
+          }
+        });
         if (!silent) {
           toast.success(t('toast.projectLoaded'));
         }
@@ -971,11 +1011,18 @@ onUnmounted(() => {
     <Transition name="fade">
       <div
         v-if="isWorkspaceLoading"
-        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--el-bg-color-page)]/95 backdrop-blur-xl pointer-events-auto"
+        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--el-bg-color-page)]/90 backdrop-blur-2xl pointer-events-auto overflow-hidden"
       >
-        <div class="flex flex-col items-center gap-5 p-8 rounded-3xl border border-[var(--el-border-color)] bg-[var(--el-bg-color-overlay)] shadow-2xl max-w-sm text-center">
+        <!-- Ambient Neon Glow Background Effects -->
+        <div class="absolute inset-0 pointer-events-none overflow-hidden">
+          <div class="neon-orb neon-orb-1"></div>
+          <div class="neon-orb neon-orb-2"></div>
+          <div class="neon-orb neon-orb-3"></div>
+        </div>
+
+        <div class="relative z-10 flex flex-col items-center gap-5 p-8 rounded-3xl border border-emerald-500/30 bg-[var(--el-bg-color-overlay)]/85 backdrop-blur-2xl shadow-[0_0_50px_rgba(16,185,129,0.15)] max-w-sm text-center">
           <div class="relative w-16 h-16 flex items-center justify-center">
-            <div class="w-16 h-16 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin absolute inset-0"></div>
+            <div class="w-16 h-16 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin absolute inset-0 shadow-[0_0_15px_rgba(16,185,129,0.5)]"></div>
             <el-icon class="text-emerald-500 !text-2xl flex items-center justify-center"><VideoPlay /></el-icon>
           </div>
           <div class="space-y-1.5">
@@ -1026,31 +1073,28 @@ onUnmounted(() => {
               </div>
 
               <div class="flex items-center gap-3">
-                <JobStatusPopover />
-
                 <div v-if="pipelineStore.isRendering" class="hidden md:flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-semibold" style="background-color: var(--el-color-primary-light-9); color: var(--el-color-primary); border: 1px solid var(--el-color-primary-light-7);">
                   <el-icon class="is-loading" :size="12"><Loading /></el-icon>
                   <span>{{ pipelineStore.currentRenderingMessage || (pipelineStore.currentRenderingScene ? t('workspace.renderingScene', { scene: pipelineStore.currentRenderingScene, percent: pipelineStore.currentRenderingPercent }) : `${t('common.processing')} (${pipelineStore.currentRenderingPercent}%)`) }}</span>
                 </div>
 
-                <el-button circle
-                  plan bg 
-                  icon="Upload"
-                  :title="t('common.export', 'Export Video')"
-                  @click="isExportModalOpen = true">
-                </el-button>
+                <JobStatusPopover />
 
-                <el-button 
+                <el-button circle size="large" class="!ml-0"
+                  plan bg 
+                  :icon="Clapperboard"
+                  :title="t('common.export', 'Export Video')"
+                  @click="isExportModalOpen = true"/>
+
+                <el-button size="large" class="!ml-0"
                   plain bg circle
                   :title="t('workspace.publishSeries', 'Publish series')"
                   icon="Promotion"  
-                  @click="triggerBulkPublish">
-                  <!-- {{ t('workspace.publishSeries') }} -->
-                </el-button>
+                  @click="triggerBulkPublish"/>
 
                 <!--<el-button circle plain icon="User" @click="isCollaboratorsModalOpen = true" />-->
 
-                <el-button circle 
+                <el-button circle size="large" class="!ml-0"
                   plain bg
                   :icon="Bot" 
                   :type="isAiSidebarOpen ? 'primary' : 'default'" 
@@ -1458,22 +1502,6 @@ onUnmounted(() => {
       @closed="renderReviewUrl = ''"
     >
       <div class="flex flex-col gap-4">
-        <!-- Multi-language version selector tabs -->
-        <div v-if="Object.keys(renderReviewOutputs).length > 1" class="flex items-center gap-1.5 p-1 rounded-xl border" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
-          <button
-            v-for="(url, lang) in renderReviewOutputs"
-            :key="lang"
-            class="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer border"
-            :style="renderReviewSelectedLang === String(lang)
-              ? 'background-color: var(--el-color-primary); color: white; border-color: var(--el-color-primary);'
-              : 'background-color: transparent; border-color: transparent; color: var(--el-text-color-primary);'"
-            @click="renderReviewSelectedLang = String(lang); renderReviewUrl = url"
-          >
-            <CountryFlag :code="getLanguageByCode(String(lang)).countryCode" :flag="getLanguageByCode(String(lang)).flag" size="small" />
-            <span>{{ getLanguageByCode(String(lang)).nativeName }}</span>
-          </button>
-        </div>
-
         <div v-if="renderReviewUrl" class="rounded-xl overflow-hidden border" style="border-color: var(--el-border-color);">
           <video
             :key="renderReviewUrl"
@@ -1488,30 +1516,88 @@ onUnmounted(() => {
           <el-icon class="is-loading text-2xl mb-2"><Loading /></el-icon>
           <p>{{ t('workspace.waitingForRender') }}</p>
         </div>
-        <div class="flex flex-wrap gap-2 justify-end">
-          <el-button @click="isRenderReviewOpen = false">{{ t('common.close') }}</el-button>
-          <el-button
-            v-if="renderReviewUrl"
-            type="warning"
-            icon="Upload"
-            :loading="isUploadingRenderVersion"
-            @click="uploadLocalRenderToVersions"
-          >
-            Upload to Render Versions
-          </el-button>
-          <el-button
-            v-if="renderReviewUrl"
-            type="success"
-            icon="Download"
-            tag="a"
-            :href="renderReviewUrl"
-            :download="`episode-${activeEpisodeId}-${renderReviewSelectedLang}.mp4`"
-          >
-            {{ t('workspace.download') }} ({{ getLanguageByCode(renderReviewSelectedLang).countryCode.toUpperCase() }})
-          </el-button>
-          <el-button type="primary" icon="Cpu" @click="queueServerRender">
-            {{ t('workspace.queueServerRender') }}
-          </el-button>
+
+        <!-- Footer: Version selector on Left, Actions on Right -->
+        <div class="flex items-center justify-between gap-2 pt-2 border-t" style="border-color: var(--el-border-color-light);">
+          <!-- Left: Version Selector Popover/Dropdown -->
+          <div class="flex items-center gap-1.5">
+            <el-dropdown v-if="Object.keys(renderReviewOutputs).length > 1" trigger="click" size="small">
+              <el-button size="small" text round bg class="!flex items-center gap-1.5">
+                <CountryFlag :code="parseRenderVersionKey(renderReviewSelectedLang).voiceObj.countryCode" :flag="parseRenderVersionKey(renderReviewSelectedLang).voiceObj.flag" size="small" />
+                <span class="max-w-[150px] truncate text-xs font-medium">{{ parseRenderVersionKey(renderReviewSelectedLang).label }}</span>
+                <el-icon class="text-xs text-muted-foreground"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="max-h-[280px] overflow-y-auto">
+                  <el-dropdown-item
+                    v-for="(url, langKey) in renderReviewOutputs"
+                    :key="langKey"
+                    :class="{ '!text-primary font-semibold': renderReviewSelectedLang === String(langKey) }"
+                    @click="renderReviewSelectedLang = String(langKey); renderReviewUrl = url"
+                  >
+                    <div class="flex items-center gap-2 py-0.5">
+                      <CountryFlag :code="parseRenderVersionKey(String(langKey)).voiceObj.countryCode" :flag="parseRenderVersionKey(String(langKey)).voiceObj.flag" size="small" />
+                      <span class="text-xs">{{ parseRenderVersionKey(String(langKey)).label }}</span>
+                    </div>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+
+          <!-- Right: Action Buttons -->
+          <div class="flex flex-wrap gap-2 justify-end items-center">
+            <!-- Upload All Rendered Language Versions -->
+            <el-dropdown size="small"
+              v-if="Object.keys(renderReviewOutputs).length > 1"
+              split-button>
+              <el-button
+                v-if="Object.keys(renderReviewOutputs).length > 1"
+                type="primary"
+                icon="Upload"
+                size="small" text round
+                :loading="isUploadingRenderVersion"
+                @click="uploadLocalRenderToVersions(true)"
+              >
+                {{ t('workspace.uploadAllVideos', { count: Object.keys(renderReviewOutputs).length }) }}
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="uploadLocalRenderToVersions(false)">
+                    {{ Object.keys(renderReviewOutputs).length > 1 ? `${t('workspace.uploadVideo')} (${parseRenderVersionKey(renderReviewSelectedLang).voiceObj.countryCode.toUpperCase()})` : t('workspace.uploadVideo') }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            
+            <!-- Upload Currently Selected / Active Version -->
+            <el-button
+              v-else-if="renderReviewUrl"
+              type="warning"
+              icon="Upload"
+              size="small" text round bg
+              :loading="isUploadingRenderVersion"
+              @click="uploadLocalRenderToVersions(false)"
+            >
+              {{ Object.keys(renderReviewOutputs).length > 1 ? `${t('workspace.uploadVideo')} (${parseRenderVersionKey(renderReviewSelectedLang).voiceObj.countryCode.toUpperCase()})` : t('workspace.uploadVideo') }}
+            </el-button>
+            <el-button
+              v-if="renderReviewUrl"
+              type="success"
+              icon="Download"
+              size="small" text round bg
+              :href="renderReviewUrl"
+              :download="`episode-${activeEpisodeId}-${renderReviewSelectedLang}.mp4`"
+            >
+              {{ t('workspace.download') }} ({{ parseRenderVersionKey(renderReviewSelectedLang).voiceObj.countryCode.toUpperCase() }})
+            </el-button>
+            <el-button type="primary" 
+              icon="Cpu" 
+              @click="queueServerRender" 
+              size="small" text round bg>
+              {{ t('workspace.queueServerRender') || "Batch Cloud Render" }}
+            </el-button>
+          </div>
         </div>
       </div>
     </el-dialog>
@@ -1533,5 +1619,60 @@ onUnmounted(() => {
 }
 .shadow-soft {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Neon Glow Background Animation for Loading Overlay */
+.neon-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(120px);
+  opacity: 0.45;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.neon-orb-1 {
+  width: 550px;
+  height: 550px;
+  top: -15%;
+  left: -10%;
+  background: radial-gradient(circle, #10b981 0%, rgba(16, 185, 129, 0) 70%);
+  animation: floatNeon1 12s ease-in-out infinite alternate;
+}
+
+.neon-orb-2 {
+  width: 600px;
+  height: 600px;
+  bottom: -20%;
+  right: -10%;
+  background: radial-gradient(circle, #06b6d4 0%, rgba(6, 182, 212, 0) 70%);
+  animation: floatNeon2 14s ease-in-out infinite alternate;
+}
+
+.neon-orb-3 {
+  width: 450px;
+  height: 450px;
+  top: 40%;
+  left: 35%;
+  background: radial-gradient(circle, #8b5cf6 0%, rgba(139, 92, 246, 0) 70%);
+  animation: floatNeon3 10s ease-in-out infinite alternate;
+}
+
+@keyframes floatNeon1 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(120px, 80px) scale(1.15); }
+  100% { transform: translate(40px, 140px) scale(0.9); }
+}
+
+@keyframes floatNeon2 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-100px, -90px) scale(1.2); }
+  100% { transform: translate(-50px, -40px) scale(0.85); }
+}
+
+@keyframes floatNeon3 {
+  0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.25; }
+  50% { transform: translate(-30%, -60%) scale(1.25); opacity: 0.55; }
+  100% { transform: translate(-60%, -40%) scale(1); opacity: 0.35; }
 }
 </style>

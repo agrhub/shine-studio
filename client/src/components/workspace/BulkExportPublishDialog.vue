@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useSeriesStore } from '@/stores/useSeriesStore';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { usePipelineStore } from '@/stores/usePipelineStore';
 import http from '@/utils/http';
 import { toast } from 'vue-sonner';
 import { ElMessageBox } from 'element-plus';
@@ -78,6 +79,7 @@ const { t } = useI18n();
 const router = useRouter();
 const seriesStore = useSeriesStore();
 const authStore = useAuthStore();
+const pipelineStore = usePipelineStore();
 
 const isOpen = computed<boolean>({
   get: () => props.modelValue,
@@ -180,7 +182,7 @@ function getEpisodeThumbnail(ep: Episode, currentSeries: Series | null): string 
       if (s.storyboard_end_frame_url) return s.storyboard_end_frame_url;
     }
   }
-  return currentSeries?.cover_image || '/images/dashboard/poster-1.jpg';
+  return currentSeries?.cover_image || '';
 }
 
 function getEpisodeVideoUrl(ep: Episode): string {
@@ -237,33 +239,35 @@ async function loadRenderedVersions(): Promise<void> {
   try {
     const res: any = await http.get(`/publish/rendered-versions/${series.value.id}`);
     if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
-      renderedVersions.value = res.data.map((item: RenderVersionEntity) => {
-        const ep = episodes.value.find(e => e.id === item.episode_id);
-        const fallbackThumb = ep ? getEpisodeThumbnail(ep, currentSeries) : (currentSeries.cover_image || '/images/dashboard/poster-1.jpg');
-        const fallbackVid = ep ? getEpisodeVideoUrl(ep) : '';
-        const epNum = item.episode_number || (ep ? getEpisodeNumber(ep) : 1);
-        const epTitle = item.episode_title || ep?.title || `Episode ${epNum}`;
-        const epLang = item.language || primaryLang;
+      renderedVersions.value = res.data
+        .filter((item: RenderVersionEntity) => !!(item.video_url || item.url))
+        .map((item: RenderVersionEntity) => {
+          const ep = episodes.value.find(e => e.id === item.episode_id);
+          const fallbackThumb = ep ? getEpisodeThumbnail(ep, currentSeries) : (currentSeries.cover_image || '');
+          const fallbackVid = ep ? getEpisodeVideoUrl(ep) : '';
+          const epNum = item.episode_number || (ep ? getEpisodeNumber(ep) : 1);
+          const epTitle = item.episode_title || ep?.title || `Episode ${epNum}`;
+          const epLang = item.language || primaryLang;
 
-        return {
-          id: item.id || item.version_id || `ver_${item.episode_id || ep?.id || 'ep'}_${epLang}`,
-          episodeId: item.episode_id || ep?.id || '',
-          episodeNumber: epNum,
-          episodeTitle: epTitle,
-          language: epLang,
-          voice: item.voice || `Original Audio (${getLangLabel(epLang)})`,
-          subtitles: item.subtitles || [`Caption: ${getLangLabel(epLang)} (Burned-in)`],
-          resolution: item.resolution || defaultResolution,
-          videoUrl: item.video_url || item.url || fallbackVid,
-          thumbnailUrl: item.thumbnail_url || fallbackThumb,
-          duration: item.duration || (ep ? getEpisodeDuration(ep) : 90),
-          fileSize: item.file_size || '26.8 MB',
-          renderedAt: item.rendered_at || ep?.updated_at || ep?.created_at || new Date().toISOString(),
-          status: item.status || (item.video_url || fallbackVid ? 'ready' : 'draft'),
-        };
-      });
+          return {
+            id: item.id || item.version_id || `ver_${item.episode_id || ep?.id || 'ep'}_${epLang}`,
+            episodeId: item.episode_id || ep?.id || '',
+            episodeNumber: epNum,
+            episodeTitle: epTitle,
+            language: epLang,
+            voice: item.voice || `Original Audio (${getLangLabel(epLang)})`,
+            subtitles: item.subtitles || [`Caption: ${getLangLabel(epLang)} (Burned-in)`],
+            resolution: item.resolution || defaultResolution,
+            videoUrl: item.video_url || item.url || fallbackVid,
+            thumbnailUrl: item.thumbnail_url || fallbackThumb,
+            duration: item.duration || (ep ? getEpisodeDuration(ep) : 90),
+            fileSize: item.file_size || '26.8 MB',
+            renderedAt: item.rendered_at || ep?.updated_at || ep?.created_at || new Date().toISOString(),
+            status: 'ready',
+          };
+        });
     } else {
-      // Build local versions list from loaded episodes
+      // Build local versions list from loaded episodes (only for episodes that have actual videos)
       const localVersions: RenderedVideoVersion[] = [];
 
       episodes.value.forEach((ep: Episode) => {
@@ -277,6 +281,8 @@ async function loadRenderedVersions(): Promise<void> {
 
         if (Array.isArray(renderVersions) && renderVersions.length > 0) {
           renderVersions.forEach((rv: RenderVersionEntity) => {
+            const vidUrl = rv.video_url || rv.url || getEpisodeVideoUrl(ep);
+            if (!vidUrl) return; // Skip if no video
             const lang = rv.language || (Array.isArray(rv.languages) ? rv.languages[0] : primaryLang);
             const isPrimary = lang === primaryLang;
             localVersions.push({
@@ -288,12 +294,12 @@ async function loadRenderedVersions(): Promise<void> {
               voice: rv.voice || (isPrimary ? `Original Audio (${getLangLabel(lang)})` : `Dubbing: ${getLangLabel(lang)}`),
               subtitles: rv.subtitles || [isPrimary ? `Caption: ${getLangLabel(lang)} (Burned-in)` : `Sub: ${getLangLabel(lang)}`],
               resolution: rv.resolution || epResolution,
-              videoUrl: rv.video_url || rv.url || getEpisodeVideoUrl(ep),
+              videoUrl: vidUrl,
               thumbnailUrl: rv.thumbnail_url || coverThumb,
               duration: rv.duration || epDuration,
               fileSize: rv.file_size || '28.4 MB',
               renderedAt: rv.rendered_at || epRenderedAt,
-              status: rv.status || 'ready',
+              status: 'ready',
             });
           });
         } else if (videoUrls && typeof videoUrls === 'object') {
@@ -319,31 +325,33 @@ async function loadRenderedVersions(): Promise<void> {
             }
           });
         } else {
-          const lang = primaryLang;
-          const voiceLabel = ep.dubbing_settings?.voice_name 
-            ? `Dubbing: ${ep.dubbing_settings.voice_name}` 
-            : `Original Audio (${getLangLabel(lang)})`;
-          const subLabel = ep.caption_languages && ep.caption_languages.length > 0 
-            ? ep.caption_languages.map((l: string) => `Sub: ${getLangLabel(l)}`) 
-            : [`Caption: ${getLangLabel(lang)} (Burned-in)`];
           const resolvedVid = getEpisodeVideoUrl(ep);
+          if (resolvedVid) {
+            const lang = primaryLang;
+            const voiceLabel = ep.dubbing_settings?.voice_name 
+              ? `Dubbing: ${ep.dubbing_settings.voice_name}` 
+              : `Original Audio (${getLangLabel(lang)})`;
+            const subLabel = ep.caption_languages && ep.caption_languages.length > 0 
+              ? ep.caption_languages.map((l: string) => `Sub: ${getLangLabel(l)}`) 
+              : [`Caption: ${getLangLabel(lang)} (Burned-in)`];
 
-          localVersions.push({
-            id: `ver_${ep.id}_default`,
-            episodeId: ep.id,
-            episodeNumber: epNum,
-            episodeTitle: ep.title,
-            language: lang,
-            voice: voiceLabel,
-            subtitles: subLabel,
-            resolution: epResolution,
-            videoUrl: resolvedVid,
-            thumbnailUrl: coverThumb,
-            duration: epDuration,
-            fileSize: '26.8 MB',
-            renderedAt: epRenderedAt,
-            status: resolvedVid ? 'ready' : 'draft',
-          });
+            localVersions.push({
+              id: `ver_${ep.id}_default`,
+              episodeId: ep.id,
+              episodeNumber: epNum,
+              episodeTitle: ep.title,
+              language: lang,
+              voice: voiceLabel,
+              subtitles: subLabel,
+              resolution: epResolution,
+              videoUrl: resolvedVid,
+              thumbnailUrl: coverThumb,
+              duration: epDuration,
+              fileSize: '26.8 MB',
+              renderedAt: epRenderedAt,
+              status: 'ready',
+            });
+          }
         }
       });
       renderedVersions.value = localVersions;
@@ -549,11 +557,11 @@ function onFileSelected(e: Event) {
 
 async function submitUploadVersion() {
   if (!uploadForm.value.episodeId) {
-    toast.error('Please select an episode');
+    toast.error(t('toast.pleaseSelectEpisode'));
     return;
   }
   if (!uploadForm.value.file) {
-    toast.error('Please select a video file (.mp4)');
+    toast.error(t('toast.selectVideoMp4'));
     return;
   }
   isUploadingVersion.value = true;
@@ -567,11 +575,11 @@ async function submitUploadVersion() {
       resolution: '1080x1920 (9:16 Vertical HD)',
     }, uploadForm.value.file);
 
-    toast.success('Rendered video uploaded successfully!');
+    toast.success(t('toast.renderVideoUploaded'));
     isUploadModalOpen.value = false;
     await loadRenderedVersions();
   } catch (err: any) {
-    toast.error('Upload failed: ' + (err?.message || 'Unknown error'));
+    toast.error(`${t('toast.uploadFailed')}: ${err?.message || 'Unknown error'}`);
   } finally {
     isUploadingVersion.value = false;
   }
@@ -595,10 +603,10 @@ async function handleDeleteVersion(ver: RenderedVideoVersion) {
     await seriesStore.removeRenderVersion(sId, ver.episodeId, ver.id);
     renderedVersions.value = renderedVersions.value.filter(v => v.id !== ver.id);
     selectedVersionIds.value = selectedVersionIds.value.filter(id => id !== ver.id);
-    toast.success('Rendered version removed successfully!');
+    toast.success(t('toast.renderVersionRemoved'));
   } catch (err: any) {
     if (err !== 'cancel') {
-      toast.error('Failed to delete version: ' + (err?.message || ''));
+      toast.error(`${t('toast.deleteVersionFailed')}: ${err?.message || ''}`);
     }
   }
 }
@@ -627,10 +635,10 @@ async function handleDeleteSelectedVersions() {
     }
     renderedVersions.value = renderedVersions.value.filter(v => !selectedVersionIds.value.includes(v.id));
     selectedVersionIds.value = [];
-    toast.success('Selected rendered versions removed successfully!');
+    toast.success(t('toast.selectedRenderVersionsRemoved'));
   } catch (err: any) {
     if (err !== 'cancel') {
-      toast.error('Failed to delete versions: ' + (err?.message || ''));
+      toast.error(`${t('toast.deleteVersionsFailed')}: ${err?.message || ''}`);
     }
   }
 }
@@ -699,6 +707,9 @@ async function executeDeploy(): Promise<void> {
       activeStep.value = 'results';
       toast.success(t('toast.deployedToSocials'));
       emit('published', publishResult.value);
+
+      // Sync initial active jobs list once
+      pipelineStore.fetchActiveJobs(series.value?.id, selectedVers[0]?.episodeId);
     }
   } catch (err: unknown) {
     const apiError = (err as any)?.response?.data?.message || (err as any)?.response?.data?.error;
@@ -998,6 +1009,23 @@ watch(isOpen, (open: boolean) => {
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Empty State if no videos rendered yet -->
+        <div v-else class="py-12 flex flex-col items-center justify-center text-center space-y-3 rounded-2xl border border-dashed border-border/60 bg-muted/20 my-4">
+          <div class="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+            <el-icon :size="24"><VideoPlay /></el-icon>
+          </div>
+          <div class="space-y-1">
+            <h4 class="text-sm font-semibold text-foreground">Chưa có tập phim nào có video hoàn thiện</h4>
+            <p class="text-xs text-muted-foreground max-w-md">
+              Hãy render video trong Timeline hoặc nhấn "Upload Local Video" để đưa tệp video đã dựng lên phiên bản xuất bản.
+            </p>
+          </div>
+          <el-button type="primary" round size="small" @click="isUploadModalOpen = true">
+            <el-icon class="mr-1"><UploadFilled /></el-icon>
+            Upload Local Video
+          </el-button>
         </div>
       </div>
 

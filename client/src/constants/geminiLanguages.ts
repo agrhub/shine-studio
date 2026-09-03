@@ -171,6 +171,51 @@ export function getCaptionTrackId(langCode: string): string {
   return `track_caption_${safeLang}`;
 }
 
+export function parseRenderVersionKey(key: string): {
+  voiceLang: string;
+  capLang: string;
+  label: string;
+  voiceObj: GeminiSpeechLanguage;
+  capObj: GeminiSpeechLanguage;
+} {
+  if (!key) {
+    const defaultLang = GEMINI_SPEECH_LANGUAGES[0];
+    return {
+      voiceLang: defaultLang.code,
+      capLang: defaultLang.code,
+      label: defaultLang.nativeName,
+      voiceObj: defaultLang,
+      capObj: defaultLang,
+    };
+  }
+
+  // Handle dub_XX_cap_YY format (e.g. dub_vi-VN_cap_en-US or dub_vi_VN_cap_en_US)
+  const match = key.match(/^dub_([a-zA-Z0-9_-]+)_cap_([a-zA-Z0-9_-]+)$/);
+  if (match) {
+    const rawVoice = match[1].replace(/_/g, '-');
+    const rawCap = match[2].replace(/_/g, '-');
+    const voiceObj = getLanguageByCode(rawVoice);
+    const capObj = getLanguageByCode(rawCap);
+    return {
+      voiceLang: rawVoice,
+      capLang: rawCap,
+      label: `${voiceObj.nativeName} (${capObj.nativeName} Sub)`,
+      voiceObj,
+      capObj,
+    };
+  }
+
+  // Simple lang code like 'vi-VN' or 'en-US'
+  const langObj = getLanguageByCode(key.replace(/_/g, '-'));
+  return {
+    voiceLang: langObj.code,
+    capLang: langObj.code,
+    label: langObj.nativeName,
+    voiceObj: langObj,
+    capObj: langObj,
+  };
+}
+
 export const GEMINI_LANGUAGE_DEFAULTS: Record<string, { label: string; voiceId?: string }> = Object.fromEntries(
   GEMINI_SPEECH_LANGUAGES.map((l) => [
     l.code,
@@ -179,4 +224,5 @@ export const GEMINI_LANGUAGE_DEFAULTS: Record<string, { label: string; voiceId?:
     },
   ])
 );
+
 
