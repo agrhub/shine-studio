@@ -2,17 +2,7 @@ import axios from 'axios';
 import { SocialAccount } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
 
-export interface PlatformMetricItem {
-  platform: string;
-  channelName: string;
-  views: number;
-  likes: number;
-  comments: number;
-  shares: number;
-  estimatedRevenue: number;
-  retentionRatePct: number;
-  lastUpdated: string;
-}
+import { PlatformMetricItem } from '@/types.js';
 
 export class PlatformAnalyticsService {
   /**

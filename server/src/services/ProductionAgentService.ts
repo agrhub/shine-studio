@@ -4,17 +4,7 @@ import { PromptLoader } from '@/utils/PromptLoader.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { Logger } from '@/utils/logger.js';
 
-export interface StoryboardPanel {
-  id: string;
-  scene_index: number;
-  shot_number: number;
-  prompt: string;
-  camera_movement: string;
-  lighting_style: string;
-  character_anchors: string[];
-  image_url?: string;
-  duration_seconds: number;
-}
+import { StoryboardPanel } from '@/types.js';
 
 export class ProductionAgentService {
   async generateStoryboardPanels(scenes: any[]): Promise<StoryboardPanel[]> {

@@ -1,6 +1,6 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
-import { getDatabaseProvider, SceneEntity } from '@/database/index';
+import { getDatabaseProvider } from '@/database/index';
 import { Logger } from '@/utils/logger.js';
 import { CharacterToolExecutors } from './character.tools';
 import { AssetToolExecutors } from './asset.tools';

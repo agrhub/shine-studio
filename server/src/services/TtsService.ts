@@ -2,14 +2,7 @@ import { aiProviderRouter } from '@/integrations/ai/router/AIProviderRouter.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { Logger } from '@/utils/logger.js';
 
-export interface TTSRequest {
-  text: string;
-  voiceId: string;
-  language?: string;
-  speed?: number;
-  emotion?: string;
-  speech_tone?: string;
-}
+import { TTSRequest } from '@/types.js';
 
 /**
  * Calculates accurate audio duration in seconds from raw audio buffers (WAV / MP3 / PCM).

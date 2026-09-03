@@ -1,12 +1,15 @@
 import mongoose from 'mongoose';
 import { nanoid } from 'nanoid';
 import {
-  IDatabaseProvider,
+  IDatabaseProvider
+} from './IDatabaseProvider.js';
+import {
   UserEntity,
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
   CreditTransactionEntity,
+  AssetEntity,
   WorkerHeartbeatEntity,
   WorkerJobEntity,
   ClusterMetricsSummary,
@@ -14,8 +17,27 @@ import {
   TimelineSnapshotVersion,
   TimelineSnapshotHistoryItem,
   RestoreTimelineResult,
-} from './IDatabaseProvider.js';
+  ChatMessageEntity,
+  SocialAccountEntity,
+} from '~/types.js';
 import { normalizePureTimeline } from '../utils/timeline.js';
+
+const ChatMessageSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  user_id: { type: String, required: true, index: true },
+  session_id: { type: String, required: true, index: true },
+  scope: { type: String, default: 'global' },
+  series_id: String,
+  episode_id: String,
+  role: { type: String, required: true },
+  content: { type: String, required: true },
+  tool_calls: mongoose.Schema.Types.Mixed,
+  suggestions: mongoose.Schema.Types.Mixed,
+  created_at: { type: String, default: () => new Date().toISOString() },
+  timestamp: { type: Number, index: true },
+});
+ChatMessageSchema.index({ user_id: 1, session_id: 1, timestamp: 1 });
+export const ChatMessageModel = mongoose.models.ChatMessage || mongoose.model('ChatMessage', ChatMessageSchema);
 
 const WorkerHeartbeatSchema = new mongoose.Schema({
   workerId: { type: String, required: true, unique: true },
@@ -207,6 +229,9 @@ const AssetSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now }
 });
 
+SocialAccountSchema.index({ user_id: 1, platform: 1, channel_id: 1 }, { unique: true });
+// export const SocialAccountModel = mongoose.models.SocialAccount || mongoose.model('SocialAccount', SocialAccountSchema);
+
 const AIAccountSchema = new mongoose.Schema({
   email: { type: String, required: true },
   name: { type: String },
@@ -226,6 +251,14 @@ const AIAccountSchema = new mongoose.Schema({
   timestamps: true,
 });
 
+const ViralTrendSchema = new mongoose.Schema({
+  cache_key: { type: String, required: true, unique: true, index: true },
+  country: { type: String, required: true, index: true },
+  language: { type: String, required: true, index: true },
+  items: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  updated_at: { type: Date, default: Date.now, index: true }
+});
+
 export const UserModel = mongoose.models.User || mongoose.model('User', UserSchema);
 export const SeriesModel = mongoose.models.Series || mongoose.model('Series', SeriesSchema);
 export const EpisodeModel = mongoose.models.Episode || mongoose.model('Episode', EpisodeSchema);
@@ -236,9 +269,11 @@ export const CreditTransactionModel = mongoose.models.CreditTransaction || mongo
 export const SocialAccountModel = mongoose.models.SocialAccount || mongoose.model('SocialAccount', SocialAccountSchema);
 export const AssetModel = mongoose.models.Asset || mongoose.model('Asset', AssetSchema);
 export const AIAccountModel = mongoose.models.AIAccount || mongoose.model('AIAccount', AIAccountSchema);
+export const ViralTrendModel = mongoose.models.ViralTrend || mongoose.model('ViralTrend', ViralTrendSchema);
 export const AIAccount = AIAccountModel;
 export const SocialAccount = SocialAccountModel;
 export const Asset = AssetModel;
+export const ViralTrend = ViralTrendModel;
 
 import { EnvConfig } from '@/config/env.js';
 
@@ -291,14 +326,124 @@ export class MongoDBProvider implements IDatabaseProvider {
     return await UserModel.countDocuments();
   }
 
+  async getUsers(filter?: {
+    search?: string;
+    tier?: string;
+    role?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ users: UserEntity[]; total: number }> {
+    const query: any = {};
+    if (filter?.search) {
+      const regex = new RegExp(filter.search.trim(), 'i');
+      query.$or = [{ name: regex }, { email: regex }, { id: regex }];
+    }
+    if (filter?.tier) {
+      query.tier = new RegExp(`^${filter.tier.trim()}$`, 'i');
+    }
+    if (filter?.role) {
+      query.role = new RegExp(`^${filter.role.trim()}$`, 'i');
+    }
+    if (filter?.status) {
+      query.status = new RegExp(`^${filter.status.trim()}$`, 'i');
+    }
+
+    const total = await UserModel.countDocuments(query);
+    const limit = filter?.limit || 20;
+    const offset = filter?.offset || 0;
+    const users = (await UserModel.find(query).sort({ created_at: -1 }).skip(offset).limit(limit).lean()) as any[];
+
+    return { users, total };
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    const result = await UserModel.deleteOne({ id: userId });
+    return result.deletedCount > 0;
+  }
+
   async updateUserPreferences(userId: string, prefs: { theme?: string; language?: string }): Promise<UserEntity | null> {
-    const updated = await UserModel.findOneAndUpdate({ id: userId }, { $set: prefs }, { returnDocument: 'after' }).lean();
+    const updated = await UserModel.findOneAndUpdate({ id: userId }, { $set: prefs }, { new: true, returnDocument: 'after' }).lean();
     return updated as any;
   }
 
   async updateUser(user: UserEntity): Promise<UserEntity> {
-    const updated = await UserModel.findOneAndUpdate({ id: user.id }, { $set: user }, { returnDocument: 'after', upsert: true }).lean();
+    const updated = await UserModel.findOneAndUpdate({ id: user.id }, { $set: user }, { new: true, returnDocument: 'after', upsert: true }).lean();
     return updated as any;
+  }
+
+  // ==================== Chat History & Session Messages ====================
+  async saveChatMessage(message: ChatMessageEntity): Promise<ChatMessageEntity> {
+    const msgId = message.id || `msg_${Date.now()}_${nanoid(6)}`;
+    const entity: ChatMessageEntity = {
+      ...message,
+      id: msgId,
+      created_at: message.created_at || new Date().toISOString(),
+      timestamp: message.timestamp || Date.now(),
+    };
+    await ChatMessageModel.findOneAndUpdate(
+      { id: msgId },
+      { $set: entity },
+      { upsert: true, returnDocument: 'after' }
+    );
+    return entity;
+  }
+
+  async saveChatMessages(messages: ChatMessageEntity[]): Promise<void> {
+    if (!messages || messages.length === 0) return;
+    const ops = messages.map(m => {
+      const msgId = m.id || `msg_${Date.now()}_${nanoid(6)}`;
+      const entity = {
+        ...m,
+        id: msgId,
+        created_at: m.created_at || new Date().toISOString(),
+        timestamp: m.timestamp || Date.now(),
+      };
+      return {
+        updateOne: {
+          filter: { id: msgId },
+          update: { $set: entity },
+          upsert: true,
+        },
+      };
+    });
+    await ChatMessageModel.bulkWrite(ops);
+  }
+
+  async getChatMessages(filter: {
+    userId: string;
+    sessionId?: string;
+    seriesId?: string;
+    episodeId?: string;
+    scope?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ messages: ChatMessageEntity[]; total: number }> {
+    const q: any = { user_id: filter.userId };
+    if (filter.sessionId) q.session_id = filter.sessionId;
+    if (filter.seriesId) q.series_id = filter.seriesId;
+    if (filter.episodeId) q.episode_id = filter.episodeId;
+    if (filter.scope) q.scope = filter.scope;
+
+    const total = await ChatMessageModel.countDocuments(q);
+    const limit = filter.limit && filter.limit > 0 ? filter.limit : 50;
+    const offset = filter.offset || 0;
+
+    let rows: any[];
+    if (offset > 0) {
+      rows = await ChatMessageModel.find(q).sort({ timestamp: 1 }).skip(offset).limit(limit).lean();
+    } else {
+      // Top latest history slice
+      const skipCount = Math.max(0, total - limit);
+      rows = await ChatMessageModel.find(q).sort({ timestamp: 1 }).skip(skipCount).limit(limit).lean();
+    }
+
+    return { messages: rows as any, total };
+  }
+
+  async deleteChatSession(userId: string, sessionId: string): Promise<boolean> {
+    const res = await ChatMessageModel.deleteMany({ user_id: userId, session_id: sessionId });
+    return (res?.deletedCount || 0) > 0;
   }
 
   async deductCredits(userId: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
@@ -343,12 +488,23 @@ export class MongoDBProvider implements IDatabaseProvider {
   }
 
   async createSeries(series: SeriesEntity): Promise<SeriesEntity> {
+    if (!series.user_id) {
+      throw new Error('user_id is required to create a series');
+    }
+    if (!series.title) {
+      throw new Error('title is required to create a series');
+    }
+    if (series.id === 'global' || series.id?.startsWith('wiz_') || series.id?.startsWith('temp_')) {
+      throw new Error('Cannot persist temporary or global session as database series');
+    }
     const created = await SeriesModel.create(series);
     return created.toObject() as any;
   }
 
   async getSeriesList(userId?: string, search?: string, status?: string): Promise<SeriesEntity[]> {
-    const filter: any = {};
+    const filter: any = {
+      id: { $nin: ['global', /^wiz_/, /^temp_/] }
+    };
     if (userId) filter.user_id = userId;
     if (search) filter.title = { $regex: search, $options: 'i' };
     if (status) filter.status = status;
@@ -356,22 +512,66 @@ export class MongoDBProvider implements IDatabaseProvider {
   }
 
   async getSeriesById(id: string): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     return (await SeriesModel.findOne({ id }).lean()) as any;
   }
 
   async updateSeries(id: string, updates: Partial<SeriesEntity>): Promise<SeriesEntity | null> {
-    const updated = await SeriesModel.findOneAndUpdate({ id }, { $set: { ...updates, updated_at: new Date() } }, { returnDocument: 'after' }).lean();
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
+    const updated = await SeriesModel.findOneAndUpdate({ id }, { $set: { ...updates, updated_at: new Date() } }, { new: true, returnDocument: 'after' }).lean();
     return updated as any;
   }
 
   async deleteSeries(id: string): Promise<boolean> {
-    await EpisodeModel.deleteMany({ series_id: id });
-    const res = await SeriesModel.deleteOne({ id });
-    return (res?.deletedCount || 0) > 0;
+    try {
+      const episodes = await EpisodeModel.find({ series_id: id }).lean();
+      const epIds = episodes.map((e: any) => e.id);
+
+      if (epIds.length > 0) {
+        await TimelineSnapshotModel.deleteMany({ episode_id: { $in: epIds } });
+        await ChatMessageModel.deleteMany({ episode_id: { $in: epIds } });
+        await WorkerJobModel.deleteMany({ episodeId: { $in: epIds } });
+      }
+
+      await EpisodeModel.deleteMany({ series_id: id });
+      await ChatMessageModel.deleteMany({ series_id: id });
+      await AssetModel.deleteMany({ series_id: id });
+      await WorkerJobModel.deleteMany({ seriesId: id });
+
+      const res = await SeriesModel.deleteOne({ id });
+      return (res?.deletedCount || 0) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async syncSeriesEpisodeCounters(seriesId: string): Promise<void> {
+    if (!seriesId || seriesId === 'global' || seriesId.startsWith('wiz_') || seriesId.startsWith('temp_')) return;
+    try {
+      const episodes = (await EpisodeModel.find({ series_id: seriesId }).lean()) as any[];
+      const episode_count = episodes.length;
+      const published_episode_count = episodes.filter(e => e.status === 'PUBLISHED').length;
+
+      await SeriesModel.findOneAndUpdate(
+        { id: seriesId },
+        {
+          $set: {
+            episode_count,
+            published_episode_count,
+            updated_at: new Date(),
+          },
+        }
+      );
+    } catch (err: any) {
+      console.warn(`[MongoDBProvider] Failed to sync series episode counters for ${seriesId}:`, err?.message);
+    }
   }
 
   async createEpisode(episode: EpisodeEntity): Promise<EpisodeEntity> {
     const created = await EpisodeModel.create(episode);
+    if (episode.series_id) {
+      await this.syncSeriesEpisodeCounters(episode.series_id);
+    }
     return created.toObject() as any;
   }
 
@@ -385,8 +585,33 @@ export class MongoDBProvider implements IDatabaseProvider {
   }
 
   async updateEpisode(id: string, updates: Partial<EpisodeEntity>): Promise<EpisodeEntity | null> {
-    const updated = await EpisodeModel.findOneAndUpdate({ id }, { $set: updates }, { returnDocument: 'after' }).lean();
-    return updated as any;
+    const updated = (await EpisodeModel.findOneAndUpdate(
+      { id }, 
+      { $set: { ...updates, updated_at: new Date().toISOString() } }, 
+      { new: true, returnDocument: 'after' }
+    ).lean()) as any;
+    if (updated?.series_id && (updates.status !== undefined || updates.published_urls !== undefined || updates.published_platforms !== undefined)) {
+      await this.syncSeriesEpisodeCounters(updated.series_id);
+    }
+    return updated;
+  }
+
+  async deleteEpisode(id: string): Promise<boolean> {
+    try {
+      const ep = (await EpisodeModel.findOne({ id }).lean()) as any;
+      const seriesId = ep?.series_id;
+      await TimelineSnapshotModel.deleteMany({ episode_id: id });
+      await ChatMessageModel.deleteMany({ episode_id: id });
+      await WorkerJobModel.deleteMany({ episodeId: id });
+      await AssetModel.deleteMany({ episode_id: id });
+      const res = await EpisodeModel.deleteOne({ id });
+      if (seriesId) {
+        await this.syncSeriesEpisodeCounters(seriesId);
+      }
+      return (res?.deletedCount || 0) > 0;
+    } catch {
+      return false;
+    }
   }
 
   async getFlowAccounts(status?: string): Promise<FlowAccountEntity[]> {
@@ -405,7 +630,7 @@ export class MongoDBProvider implements IDatabaseProvider {
         $set: updateFields,
         $setOnInsert: { id: id || `flow_${Date.now()}` },
       },
-      { upsert: true, returnDocument: 'after' }
+      { upsert: true, new: true, returnDocument: 'after' }
     ).lean();
     return updated as any;
   }
@@ -446,6 +671,18 @@ export class MongoDBProvider implements IDatabaseProvider {
       timeline_data: serializedData,
       created_at: new Date(),
     });
+
+    // Prune older snapshots beyond top 20 latest versions
+    try {
+      const excessSnaps = await TimelineSnapshotModel.find({ episode_id })
+        .sort({ version_number: -1 })
+        .skip(20)
+        .select('_id')
+        .lean();
+      if (excessSnaps.length > 0) {
+        await TimelineSnapshotModel.deleteMany({ _id: { $in: excessSnaps.map((s: any) => s._id) } });
+      }
+    } catch {}
 
     return { version_id, version_number, updated_at: doc.created_at.toISOString() };
   }
@@ -538,11 +775,13 @@ export class MongoDBProvider implements IDatabaseProvider {
     return doc;
   }
 
-  async getAssets(filter?: { user_id?: string; series_id?: string; type?: string; character_id?: string; search?: string }): Promise<any[]> {
+  async getAssets(filter?: { user_id?: string; series_id?: string; episode_id?: string; scene_id?: string; type?: string; character_id?: string; search?: string }): Promise<any[]> {
     if (mongoose.connection.readyState < 1) return [];
     const query: any = {};
     if (filter?.user_id) query.user_id = filter.user_id;
     if (filter?.series_id) query.series_id = filter.series_id;
+    if (filter?.episode_id) query.episode_id = filter.episode_id;
+    if (filter?.scene_id) query.scene_id = filter.scene_id;
     if (filter?.type && filter.type !== 'all') query.type = filter.type;
     if (filter?.character_id) query.character_id = filter.character_id;
     if (filter?.search) {
@@ -554,6 +793,12 @@ export class MongoDBProvider implements IDatabaseProvider {
     }
     const docs = await AssetModel.find(query).sort({ created_at: -1 }).lean();
     return docs;
+  }
+
+  async getAssetById(id: string): Promise<AssetEntity | null> {
+    if (mongoose.connection.readyState < 1) return null;
+    const a = await AssetModel.findOne({ id }).lean();
+    return a as any;
   }
 
   async deleteAsset(id: string): Promise<boolean> {
@@ -727,5 +972,87 @@ export class MongoDBProvider implements IDatabaseProvider {
   async findActivePipelineJob(series_id: string, episode_id: string, type?: string): Promise<any | null> {
     const jobs = await this.getPipelineJobs({ series_id, episode_id });
     return jobs.find(j => (j.status === 'running' || j.status === 'queued') && (!type || j.type === type)) || null;
+  }
+
+  // ─── Viral Trends Storage & Persistence ───────────────────────────────────
+
+  async getViralTrends(country: string, language: string): Promise<{ items: any[]; updated_at: Date } | null> {
+    try {
+      const cache_key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+      const doc = await ViralTrendModel.findOne({ cache_key }).lean();
+      if (!doc) return null;
+      return {
+        items: (doc as any).items || [],
+        updated_at: (doc as any).updated_at || new Date(),
+      };
+    } catch (err: any) {
+      return null;
+    }
+  }
+
+  async saveViralTrends(country: string, language: string, items: any[]): Promise<void> {
+    try {
+      const cleanCountry = country.toUpperCase();
+      const cleanLang = language.toLowerCase();
+      const cache_key = `${cleanCountry}_${cleanLang}`;
+      await ViralTrendModel.findOneAndUpdate(
+        { cache_key },
+        {
+          cache_key,
+          country: cleanCountry,
+          language: cleanLang,
+          items: items || [],
+          updated_at: new Date(),
+        },
+        { upsert: true, new: true }
+      );
+    } catch (err: any) {
+      // Non-blocking error
+    }
+  }
+
+  async getAllCachedViralTrends(): Promise<Array<{ cache_key: string; country: string; language: string; items: any[]; updated_at: Date }>> {
+    try {
+      const docs = await ViralTrendModel.find({}).lean();
+      return docs.map((d: any) => ({
+        cache_key: d.cache_key,
+        country: d.country,
+        language: d.language,
+        items: d.items || [],
+        updated_at: d.updated_at || new Date(),
+      }));
+    } catch (err: any) {
+      return [];
+    }
+  }
+
+  // ─── Social Connected Accounts ───────────────────────────────────────────
+  async updateSocialAccount(account: Partial<SocialAccountEntity>, options?: { upsert?: boolean }): Promise<SocialAccountEntity> {
+    const doc = await SocialAccountModel.findOneAndUpdate(
+      { user_id: account.user_id, platform: account.platform, channel_id: account.channel_id },
+      {
+        $set: {
+          ...account,
+          updated_at: new Date(),
+        },
+        $setOnInsert: {
+          connectedAt: new Date(),
+        },
+      },
+      { upsert: options?.upsert !== false, new: true }
+    ).lean();
+    return doc as any;
+  }
+
+  async listSocialAccounts(userId: string): Promise<SocialAccountEntity[]> {
+    const docs = await SocialAccountModel.find({ userId, isActive: { $ne: false } }).select('-accessToken -refreshToken').lean();
+    return docs as any;
+  }
+
+  async deleteSocialAccount(userId: string, platform: string, channelId?: string): Promise<boolean> {
+    const query: any = { userId, platform };
+    if (channelId) query.channelId = channelId;
+    const res = await SocialAccountModel.deleteMany(query);
+    return res.deletedCount > 0;
   }
 }

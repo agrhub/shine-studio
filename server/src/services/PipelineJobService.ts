@@ -1,7 +1,19 @@
 import { nanoid } from 'nanoid';
 import { getDatabaseProvider } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
-import type { PipelineJobEntity, PipelineJobStepProgress, PipelineJobLog, AssetJobItem } from '@/types.js';
+import type {
+  PipelineJobEntity,
+  PipelineJobStepProgress,
+  PipelineJobLog,
+  AssetJobItem,
+  CharacterSeriesEntity,
+  CharacterWardrobeVariant,
+  LocationAsset,
+  PropAsset,
+  SceneEntity,
+  EpisodeEntity,
+  SeriesEntity,
+} from '@/types.js';
 import { CharacterToolExecutors } from '@/agents/chatbot/tools/character.tools.js';
 import { AssetToolExecutors } from '@/agents/chatbot/tools/asset.tools.js';
 import { VideoToolExecutors } from '@/agents/chatbot/tools/video.tools.js';
@@ -164,6 +176,53 @@ export class PipelineJobService {
       }
     };
 
+    const appendItemProgress = async (
+      stepKey: string,
+      asset: AssetJobItem,
+      stepCurrent: number,
+      stepTotal: number,
+      minOverall: number,
+      maxOverall: number,
+      message: string
+    ) => {
+      const current = await db.getPipelineJobById(job_id);
+      if (!current) return;
+
+      const stepProgress = current.step_progress || {};
+      const existingAssets: AssetJobItem[] = stepProgress[stepKey]?.assets || [];
+      const updatedAssets = [...existingAssets.filter((a) => a.id !== asset.id), asset];
+
+      const stepPercent = stepTotal > 0 ? Math.min(100, Math.round((stepCurrent / stepTotal) * 100)) : 100;
+      const overallPercent = Math.min(100, Math.round(minOverall + (stepPercent / 100) * (maxOverall - minOverall)));
+
+      stepProgress[stepKey] = {
+        ...(stepProgress[stepKey] || {}),
+        status: 'running',
+        progress: stepPercent,
+        message,
+        assets: updatedAssets,
+        started_at: stepProgress[stepKey]?.started_at || new Date().toISOString(),
+      };
+
+      const logs = current.logs || [];
+      logs.push({
+        timestamp: new Date().toISOString(),
+        level: asset.status === 'failed' ? 'warn' : 'info',
+        message: `[Step ${stepKey.toUpperCase()}] ${message}`,
+      });
+
+      const updated = await db.updatePipelineJob(job_id, {
+        progress: overallPercent,
+        current_step: message,
+        step_progress: stepProgress,
+        logs,
+      });
+
+      if (updated) {
+        PatchSyncService.broadcast(series_id, 'pipeline_job:updated', updated);
+      }
+    };
+
     try {
       await addLog('info', `Starting automated pipeline execution for Job ${job_id}...`);
 
@@ -184,8 +243,8 @@ export class PipelineJobService {
           throw new Error(`Render Failed: ${renderRes.message}`);
         }
 
-        const epAfter = await db.getEpisodeById(episode_id);
-        const finalUrl = renderRes.data?.video_url || (epAfter as any)?.video_url;
+        const epAfter: EpisodeEntity | null = await db.getEpisodeById(episode_id);
+        const finalUrl = renderRes.data?.video_url || epAfter?.video_url;
         const renderAssets: AssetJobItem[] = [
           {
             id: `render_${job_id}`,
@@ -204,39 +263,60 @@ export class PipelineJobService {
       // ─── STEP B1: CAST PORTRAITS & WARDROBE LOOKBOOKS ───────────────────────
       if (type === 'full_pipeline' || type === 'step_b1') {
         if (!this.activeRuns.get(job_id)) return;
-        await updateStep('b1', 'running', 10, 10, 'Step B1: Generating Cast Portraits & 2-in-1 Wardrobes...');
-        await addLog('info', 'Executing Step B1: Cast Portraits & Wardrobes');
+        await updateStep('b1', 'running', 10, 10, 'Step B1: Verifying Cast Portraits & Wardrobes...');
+        await addLog('info', 'Executing Step B1: Cast Portraits & Wardrobes (Preserving existing series cast)');
 
-        const charRes = await CharacterToolExecutors.generateCharacterAsset({ userId: user_id, seriesId: series_id, forceRegenerate: force_regenerate });
-        const wardrobeRes = await CharacterToolExecutors.generateWardrobeVariants({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        // In full_pipeline mode, preserve existing character portraits & wardrobe variants to maintain visual consistency across all episodes.
+        // Force regeneration only applies to B1 if running a dedicated step_b1 job.
+        const charForce = type === 'step_b1' ? force_regenerate : false;
+        const wardrobeForce = type === 'step_b1' ? force_regenerate : false;
+
+        const charRes = await CharacterToolExecutors.generateCharacterAsset({
+          userId: user_id,
+          seriesId: series_id,
+          forceRegenerate: charForce,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b1', item.asset, item.current, item.total, 0, 10, item.description);
+          },
+        });
+        const wardrobeRes = await CharacterToolExecutors.generateWardrobeVariants({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: wardrobeForce,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b1', item.asset, item.current, item.total, 10, 20, item.description);
+          },
+        });
 
         if (!charRes.success && !wardrobeRes.success) {
           throw new Error(`Step B1 Failed: ${charRes.message || wardrobeRes.message}`);
         }
 
         // Collect AssetJobItems for B1
-        const seriesAfterB1 = await db.getSeriesById(series_id);
+        const seriesAfterB1: SeriesEntity | null = await db.getSeriesById(series_id);
         const b1Assets: AssetJobItem[] = [];
-        (seriesAfterB1?.characters || []).forEach((c: any) => {
-          if (c.imageUrl || c.avatar) {
+        (seriesAfterB1?.characters || []).forEach((c: CharacterSeriesEntity) => {
+          const avatarUrl = c.avatar;
+          if (avatarUrl) {
             b1Assets.push({
               id: c.id,
               name: `Portrait: ${c.name}`,
               type: 'character',
               status: 'completed',
-              url: c.imageUrl || c.avatar,
-              thumbnail: c.imageUrl || c.avatar,
+              url: avatarUrl,
+              thumbnail: avatarUrl,
             });
           }
-          (c.wardrobe_variants || []).forEach((w: any) => {
-            if (w.imageUrl) {
+          (c.wardrobe_variants || []).forEach((w: CharacterWardrobeVariant) => {
+            if (w.image_url) {
               b1Assets.push({
                 id: `${c.id}_${w.variant_id}`,
                 name: `Wardrobe: ${c.name} (${w.name})`,
                 type: 'wardrobe',
                 status: 'completed',
-                url: w.imageUrl,
-                thumbnail: w.imageUrl,
+                url: w.image_url,
+                thumbnail: w.image_url,
               });
             }
           });
@@ -246,56 +326,89 @@ export class PipelineJobService {
           characters: charRes.data,
           wardrobes: wardrobeRes.data,
         }, b1Assets);
+        const epAfterB1 = await db.getEpisodeById(episode_id);
+        if (epAfterB1) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB1);
         await addLog('info', 'Step B1 completed successfully.');
       }
 
       // ─── STEP B2: ASSETS & SCENE STORYBOARDS ───────────────────────────────
       if (type === 'full_pipeline' || type === 'step_b2') {
         if (!this.activeRuns.get(job_id)) return;
-        await updateStep('b2', 'running', 20, 30, 'Step B2: Generating Location Sheets & Storyboard Keyframes...');
-        await addLog('info', 'Executing Step B2: Assets & Storyboards');
+        await updateStep('b2', 'running', 20, 30, 'Step B2: Generating Storyboard Keyframes (Preserving existing locations/props)...');
+        await addLog('info', 'Executing Step B2: Assets & Storyboards (Preserving existing series locations & props)');
 
-        const locRes = await AssetToolExecutors.generateLocationAsset({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
-        const propRes = await AssetToolExecutors.generatePropAsset({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
-        const sbRes = await AssetToolExecutors.generatePipelineEpisodeStoryboard({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        // In full_pipeline mode, preserve existing location concepts and prop assets across episodes.
+        // Scene storyboards for this episode are regenerated if force_regenerate is true.
+        const locForce = type === 'step_b2' ? force_regenerate : false;
+        const propForce = type === 'step_b2' ? force_regenerate : false;
+
+        const locRes = await AssetToolExecutors.generateLocationAsset({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: locForce,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b2', item.asset, item.current, item.total, 20, 25, item.description);
+          },
+        });
+        const propRes = await AssetToolExecutors.generatePropAsset({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: propForce,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b2', item.asset, item.current, item.total, 25, 30, item.description);
+          },
+        });
+        const sbRes = await AssetToolExecutors.generatePipelineEpisodeStoryboard({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: force_regenerate,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b2', item.asset, item.current, item.total, 30, 45, item.description);
+          },
+        });
 
         if (!sbRes.success) {
           throw new Error(`Step B2 Failed: ${sbRes.message}`);
         }
 
         // Collect AssetJobItems for B2
-        const seriesAfterB2 = await db.getSeriesById(series_id);
-        const epAfterB2 = await db.getEpisodeById(episode_id);
+        const seriesAfterB2: SeriesEntity | null = await db.getSeriesById(series_id);
+        const epAfterB2: EpisodeEntity | null = await db.getEpisodeById(episode_id);
         const b2Assets: AssetJobItem[] = [];
 
-        (seriesAfterB2?.locations || []).forEach((l: any) => {
-          if (l.imageUrl) {
+        (seriesAfterB2?.locations || []).forEach((l: LocationAsset) => {
+          const locUrl = l.image_url;
+          if (locUrl) {
             b2Assets.push({
               id: l.id,
               name: `Location: ${l.name}`,
               type: 'location',
               status: 'completed',
-              url: l.imageUrl,
-              thumbnail: l.imageUrl,
+              url: locUrl,
+              thumbnail: locUrl,
             });
           }
         });
 
-        (seriesAfterB2?.props || []).forEach((p: any) => {
-          if (p.imageUrl) {
+        (seriesAfterB2?.props || []).forEach((p: PropAsset) => {
+          const propUrl = p.image_url;
+          if (propUrl) {
             b2Assets.push({
               id: p.id,
               name: `Prop: ${p.name}`,
               type: 'prop',
               status: 'completed',
-              url: p.imageUrl,
-              thumbnail: p.imageUrl,
+              url: propUrl,
+              thumbnail: propUrl,
             });
           }
         });
 
-        (epAfterB2?.scenes || []).forEach((s: any) => {
-          const startImg = s.storyboard_frame_url || s.storyboardFrameUrl || s.image_url || s.imageUrl;
+        (epAfterB2?.scenes || []).forEach((s: SceneEntity) => {
+          const startImg = s.storyboard_frame_url || s.image_url;
           if (startImg) {
             b2Assets.push({
               id: `sb_${episode_id}_s${s.index}`,
@@ -307,8 +420,8 @@ export class PipelineJobService {
               scene_index: s.index,
             });
           }
-          const endImg = s.storyboard_end_frame_url || s.storyboardEndFrameUrl;
-          if (endImg) {
+          const endImg = s.storyboard_end_frame_url;
+          if (endImg && endImg !== startImg) {
             b2Assets.push({
               id: `sb_end_${episode_id}_s${s.index}`,
               name: `Scene #${s.index} Storyboard (End)`,
@@ -326,6 +439,7 @@ export class PipelineJobService {
           props: propRes.data,
           storyboards: sbRes.data,
         }, b2Assets);
+        if (epAfterB2) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB2);
         await addLog('info', 'Step B2 completed successfully.');
       }
 
@@ -335,22 +449,37 @@ export class PipelineJobService {
         await updateStep('b3', 'running', 40, 55, 'Step B3: Synthesizing AI Video Clips from Storyboards...');
         await addLog('info', 'Executing Step B3: AI Video Clips');
 
-        const vidRes = await VideoToolExecutors.generateSceneVideo({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        const vidRes = await VideoToolExecutors.generateSceneVideo({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: force_regenerate,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b3', item.asset, item.current, item.total, 45, 70, item.description);
+          },
+        });
         if (!vidRes.success) {
           throw new Error(`Step B3 Failed: ${vidRes.message}`);
         }
 
-        const epAfterB3 = await db.getEpisodeById(episode_id);
+        const epAfterB3: EpisodeEntity | null = await db.getEpisodeById(episode_id);
+        const scenesAfterB3 = epAfterB3?.scenes || [];
+        const missingVideoScenes = scenesAfterB3.filter((s: SceneEntity) => !s.video_url);
+        if (missingVideoScenes.length > 0) {
+          const missingIndices = missingVideoScenes.map((s: SceneEntity) => `#${s.index || s.scene_number}`).join(', ');
+          throw new Error(`Step B3 Failed: Video generation missing or failed for scene(s) ${missingIndices}. All scenes must have valid video before proceeding.`);
+        }
+
         const b3Assets: AssetJobItem[] = [];
-        (epAfterB3?.scenes || []).forEach((s: any) => {
-          if (s.videoUrl) {
+        scenesAfterB3.forEach((s: SceneEntity) => {
+          if (s.video_url) {
             b3Assets.push({
               id: `vid_${episode_id}_s${s.index}`,
               name: `Scene #${s.index} Video Clip`,
               type: 'video',
               status: 'completed',
-              url: s.videoUrl,
-              thumbnail: s.storyboardFrameUrl || s.imageUrl,
+              url: s.video_url,
+              thumbnail: s.storyboard_frame_url || s.image_url,
               scene_index: s.index,
             });
           }
@@ -359,6 +488,7 @@ export class PipelineJobService {
         await updateStep('b3', 'completed', 100, 70, 'Step B3 completed: AI Video clips ready', {
           videos: vidRes.data,
         }, b3Assets);
+        if (epAfterB3) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB3);
         await addLog('info', 'Step B3 completed successfully.');
       }
 
@@ -368,21 +498,29 @@ export class PipelineJobService {
         await updateStep('b4', 'running', 60, 75, 'Step B4: Synthesizing Voiceovers and Dialogue TTS...');
         await addLog('info', 'Executing Step B4: Voiceover & TTS');
 
-        const audioRes = await AudioToolExecutors.generateSceneVoiceover({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        const audioRes = await AudioToolExecutors.generateSceneVoiceover({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: force_regenerate,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b4', item.asset, item.current, item.total, 70, 82, item.description);
+          },
+        });
         if (!audioRes.success) {
           throw new Error(`Step B4 Failed: ${audioRes.message}`);
         }
 
-        const epAfterB4 = await db.getEpisodeById(episode_id);
+        const epAfterB4: EpisodeEntity | null = await db.getEpisodeById(episode_id);
         const b4Assets: AssetJobItem[] = [];
-        (epAfterB4?.scenes || []).forEach((s: any) => {
-          if (s.audioUrl) {
+        (epAfterB4?.scenes || []).forEach((s: SceneEntity) => {
+          if (s.voiceover_url) {
             b4Assets.push({
               id: `voice_${episode_id}_s${s.index}`,
               name: `Scene #${s.index} Voiceover`,
               type: 'voice',
               status: 'completed',
-              url: s.audioUrl,
+              url: s.voiceover_url,
               scene_index: s.index,
             });
           }
@@ -391,6 +529,7 @@ export class PipelineJobService {
         await updateStep('b4', 'completed', 100, 82, 'Step B4 completed: Voiceovers ready', {
           voiceovers: audioRes.data,
         }, b4Assets);
+        if (epAfterB4) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB4);
         await addLog('info', 'Step B4 completed successfully.');
       }
 
@@ -400,15 +539,23 @@ export class PipelineJobService {
         await updateStep('b5', 'running', 75, 88, 'Step B5: Building Word-Level Kinetic Subtitles...');
         await addLog('info', 'Executing Step B5: Word-by-Word Subtitles');
 
-        const capRes = await CaptionToolExecutors.generateSceneCaption({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        const capRes = await CaptionToolExecutors.generateSceneCaption({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: force_regenerate,
+          onItemProgress: async (item) => {
+            await appendItemProgress('b5', item.asset, item.current, item.total, 82, 92, item.description);
+          },
+        });
         if (!capRes.success) {
           throw new Error(`Step B5 Failed: ${capRes.message}`);
         }
 
-        const epAfterB5 = await db.getEpisodeById(episode_id);
+        const epAfterB5: EpisodeEntity | null = await db.getEpisodeById(episode_id);
         const b5Assets: AssetJobItem[] = [];
-        (epAfterB5?.scenes || []).forEach((s: any) => {
-          if (s.dialogue?.length > 0) {
+        (epAfterB5?.scenes || []).forEach((s: SceneEntity) => {
+          if (s.dialogue && s.dialogue.length > 0) {
             b5Assets.push({
               id: `sub_${episode_id}_s${s.index}`,
               name: `Scene #${s.index} Subtitle`,
@@ -422,6 +569,7 @@ export class PipelineJobService {
         await updateStep('b5', 'completed', 100, 92, 'Step B5 completed: Subtitles synchronized', {
           captions: capRes.data,
         }, b5Assets);
+        if (epAfterB5) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB5);
         await addLog('info', 'Step B5 completed successfully.');
       }
 
@@ -436,8 +584,8 @@ export class PipelineJobService {
           throw new Error(`Step B6 Failed: ${renderRes.message}`);
         }
 
-        const epAfterB6 = await db.getEpisodeById(episode_id);
-        const finalUrl = renderRes.data?.video_url || (epAfterB6 as any)?.video_url;
+        const epAfterB6: EpisodeEntity | null = await db.getEpisodeById(episode_id);
+        const finalUrl = renderRes.data?.video_url || epAfterB6?.video_url;
         const b6Assets: AssetJobItem[] = [
           {
             id: `render_${job_id}`,
@@ -452,6 +600,7 @@ export class PipelineJobService {
         await updateStep('b6', 'completed', 100, 100, 'Step B6 completed: Master video exported', {
           final_video: renderRes.data,
         }, b6Assets);
+        if (epAfterB6) PatchSyncService.broadcast(series_id, 'episode:updated', epAfterB6);
         await addLog('info', 'Step B6 completed successfully.');
       }
 
@@ -513,6 +662,15 @@ export class PipelineJobService {
       if (failedJob) {
         PatchSyncService.broadcast(series_id, 'pipeline_job:updated', failedJob);
       }
+      // Broadcast current episode state even if pipeline failed mid-way so user retains created assets
+      try {
+        const intermediateEpisode = await db.getEpisodeById(episode_id);
+        if (intermediateEpisode) {
+          PatchSyncService.broadcast(series_id, 'episode:updated', intermediateEpisode);
+        }
+      } catch (e) {
+        // ignore
+      }
     } finally {
       this.activeRuns.delete(job_id);
     }
@@ -527,13 +685,14 @@ export class PipelineJobService {
     const job = await db.getPipelineJobById(job_id);
     if (!job) return false;
 
-    const stepProgress = job.step_progress || {};
+    const stepProgress = (job.step_progress || {}) as Record<string, any>;
     for (const [key, step] of Object.entries(stepProgress)) {
-      if (step.status === 'running' || step.status === 'pending') {
+      const s = step as any;
+      if (s && (s.status === 'running' || s.status === 'pending')) {
         stepProgress[key] = {
-          ...step,
-          status: 'cancelled' as any,
-          message: step.status === 'running' ? 'Cancelled during execution' : 'Skipped / Cancelled',
+          ...s,
+          status: 'cancelled',
+          message: s.status === 'running' ? 'Cancelled during execution' : 'Skipped / Cancelled',
         };
       }
     }

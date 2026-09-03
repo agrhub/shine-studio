@@ -10,26 +10,63 @@ import { getUserId } from '@/utils/auth.js';
 
 export const aiRouter = Router();
 
-// GET /api/ai/trends/viral-topics — Delegated to TrendRadarAgent & trend_radar skill
+import { viralTrendService } from '../services/ViralTrendService.js';
+
+// GET /api/ai/trends/viral-topics — Multi-market caching & pagination service with instant response
 aiRouter.get('/trends/viral-topics', async (req, res) => {
   const country = (req.query.country as string) || (req.query.region as string) || 'US';
   const lang = (req.query.lang as string) || (req.query.language as string) || (req.headers['accept-language']?.split(',')[0]?.split(';')[0]) || 'en-US';
+  const page = Number(req.query.page) || 1;
+  const pageSize = Number(req.query.pageSize) || Number(req.query.limit) || 12;
+  const genre = (req.query.genre as string) || undefined;
+  const search = (req.query.search as string) || undefined;
+  const forceRefresh = req.query.forceRefresh === 'true' || req.query.refresh === 'true';
+
   try {
-    const topics = await trendRadarAgent.execute(country, lang);
+    const result = await viralTrendService.getTrends({
+      country,
+      lang,
+      page,
+      pageSize,
+      genre,
+      search,
+      forceRefresh,
+    });
     return res.json({
       code: 200,
-      data: topics,
-      message: 'Viral topics fetched successfully via Trend Radar Agent',
+      data: result.items,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        totalPages: result.totalPages,
+      },
+      country: result.country,
+      updatedAt: result.updatedAt,
+      fromCache: result.fromCache,
+      message: result.fromCache
+        ? `Served ${result.items.length} trends from cache for ${result.country}`
+        : `Fetched ${result.items.length} fresh trends for ${result.country} via AI`,
       error: null,
     });
   } catch (err: any) {
     return res.status(500).json({
       code: 500,
-      data: null,
+      data: [],
       message: `Failed to fetch viral topics: ${err.message}`,
       error: err.message,
     });
   }
+});
+
+// GET /api/ai/trends/cache-status — Debug: which markets are cached and whether stale
+aiRouter.get('/trends/cache-status', (_req, res) => {
+  return res.json({
+    code: 200,
+    data: viralTrendService.getCacheStatus(),
+    message: 'Cache status for all popular markets',
+    error: null,
+  });
 });
 
 // POST /api/ai/generate-master-plan — Delegated to StorySkeletonAgent & script_skeleton skill
@@ -194,12 +231,13 @@ aiRouter.post('/generate-script', async (req, res) => {
 // POST /api/ai/verify-compliance — Master Plan Compliance & Safety Audit
 aiRouter.post('/verify-compliance', async (req, res) => {
   try {
-    const { master_plan, masterPlan, country, ratio } = req.body;
+    const { master_plan, masterPlan, country, ratio, language, lang } = req.body;
     const plan = master_plan || masterPlan;
     const result = await supervisionAgent.verifyMasterPlanCompliance({
       masterPlan: plan,
       country,
       ratio,
+      lang: language || lang || 'en-US',
     });
     return res.json({
       code: 200,

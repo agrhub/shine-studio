@@ -22,6 +22,8 @@ export interface CollaboratorInfo {
   joinedAt: number;
 }
 
+const GLOBAL_PATCH_SYNC_KEY = Symbol.for('shine.patchSyncService');
+
 export class PatchSyncService {
   private static instance: PatchSyncService | null = null;
   private io: Server;
@@ -30,17 +32,26 @@ export class PatchSyncService {
   constructor(io: Server) {
     this.io = io;
     PatchSyncService.instance = this;
+    (globalThis as any)[GLOBAL_PATCH_SYNC_KEY] = this;
     this.initListeners();
+    console.log('[PatchSyncService] Realtime WebSocket initialized and registered globally');
   }
 
   public static getInstance(): PatchSyncService | null {
-    return PatchSyncService.instance;
+    return (globalThis as any)[GLOBAL_PATCH_SYNC_KEY] || PatchSyncService.instance;
   }
 
   public static broadcast(seriesId: string, eventName: string, data: any) {
-    if (PatchSyncService.instance) {
-      PatchSyncService.instance.io.to(`series:${seriesId}`).emit(eventName, data);
-      PatchSyncService.instance.io.emit(eventName, data);
+    const instance = PatchSyncService.getInstance();
+    if (instance) {
+      if (seriesId && seriesId !== 'all') {
+        instance.io.to(`series:${seriesId}`).emit(eventName, data);
+      }
+      // Broadcast to all sockets so that Global Task Popovers / UI anywhere in the app receive real-time job updates
+      instance.io.emit(eventName, data);
+      console.log(`[PatchSyncService] Broadcasted '${eventName}' (seriesId: ${seriesId})`);
+    } else {
+      console.warn(`[PatchSyncService] Warning: Broadcast '${eventName}' skipped because PatchSyncService instance is not ready`);
     }
   }
 

@@ -164,65 +164,74 @@ export class GCSStorageAdapter implements IStorageAdapter {
 
   /**
    * Retrieves a readable stream for media files, transparently proxying the
-   * client's Range header directly to GCS.
+   * client's Range header directly to GCS via native SDK.
    *
    * Returns { stream, status, headers } so the caller can forward GCS's
-   * Content-Range / Content-Length headers without an extra metadata fetch.
-   *
-   * Falls back to the GCS SDK createReadStream if auth token retrieval fails.
+   * Content-Range / Content-Length headers without extra dependencies.
    */
   async getFileStream(
     key: string,
     options?: { start?: number; end?: number } | string
   ): Promise<any> {
     const normalizedKey = key.replace(/^\/+/, '');
+    const file = this.bucket.file(normalizedKey);
 
-    // Build the direct GCS media download URL
-    const encodedKey = encodeURIComponent(normalizedKey);
-    const downloadUrl = `https://storage.googleapis.com/storage/v1/b/${this.bucketName}/o/${encodedKey}?alt=media`;
-
-    const requestHeaders: Record<string, string> = {};
-
-    // Obtain OAuth2 Bearer token
     try {
-      const token = await this.storage.authClient.getAccessToken();
-      if (token) {
-        requestHeaders['Authorization'] = `Bearer ${token}`;
+      const [metadata] = await file.getMetadata();
+      const fileSize = Number(metadata.size || 0);
+      const contentType = metadata.contentType || 'video/mp4';
+
+      let start = 0;
+      let end = fileSize > 0 ? fileSize - 1 : 0;
+      let isRange = false;
+
+      if (typeof options === 'string' && options.startsWith('bytes=')) {
+        const parts = options.replace('bytes=', '').split('-');
+        start = parseInt(parts[0], 10) || 0;
+        if (parts[1] && parts[1].trim().length > 0) {
+          end = parseInt(parts[1], 10);
+        }
+        isRange = true;
+      } else if (typeof options === 'object' && options !== null) {
+        if (options.start !== undefined) {
+          start = options.start;
+          isRange = true;
+        }
+        if (options.end !== undefined) {
+          end = options.end;
+          isRange = true;
+        }
       }
-    } catch {
-      // Fall back to GCS SDK stream on auth failure
-      const file = this.bucket.file(normalizedKey);
+
+      if (end < start) end = start;
+      if (fileSize > 0 && end >= fileSize) end = fileSize - 1;
+
+      const stream = file.createReadStream(isRange ? { start, end } : {});
+      const chunkSize = (end - start) + 1;
+
+      return {
+        stream,
+        status: isRange ? 206 : 200,
+        headers: {
+          'content-range': isRange && fileSize > 0 ? `bytes ${start}-${end}/${fileSize}` : undefined,
+          'content-length': String(isRange ? chunkSize : fileSize),
+          'content-type': contentType,
+          'accept-ranges': 'bytes',
+        },
+      };
+    } catch (err: any) {
+      Logger.warn(`[GCSStorageAdapter] Direct metadata fetch failed for ${normalizedKey}: ${err.message}. Falling back to createReadStream.`);
       const sdkOptions = typeof options === 'object' && options !== null ? options : {};
-      return file.createReadStream(sdkOptions as { start?: number; end?: number });
+      const stream = file.createReadStream(sdkOptions as { start?: number; end?: number });
+      return {
+        stream,
+        status: 200,
+        headers: {
+          'content-type': 'video/mp4',
+          'accept-ranges': 'bytes',
+        },
+      };
     }
-
-    // Forward the Range header: accept either a raw string or a { start, end } object
-    if (typeof options === 'string') {
-      // Raw Range header forwarded from the client request (e.g. "bytes=0-1048575")
-      if (options) requestHeaders['Range'] = options;
-    } else if (typeof options === 'object' && options !== null && options.start !== undefined) {
-      const end = options.end !== undefined ? options.end : '';
-      requestHeaders['Range'] = `bytes=${options.start}-${end}`;
-    }
-
-    const response = await axios.get(downloadUrl, {
-      responseType: 'stream',
-      headers: requestHeaders,
-      timeout: 60_000,
-      validateStatus: (s) => s >= 200 && s < 400,
-    });
-
-    // Return full response info so callers can proxy status + headers
-    return {
-      stream: response.data,
-      status: response.status,
-      headers: {
-        'content-range': response.headers['content-range'],
-        'content-length': response.headers['content-length'],
-        'content-type': response.headers['content-type'],
-        'accept-ranges': 'bytes',
-      },
-    };
   }
 
   /**

@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
-import { CharacterSeriesEntity, EpisodeEntity, SceneDialogue, SceneEntity, getDatabaseProvider } from '../database/index.js';
+import { getDatabaseProvider } from '../database/index.js';
+import { CharacterSeriesEntity, EpisodeEntity, SceneDialogue, SceneEntity, SeriesEntity,  } from '@/types.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
 import { TimelineService } from '../services/TimelineService.js';
 import { PatchSyncService } from '../realtime/PatchSyncService.js';
-import { buildWordLevelCaptionsFromDialogue, cleanDialogueLine } from '../utils/captionAlignment.js';
-import { EpisodeChatSession } from '~/agents/ChatbotAgent.js';
+import { CaptionService } from '../services/CaptionService.js';
+import { EpisodeChatSession } from '~/types.js';
 
 export const captionsRouter = Router();
 
@@ -277,7 +278,7 @@ captionsRouter.post('/batch-translate', async (req: Request, res: Response) => {
   try {
     const db = await getDatabaseProvider();
     let episode: EpisodeEntity | null = null;
-    let series = null;
+    let series: SeriesEntity | null = null;
     if (targetEpisodeId) {
       episode = await db.getEpisodeById(targetEpisodeId);
       if (episode?.series_id) {
@@ -294,7 +295,7 @@ captionsRouter.post('/batch-translate', async (req: Request, res: Response) => {
         return {
           scene_index: s.index,
           character: speaker,
-          dialogue: cleanDialogueLine(line, speaker),
+          dialogue: CaptionService.cleanDialogueLine(line, speaker),
         };
       })
       .filter((item) => item.dialogue.trim().length > 0);
@@ -336,7 +337,7 @@ Respond with ONLY valid JSON adhering strictly to this schema:
     const translatedScenes = rawTranslated.map((t: any) => ({
       scene_index: t.scene_index,
       character: t.character,
-      translated_dialogue: cleanDialogueLine(t.translated_dialogue || t.line || '', t.character),
+      translated_dialogue: CaptionService.cleanDialogueLine(t.translated_dialogue || t.line || '', t.character),
     }));
 
     // Persist translations directly into the database episode entity
@@ -354,11 +355,10 @@ Respond with ONLY valid JSON adhering strictly to this schema:
               line: t.translated_dialogue,
             },
           ];
-          const { captions_data, words } = buildWordLevelCaptionsFromDialogue(transDialogues, sceneDur, 0.5);
+          const { captions_data, words } = CaptionService.buildWordLevelCaptionsFromDialogue(transDialogues, sceneDur, 0.5);
           sc.translations[reqTargetLang] = {
             ...(sc.translations[reqTargetLang] || {}),
             dialogue: transDialogues,
-            translated_dialogue: t.translated_dialogue,
             captions_data,
             words,
           };
@@ -377,7 +377,7 @@ Respond with ONLY valid JSON adhering strictly to this schema:
 
       const currentTimeline = await db.getLatestTimeline(targetEpisodeId);
       if (currentTimeline) {
-        const syncedTimeline = TimelineService.syncTimelineWithScenes(episode, currentTimeline, series);
+        const syncedTimeline = TimelineService.syncTimelineWithScenes(episode, currentTimeline as any, series as any);
         await db.saveTimeline(targetEpisodeId, syncedTimeline, { id: 'system', name: 'Studio Pipeline' }, `Synced ${reqTargetLang} translated captions`);
       }
 
@@ -393,55 +393,61 @@ Respond with ONLY valid JSON adhering strictly to this schema:
         target_language: reqTargetLang,
         translated_scenes: translatedScenes,
       },
-      message: `Successfully translated ${translatedScenes.length} scenes to ${reqTargetLang}`,
+      message: `Successfully translated dialogue to ${reqTargetLang}`,
       error: null,
     });
   } catch (err: any) {
     return res.status(500).json({
       code: 500,
-      message: `Batch translation failed: ${err.message}`,
+      data: null,
+      message: err.message || 'Failed to translate dialogue lines',
       error: err.message,
     });
   }
 });
 
-// POST /api/captions/batch-dubbing
+async function translateDialogueList(dialogues: SceneDialogue[], targetLang: string): Promise<SceneDialogue[]> {
+  if (!dialogues || dialogues.length === 0) return [];
+  const lines = dialogues.map(d => d.line).filter(Boolean);
+  if (lines.length === 0) return dialogues;
+
+  try {
+    const raw = await geminiClient.generateText({
+      prompt: `Translate the following dialogue lines into ${targetLang}:\n${JSON.stringify(lines, null, 2)}\nReturn ONLY a JSON array of translated strings: ["..."]`,
+      jsonMode: true,
+    });
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return dialogues.map((d, i) => ({
+        ...d,
+        line: parsed[i] || d.line,
+      }));
+    }
+  } catch {
+    // fallback
+  }
+  return dialogues;
+}
+
+/**
+ * POST /api/captions/batch-dubbing
+ * Generates speech audio and builds word-level SRT timing per scene.
+ */
 captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
-  const {
-    series_id,
-    seriesId,
-    episode_id,
-    episodeId,
-    target_language,
-    targetLanguage = 'en-US',
-    voice_id,
-    voiceId = 'Puck',
-    scenes = [],
-  }: {
-    series_id?: string;
-    seriesId?: string;
-    episode_id?: string;
-    episodeId?: string;
-    target_language?: string;
-    targetLanguage?: string;
-    voice_id?: string;
-    voiceId?: string;
-    scenes?: SceneEntity[];
-  } = req.body;
+  const { series_id, seriesId, episode_id, episodeId, target_language, targetLanguage, default_voice_id, defaultVoiceId, scenes } = req.body;
   const targetSeriesId = series_id || seriesId;
   const targetEpisodeId = episode_id || episodeId;
   const reqTargetLang = target_language || targetLanguage;
-  const defaultVoiceId = voice_id || voiceId;
 
   if (!Array.isArray(scenes) || scenes.length === 0) {
-    return res.status(400).json({ code: 400, message: 'Scenes array is required' });
+    return res.status(400).json({ code: 400, message: 'Scenes array is required and must not be empty' });
   }
 
   try {
     const db = await getDatabaseProvider();
     let seriesChars: CharacterSeriesEntity[] = [];
     let episode: EpisodeEntity | null = null;
-    let series = null;
+    let series: SeriesEntity | null = null;
 
     if (targetEpisodeId) {
       episode = await db.getEpisodeById(targetEpisodeId);
@@ -471,9 +477,9 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
       } else if (typeof trans?.translated_dialogue === 'string' && trans.translated_dialogue.trim()) {
         const speaker = (Array.isArray(sc.dialogue) && sc.dialogue[0]?.character) || 'Character';
         targetDialogueList = [{ character: speaker, line: trans.translated_dialogue }];
-      } else if (typeof trans?.dialogue === 'string' && trans.dialogue.trim()) {
+      } else if (typeof trans?.dialogue === 'string' && (trans.dialogue as string).trim()) {
         const speaker = (Array.isArray(sc.dialogue) && sc.dialogue[0]?.character) || 'Character';
-        targetDialogueList = [{ character: speaker, line: trans.dialogue }];
+        targetDialogueList = [{ character: speaker, line: trans.dialogue as string }];
       } else {
         // Translate dialogue to target language if not yet translated
         const sourceDialogues: SceneDialogue[] = Array.isArray(sc.dialogue) && sc.dialogue.length > 0
@@ -489,14 +495,14 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
 
       const primaryDialogue = targetDialogueList[0];
       const speakerName = primaryDialogue.character || 'Character';
-      const textToVoice = cleanDialogueLine(primaryDialogue.line, speakerName);
+      const textToVoice = CaptionService.cleanDialogueLine(primaryDialogue.line, speakerName);
       if (!textToVoice.trim()) continue;
 
       const emotion = primaryDialogue.emotion || 'dramatic';
       const speechTone = primaryDialogue.speech_tone || 'expressive';
       const speechSpeed = (typeof primaryDialogue.speed === 'number' && primaryDialogue.speed > 0) ? primaryDialogue.speed : 1.0;
       const matchedChar = seriesChars.find((c: CharacterSeriesEntity) => c.name.toLowerCase() === speakerName.toLowerCase());
-      const resolvedVoiceId = matchedChar?.voice_id || defaultVoiceId || 'Puck';
+      const resolvedVoiceId = matchedChar?.voice_id || default_voice_id || defaultVoiceId || 'Puck';
 
       try {
         const audioRes = await geminiClient.generateAudio(textToVoice, resolvedVoiceId, undefined, {
@@ -522,7 +528,7 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
             },
           ];
 
-          const { captions_data, words } = buildWordLevelCaptionsFromDialogue(
+          const { captions_data, words } = CaptionService.buildWordLevelCaptionsFromDialogue(
             translatedDialogues,
             sceneDur,
             0.5
@@ -541,7 +547,6 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
             if (!matchedEpScene.translations) matchedEpScene.translations = {};
             matchedEpScene.translations[reqTargetLang] = {
               dialogue: translatedDialogues,
-              translated_dialogue: textToVoice,
               voiceover_url: audioUrl,
               voice_duration_us: Math.round(sceneDur * 1_000_000),
               voice_start_us: 500_000,
@@ -574,7 +579,7 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
 
       const currentTimeline = await db.getLatestTimeline(targetEpisodeId);
       if (currentTimeline) {
-        const syncedTimeline = TimelineService.syncTimelineWithScenes(episode, currentTimeline, series);
+        const syncedTimeline = TimelineService.syncTimelineWithScenes(episode, currentTimeline as any, series as any);
         await db.saveTimeline(targetEpisodeId, syncedTimeline, { id: 'system', name: 'Studio Pipeline' }, `Synced ${reqTargetLang} audio and word-by-word captions`);
       }
 

@@ -1,10 +1,10 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
 import { getDatabaseProvider } from '@/database/index.js';
-import type { SceneEntity, SceneDialogue } from '@/types.js';
+import type { SceneEntity, SceneDialogue, AssetJobItem } from '@/types.js';
 import { Logger } from '@/utils/logger.js';
 import { generateDialogueVoiceSynthesis } from '@/routes/voices.js';
-import { translateDialogueList, buildWordLevelCaptionsFromDialogue } from '@/utils/captionAlignment.js';
+import { CaptionService } from '@/services/CaptionService.js';
 import { executeWithRetry, withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
 
 export class AudioToolExecutors {
@@ -22,6 +22,7 @@ export class AudioToolExecutors {
     emotion?: string;
     languageCode?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -49,7 +50,7 @@ export class AudioToolExecutors {
         }
       }
 
-      const results: any[] = [];
+      const results: Array<{ sceneIndex: number; language?: string; status: string; audio_url?: string }> = [];
       const updatedScenes: SceneEntity[] = [...scenes];
 
       for (const sc of targets) {
@@ -75,6 +76,19 @@ export class AudioToolExecutors {
               language: primaryLang,
               status: 'main_language_voice_already_exists',
               audio_url: existingVoice,
+            });
+            await params.onItemProgress?.({
+              asset: {
+                id: `voice_${params.episodeId}_s${scIndex}`,
+                name: `Scene #${scIndex} Voiceover`,
+                type: 'voice',
+                status: 'completed',
+                url: existingVoice,
+                scene_index: scIndex,
+              },
+              current: results.length,
+              total: targets.length,
+              description: `Scene #${scIndex} Voiceover (Ready)`,
             });
             continue;
           }
@@ -110,6 +124,20 @@ export class AudioToolExecutors {
             status: 'main_language_voice_generated',
             audio_url: result?.audio_url,
           });
+
+          await params.onItemProgress?.({
+            asset: {
+              id: `voice_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Voiceover`,
+              type: 'voice',
+              status: 'completed',
+              url: result?.audio_url,
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Synthesized Voiceover for Scene #${scIndex}`,
+          });
         } else {
           // ── SUB-LANGUAGE: Translate and synthesize voiceover in subLang ────────
           if (!updatedScenes[idx].translations) {
@@ -135,7 +163,7 @@ export class AudioToolExecutors {
           if (!Array.isArray(translatedDialogue) || translatedDialogue.length === 0) {
             const { result: transList } = await executeWithRetry(`Translate Scene #${scIndex} Dialogue to ${targetLang}`, async () => {
               return await withCreditDeduction(params.userId, 'subtitleTranslate', 'Dialogue Translation', `Translated Scene #${scIndex} to ${targetLang}`, async () => {
-                return await translateDialogueList(sourceDialogue, targetLang);
+                return await CaptionService.translateDialogueList(sourceDialogue, targetLang);
               });
             });
             translatedDialogue = transList || sourceDialogue;
@@ -167,7 +195,7 @@ export class AudioToolExecutors {
           if (result?.cues?.length) {
             updatedScenes[idx].translations[targetLang].captions_data = result.cues;
           } else {
-            const wordCaptions = buildWordLevelCaptionsFromDialogue(translatedDialogue, sceneDur, startUs / 1_000_000);
+            const wordCaptions = CaptionService.buildWordLevelCaptionsFromDialogue(translatedDialogue, sceneDur, startUs / 1_000_000);
             updatedScenes[idx].translations[targetLang].captions_data = wordCaptions.captions_data;
             if (!updatedScenes[idx].translations[targetLang].words) {
               updatedScenes[idx].translations[targetLang].words = wordCaptions.words;

@@ -7,7 +7,7 @@ export const exportRouter = Router();
 exportRouter.post('/render-job', (req: Request, res: Response) => {
   try {
     const payload: CompositorPayload = req.body;
-    if (!payload.seriesId || !payload.episodeId) {
+    if (!payload.series_id || !payload.episode_id) {
       return res.status(400).json({
         code: 400,
         data: null,

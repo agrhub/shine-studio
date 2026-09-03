@@ -4,32 +4,7 @@ import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
 
-export interface TrendTopicOutput {
-  id: string;
-  topic: string;
-  description?: string;
-  trope: string;
-  hashtag_velocity: string;
-  competitor_hook: string;
-  country: string;
-  engagement_score: number;
-}
-
-const LANGUAGE_NAMES: Record<string, string> = {
-  en: 'English',
-  vi: 'Vietnamese (Tiếng Việt)',
-  zh: 'Simplified Chinese (简体中文)',
-  'zh-cn': 'Simplified Chinese (简体中文)',
-  'zh-tw': 'Traditional Chinese (繁體中文)',
-  jp: 'Japanese (日本語)',
-  ja: 'Japanese (日本語)',
-  es: 'Spanish (Español)',
-  fr: 'French (Français)',
-  de: 'German (Deutsch)',
-  ko: 'Korean (한국어)',
-  th: 'Thai (ไทย)',
-  id: 'Indonesian (Bahasa Indonesia)',
-};
+import { TrendTopicOutput, LANGUAGE_NAMES, MAX_TRENDS } from '../types.js';
 
 export class TrendRadarAgent {
   async execute(region: string = 'US', lang: string = 'en'): Promise<TrendTopicOutput[]> {
@@ -37,14 +12,14 @@ export class TrendRadarAgent {
     const cleanLang = (lang || 'en').trim().toLowerCase();
     const languageName = LANGUAGE_NAMES[cleanLang] || LANGUAGE_NAMES[cleanLang.split('-')[0]] || 'English';
 
-    // 1. Primary Strategy: Try Parallel MCP Client with target language
+    let mcpItems: TrendTopicOutput[] = [];
     try {
       Logger.info(`[TrendRadarAgent] Attempting real-time scan via Parallel MCP for region: ${cleanRegion}, language: ${languageName}...`);
       const mcpTopics = await mcpClient.scanViralTrends(cleanRegion, cleanLang);
 
       if (Array.isArray(mcpTopics) && mcpTopics.length > 0) {
-        Logger.info(`[TrendRadarAgent] Successfully retrieved ${mcpTopics.length} viral trends from Parallel MCP.`);
-        return mcpTopics.map((item: any, idx: number) => ({
+        Logger.info(`[TrendRadarAgent] Retrieved ${mcpTopics.length} viral trends from Parallel MCP.`);
+        mcpItems = mcpTopics.map((item: any, idx: number) => ({
           id: item.id || `${cleanRegion.toLowerCase()}_${idx + 1}`,
           topic: item.title || item.topic || `Viral Trend ${idx + 1}`,
           description: item.description || `Trending micro-drama trope: ${(item.tropes || []).join(', ') || 'High-stakes conflict'}`,
@@ -54,13 +29,29 @@ export class TrendRadarAgent {
           country: item.region || cleanRegion,
           engagement_score: item.viralScore || item.engagementScore || (98 - idx * 2),
         }));
+
+        if (mcpItems.length >= 15) {
+          return mcpItems;
+        }
       }
     } catch (mcpError: any) {
       Logger.warn(`[TrendRadarAgent] Parallel MCP scan unavailable (${mcpError.message}). Falling back to Gemini AI + Trend Radar Skill.`);
     }
 
-    // 2. Fallback Strategy: Gemini AI + trend_radar.md Skill (Always guarantees localized drama topics)
-    return this.executeGeminiLocalized(cleanRegion, cleanLang);
+    // 2. Gemini AI + trend_radar.md Skill (Guarantees full set of 15-20 localized drama topics)
+    const aiItems = await this.executeGeminiLocalized(cleanRegion, cleanLang);
+
+    // Merge MCP items and AI items without duplicates
+    const seen = new Set<string>();
+    const combined: TrendTopicOutput[] = [];
+    for (const item of [...mcpItems, ...aiItems]) {
+      const key = (item.topic || '').toLowerCase().trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        combined.push(item);
+      }
+    }
+    return combined.slice(0, 25);
   }
 
   private async executeGeminiLocalized(region: string, lang: string): Promise<TrendTopicOutput[]> {
@@ -76,6 +67,7 @@ export class TrendRadarAgent {
       region: cleanRegion,
       languageName,
       lang,
+	  maxTrends: MAX_TRENDS
     });
 
     const rawText = await geminiClient.generateText({

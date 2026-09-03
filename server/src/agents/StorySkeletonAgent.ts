@@ -260,29 +260,6 @@ export class StorySkeletonAgent {
       });
     }
 
-    // Fallback sanitizer for locations
-    if (!Array.isArray(masterPlan.locations) || masterPlan.locations.length === 0) {
-      
-    } else {
-      masterPlan.locations = masterPlan.locations.map((loc, idx) => ({
-        id: loc.id || `loc_${idx + 1}`,
-        name: loc.name || `Location ${idx + 1}`,
-        physical_characteristics: loc.physical_characteristics || '',
-        time_of_day: loc.time_of_day || 'DAY',
-      }));
-    }
-
-    // Fallback sanitizer for props: Ensure 2-5 props exist
-    if (!Array.isArray(masterPlan.props) || masterPlan.props.length === 0) {
-      
-    } else {
-      masterPlan.props = masterPlan.props.map((p, idx) => ({
-        id: p.id || `prop_${idx + 1}`,
-        name: p.name || `Prop ${idx + 1}`,
-        physical_characteristics: p.physical_characteristics || '',
-      }));
-    }
-
     masterPlan.total_episodes = totalEpisodes;
     masterPlan.total_duration_seconds = totalDurationSeconds;
     masterPlan.country = country;
@@ -291,35 +268,6 @@ export class StorySkeletonAgent {
     masterPlan.visual_style_prompt = input.visual_style_prompt || masterPlan.visual_style_prompt || getVisualStylePrompt(masterPlan.visual_style_prompt);
     masterPlan.ratio = input.ratio || masterPlan.ratio || '9:16';
     masterPlan.genre = input.genre || masterPlan.genre || 'Suspense / Mystery';
-
-    // Fallback sanitizer for threeActs: Ensure all 3 acts exist
-    if (!Array.isArray(masterPlan.three_acts) || masterPlan.three_acts.length < 3) {
-      const epAct1End = Math.max(2, Math.ceil(totalEpisodes * 0.33));
-      const epAct2End = Math.max(epAct1End + 2, Math.ceil(totalEpisodes * 0.75));
-      const currentActs = Array.isArray(masterPlan.three_acts) ? masterPlan.three_acts : [];
-
-      const act1 = currentActs.find(a => a.act_number === 1);
-      const act2 = currentActs.find(a => a.act_number === 2);
-      const act3 = currentActs.find(a => a.act_number === 3);
-      if(act1){
-        masterPlan.three_acts.push(act1);
-      }
-      if(act2){
-        masterPlan.three_acts.push(act2);
-      }
-      if(act3){
-        masterPlan.three_acts.push(act3);
-      }
-    }
-
-    // Fallback sanitizer for paywallHooks: Ensure all 5 strategic hooks exist
-    if (!Array.isArray(masterPlan.paywall_hooks) || masterPlan.paywall_hooks.length < 5) {
-      const defaultHooks: PaywallHook[] = [];
-
-      const currentHooks = Array.isArray(masterPlan.paywall_hooks) ? masterPlan.paywall_hooks : [];
-      const existingByPercent = new Map(currentHooks.map(h => [h.percentage, h]));
-      masterPlan.paywall_hooks = defaultHooks.map(def => existingByPercent.get(def.percentage) || def);
-    }
 
     if (!masterPlan.series_id) {
       masterPlan.series_id = `series_${Date.now()}`;

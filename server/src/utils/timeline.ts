@@ -7,7 +7,13 @@ import type { IProject } from '@/types.js';
 export function normalizePureTimeline(input: any): IProject {
   if (!input) {
     return {
-      settings: { width: 1080, height: 1920, fps: 30, backgroundColor: '#000000' },
+      settings: { 
+        width: 1080, 
+        height: 1920, 
+        fps: 30, 
+        backgroundColor: '#000000',
+        duration: 0
+      },
       tracks: [],
       clips: {},
     };

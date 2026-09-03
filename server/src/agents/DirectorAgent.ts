@@ -1,27 +1,16 @@
 import { storySkeletonAgent } from './StorySkeletonAgent.js';
-import type { StorySkeletonInput, MasterPlanOutput } from '@/types.js';
+import type {
+  StorySkeletonInput,
+  MasterPlanOutput,
+  FullScriptPipelineRequest,
+  FullScriptPipelineResponse,
+  SupervisionResult,
+  ScriptAgentInput,
+  ScriptItem,
+} from '@/types.js';
 import { adaptationStrategyAgent } from './AdaptationStrategyAgent.js';
-import { scriptAgent, type ScriptAgentInput, type ScriptItem } from './ScriptAgent.js';
-import { supervisionAgent, type SupervisionResult } from './SupervisionAgent.js';
-
-export interface FullScriptPipelineRequest {
-  title: string;
-  genre: string;
-  visualStyle?: string;
-  visual_style?: string;
-  synopsis: string;
-  episodeNumber?: number;
-  episode_number?: number;
-  totalEpisodes?: number;
-  total_episodes?: number;
-}
-
-export interface FullScriptPipelineResponse {
-  outline: MasterPlanOutput;
-  adaptation: any;
-  scriptItem: ScriptItem;
-  supervision: SupervisionResult;
-}
+import { scriptAgent } from './ScriptAgent.js';
+import { supervisionAgent } from './SupervisionAgent.js';
 
 export class DirectorAgent {
   async runPipeline(request: FullScriptPipelineRequest): Promise<FullScriptPipelineResponse> {

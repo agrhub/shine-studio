@@ -1,4 +1,4 @@
-import { getDatabaseProvider, MasterPlanOutput } from '~/database/index.js';
+import { getDatabaseProvider } from '~/database/index.js';
 import { Logger } from '~/utils/logger.js';
 import { EnvConfig } from '~/config/env.js';
 import {
@@ -22,33 +22,9 @@ import { InMemoryRunner, LlmAgent, StreamingMode, isFinalResponse } from '@googl
 import { afterTool, beforeTool, rateLimitCallback } from './chatbot/callback.js';
 import { geminiClient } from '~/integrations/ai/gemini/GeminiClient.js';
 import { aiProviderRouter } from '~/integrations/ai/router/AIProviderRouter.js';
+import { resolveChatLanguage } from '~/utils/LanguageMapping.js';
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
-  timestamp: number;
-  toolCalls?: Array<{
-    name: string;
-    args: any;
-    status: 'running' | 'success' | 'error';
-    result?: any;
-    retries?: number;
-  }>;
-  suggestions?: Array<{ label: string; prompt: string }>;
-}
-
-export interface EpisodeChatSession {
-  sessionId: string;
-  userId: string;
-  seriesId: string;
-  episodeId: string;
-  messages: ChatMessage[];
-  lastActive: number;
-  // currentPlan?: any;
-  masterPlan?: MasterPlanOutput;
-  contextData?: any;
-}
+import { ChatMessage, EpisodeChatSession } from '~/types.js';
 
 const sessions = new Map<string, EpisodeChatSession>();
 const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
@@ -222,37 +198,28 @@ export class ChatbotAgent {
   }
 
   /**
-   * Get full series or global chat history
+   * Get full series or global chat history strictly isolated per user with pagination support
    */
-  public static async getSeriesHistory(userId: string, seriesId: string): Promise<ChatMessage[]> {
-    const isGlobal = seriesId === 'global' || seriesId.startsWith('global');
+  public static async getSeriesHistory(
+    userId: string,
+    seriesId: string,
+    limit = 50,
+    offset = 0
+  ): Promise<{ messages: ChatMessage[]; total: number }> {
+    const isGlobal = !seriesId || seriesId === 'global' || seriesId.startsWith('global');
+    const isWizard = seriesId?.startsWith('wiz_') || seriesId?.startsWith('temp_');
+    const scope = isGlobal ? 'global' : (isWizard ? 'wizard' : 'series');
 
+    // 1. Check in-memory sessions strictly belonging to this userId
     for (const [key, session] of sessions.entries()) {
-      if (
-        (isGlobal && (session.seriesId === 'global' || session.sessionId.includes('global') || key.includes(`${userId}_global`))) ||
-        session.seriesId === seriesId || session.sessionId === seriesId || key.includes(seriesId)
-      ) {
-        if (session.messages && session.messages.length > 0) {
-          return session.messages.map(m => ({
-            ...m,
-            toolCalls: (m.toolCalls || [])
-              .filter((tc, idx, arr) => arr.findIndex(t => t.name === tc.name && (t.status === 'success' || JSON.stringify(t.args) === JSON.stringify(tc.args))) === idx)
-              .map(tc => ({
-                ...tc,
-                status: (tc.status === 'running' ? 'success' : tc.status) as 'running' | 'success' | 'error',
-              })),
-          }));
-        }
-      }
-    }
-    try {
-      const db = await getDatabaseProvider();
-      if (isGlobal) {
-        const user = await db.getUserById(userId);
-        if (user && (user as any).global_chat_history && Array.isArray((user as any).global_chat_history)) {
-          const rawHistory: ChatMessage[] = (user as any).global_chat_history;
-          if (rawHistory.length > 0) {
-            const history: ChatMessage[] = rawHistory.map(m => ({
+      if (session.userId === userId) {
+        const matchesGlobal = isGlobal && (session.seriesId === 'global' || session.sessionId.includes('global') || key.includes(`${userId}_global`));
+        const matchesWizard = isWizard && (session.seriesId === seriesId || session.sessionId.includes(seriesId) || key.includes(seriesId));
+        const matchesSeries = !isGlobal && !isWizard && (session.seriesId === seriesId || session.sessionId.includes(`${userId}_${seriesId}`));
+
+        if (matchesGlobal || matchesWizard || matchesSeries) {
+          if (session.messages && session.messages.length > 0) {
+            const formatted = session.messages.map(m => ({
               ...m,
               toolCalls: (m.toolCalls || [])
                 .filter((tc, idx, arr) => arr.findIndex(t => t.name === tc.name && (t.status === 'success' || JSON.stringify(t.args) === JSON.stringify(tc.args))) === idx)
@@ -261,36 +228,44 @@ export class ChatbotAgent {
                   status: (tc.status === 'running' ? 'success' : tc.status) as 'running' | 'success' | 'error',
                 })),
             }));
-            const session = await this.getOrCreateSession(userId, 'global', 'main');
-            session.messages = [...history];
-            return history;
+            const total = formatted.length;
+            const slice = offset > 0 ? formatted.slice(offset, offset + limit) : formatted.slice(Math.max(0, total - limit));
+            return { messages: slice, total };
           }
         }
-        return [];
       }
-
-      const series = await db.getSeriesById(seriesId);
-      if (series && (series as any).chat_history && Array.isArray((series as any).chat_history)) {
-        const rawHistory: ChatMessage[] = (series as any).chat_history;
-        if (rawHistory.length > 0) {
-          const history: ChatMessage[] = rawHistory.map(m => ({
-            ...m,
-            toolCalls: (m.toolCalls || [])
-              .filter((tc, idx, arr) => arr.findIndex(t => t.name === tc.name && (t.status === 'success' || JSON.stringify(t.args) === JSON.stringify(tc.args))) === idx)
-              .map(tc => ({
-                ...tc,
-                status: (tc.status === 'running' ? 'success' : tc.status) as 'running' | 'success' | 'error',
-              })),
-          }));
-          const session = await this.getOrCreateSession(userId, seriesId, '1');
-          session.messages = [...history];
-          return history;
-        }
-      }
-    } catch (err: any) {
-      Logger.warn(`[ChatbotAgent] Could not load chat history from DB for series/global ${seriesId}: ${err.message}`);
     }
-    return [];
+
+    // 2. Query from isolated chat_messages table in database
+    try {
+      const db = await getDatabaseProvider();
+      const res = await db.getChatMessages({
+        userId,
+        scope,
+        seriesId: scope === 'series' ? seriesId : undefined,
+        limit,
+        offset,
+      });
+
+      const formatted: ChatMessage[] = res.messages.map(m => ({
+        id: m.id,
+        role: m.role as any,
+        content: m.content,
+        timestamp: m.timestamp,
+        toolCalls: m.tool_calls,
+        suggestions: m.suggestions,
+      }));
+
+      // Cache into memory session for active multi-turn context
+      const targetSeriesId = isGlobal ? 'global' : seriesId;
+      const session = await this.getOrCreateSession(userId, targetSeriesId, '1');
+      session.messages = [...formatted];
+
+      return { messages: formatted, total: res.total };
+    } catch (err: any) {
+      Logger.warn(`[ChatbotAgent] Could not load chat history from chat_messages table: ${err.message}`);
+      return { messages: [], total: 0 };
+    }
   }
 
   /**
@@ -369,12 +344,27 @@ export class ChatbotAgent {
         }
       }
 
-      // Also persist chat_history to database
+      // Also persist chat_messages to database
       try {
         const db = await getDatabaseProvider();
-        await db.updateSeries(newSeriesId, { chat_history: targetSession.messages });
+        for (const msg of sourceMessages) {
+          await db.saveChatMessage({
+            id: msg.id,
+            user_id: userId,
+            session_id: targetSession.sessionId,
+            scope: 'series',
+            series_id: newSeriesId,
+            episode_id: '1',
+            role: msg.role as any,
+            content: msg.content,
+            tool_calls: msg.toolCalls,
+            suggestions: msg.suggestions,
+            created_at: new Date(msg.timestamp).toISOString(),
+            timestamp: msg.timestamp,
+          });
+        }
       } catch (e: any) {
-        Logger.warn(`[ChatbotAgent] Failed to persist transferred chat_history to DB: ${e.message}`);
+        Logger.warn(`[ChatbotAgent] Failed to persist transferred chat_messages to DB: ${e.message}`);
       }
 
       Logger.info(`[ChatbotAgent] Transferred ${sourceMessages.length} messages from ${oldSessionId} to series ${newSeriesId}`);
@@ -466,10 +456,23 @@ export class ChatbotAgent {
       : '';
     const cleanUserMsg = (params.userMessage || '').trim();
     
+    // Resolve conversation language: 1. User message 2. App/profile language
+    const resolvedLang = resolveChatLanguage(cleanUserMsg, params.context);
+    Logger.info(`[ChatbotAgent] Resolved chat language: ${resolvedLang.languageName} (${resolvedLang.languageCode}) via ${resolvedLang.priority}`);
+
     // Build live project & episode data context snapshot from database
     const liveContext = await buildLiveContextSnapshot(params.seriesId, params.episodeId, params.context);
 
-    const localizedMessage = `=== LIVE PROJECT & EPISODE CONTEXT ===\n${liveContext}\n=======================================\n\nUSER MESSAGE:\n${cleanUserMsg}\n\n[ABSOLUTE MANDATORY MULTILINGUAL DIRECTIVE: You MUST detect the exact natural language of the USER MESSAGE above (whether English, Spanish, Japanese, French, German, Chinese, Vietnamese, Korean, Portuguese, Italian, Arabic, etc.) and write 100% of your response, explanations, thoughts, status reports, and suggestion chips in that EXACT SAME LANGUAGE. STRICTLY FORBIDDEN to switch to any other language.]${wizardSyncInstruction}`;
+    const localizedMessage = `${resolvedLang.instruction}
+
+=== LIVE PROJECT & EPISODE CONTEXT ===
+${liveContext}
+=======================================
+
+USER MESSAGE:
+${cleanUserMsg}
+
+[CRITICAL REMINDER: The user's input language is ${resolvedLang.languageName} (${resolvedLang.nativeName}). All conversational output, brainstorming, character bios, and suggestions MUST be in ${resolvedLang.languageName}.]${wizardSyncInstruction}`;
 
     const sanitizeMediaUrl = (text: string) => {
       if (!text || typeof text !== 'string') return text;
@@ -681,8 +684,9 @@ export class ChatbotAgent {
         if (extractedPlan.language) params.context.language = extractedPlan.language;
       }
 
-      // Persist to database if series already exists
-      if (params.seriesId && !params.seriesId.startsWith('wiz_') && !params.seriesId.startsWith('temp_')) {
+      // Persist to database ONLY if series is a real persisted series
+      const isRealSeries = Boolean(params.seriesId && !params.seriesId.startsWith('wiz_') && !params.seriesId.startsWith('temp_') && params.seriesId !== 'global' && !params.seriesId.startsWith('global'));
+      if (isRealSeries) {
         try {
           const db = await getDatabaseProvider();
           await db.updateSeries(params.seriesId, {
@@ -723,7 +727,7 @@ export class ChatbotAgent {
         const prompt = `Based on the latest user message, executed tools, and AI response below, generate 3 to 4 actionable, contextual next-step suggestion buttons for the creator.
 
 CRITICAL LANGUAGE REQUIREMENT:
-- You MUST write the suggestions in the EXACT SAME LANGUAGE as the user message/conversation (e.g. Vietnamese if Vietnamese, English if English).
+- You MUST write the suggestions in ${resolvedLang.languageName} (${resolvedLang.nativeName}).
 
 OUTPUT FORMAT:
 - Output ONLY a raw JSON array matching this schema:
@@ -736,7 +740,7 @@ Executed Tools: ${executedToolCalls.map(tc => tc.name).join(', ') || 'None'}
 AI Response Summary: "${fullText.slice(0, 500)}"`;
 
         const rawJson = await aiProviderRouter.generateJSON(prompt, {}, {
-          systemInstruction: 'You are an AI production assistant that generates 3-4 next-step action suggestion chips in JSON format in the exact language of the conversation.',
+          systemInstruction: `You are an AI production assistant that generates 3-4 next-step action suggestion chips in JSON format in ${resolvedLang.languageName} (${resolvedLang.nativeName}).`,
         });
 
         if (rawJson) {
@@ -777,23 +781,49 @@ AI Response Summary: "${fullText.slice(0, 500)}"`;
       suggestions: extractedSuggestions.length > 0 ? extractedSuggestions : undefined,
     });
 
-    if (params.seriesId === 'global' || params.seriesId?.startsWith('global')) {
-      try {
-        const db = await getDatabaseProvider();
-        const user = await db.getUserById(params.userId);
-        if (user) {
-          await db.updateUser({ ...user, global_chat_history: session.messages } as any);
-        }
-      } catch (e: any) {
-        Logger.warn(`[ChatbotAgent] Failed to persist global chat history to database: ${e.message}`);
+    // Persist messages into isolated chat_messages table
+    try {
+      const db = await getDatabaseProvider();
+      const scope = (params.seriesId === 'global' || params.seriesId?.startsWith('global')) ? 'global' : (params.seriesId?.startsWith('wiz_') || params.seriesId?.startsWith('temp_') ? 'wizard' : 'series');
+      const seriesId = scope === 'series' ? params.seriesId : undefined;
+      const episodeId = scope === 'series' ? params.episodeId : undefined;
+
+      const userMsg = session.messages[session.messages.length - 2];
+      const assistantMsg = session.messages[session.messages.length - 1];
+
+      if (userMsg && userMsg.role === 'user') {
+        await db.saveChatMessage({
+          id: userMsg.id,
+          user_id: params.userId,
+          session_id: session.sessionId,
+          scope,
+          series_id: seriesId,
+          episode_id: episodeId,
+          role: 'user',
+          content: userMsg.content,
+          created_at: new Date(userMsg.timestamp).toISOString(),
+          timestamp: userMsg.timestamp,
+        });
       }
-    } else if (params.seriesId && !params.seriesId.startsWith('wiz_') && !params.seriesId.startsWith('temp_')) {
-      try {
-        const db = await getDatabaseProvider();
-        await db.updateSeries(params.seriesId, { chat_history: session.messages });
-      } catch (e: any) {
-        Logger.warn(`[ChatbotAgent] Failed to persist chat history to database for series ${params.seriesId}: ${e.message}`);
+
+      if (assistantMsg && assistantMsg.role === 'assistant') {
+        await db.saveChatMessage({
+          id: assistantMsg.id,
+          user_id: params.userId,
+          session_id: session.sessionId,
+          scope,
+          series_id: seriesId,
+          episode_id: episodeId,
+          role: 'assistant',
+          content: assistantMsg.content,
+          tool_calls: assistantMsg.toolCalls,
+          suggestions: assistantMsg.suggestions,
+          created_at: new Date(assistantMsg.timestamp).toISOString(),
+          timestamp: assistantMsg.timestamp,
+        });
       }
+    } catch (e: any) {
+      Logger.warn(`[ChatbotAgent] Failed to persist chat messages to chat_messages table: ${e.message}`);
     }
 
     return { fullText, toolCalls: executedToolCalls };

@@ -3,6 +3,7 @@ import { chromium, BrowserContext, Browser } from 'playwright';
 import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import { getDatabaseProvider } from '@/database/index.js';
+import type { StudioSystemConfig } from '@/types.js';
 
 export type CaptchaMode = 'yescaptcha' | 'capsolver' | 'capmonster' | 'ezcaptcha' | 'browser' | 'personal' | 'remote_browser';
 
@@ -31,7 +32,7 @@ export class CaptchaService {
         let captchaConfig = EnvConfig.captcha;
         try {
             const db = await getDatabaseProvider();
-            const studioConfig = await db.getSystemSetting('studio_config');
+            const studioConfig = await db.getSystemSetting<StudioSystemConfig>('studio_config');
             if (studioConfig?.captcha) {
                 captchaConfig = { ...captchaConfig, ...studioConfig.captcha };
             }

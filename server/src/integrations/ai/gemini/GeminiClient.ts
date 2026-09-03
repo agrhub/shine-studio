@@ -90,13 +90,13 @@ export class GeminiClient {
     await nextLock;
   }
 
-  public static sendThrottledAlert(service: string, message: string) {
+  public static sendThrottledAlert(service: string, message: string, stack?: string) {
     const now = Date.now();
     const last = GeminiClient.lastAlertTimestamps.get(service) || 0;
     // Throttled: at most 1 email alert per 5 minutes per service category
     if (now - last > 5 * 60 * 1000) {
       GeminiClient.lastAlertTimestamps.set(service, now);
-      emailService.sendAdminSystemAlert(`Gemini ${service}`, message).catch(console.error);
+      emailService.sendAdminSystemAlert(`Gemini ${service}`, message, stack).catch(console.error);
     }
   }
 
@@ -136,7 +136,7 @@ export class GeminiClient {
 
         if (attempt > maxRetries || !isRateLimit) {
           Logger.error(`[GeminiClient] ${operationName} failed: ${errMsg}`);
-          GeminiClient.sendThrottledAlert(operationName, errMsg);
+          GeminiClient.sendThrottledAlert(operationName, errMsg, err?.stack);
         }
         throw err;
       }
@@ -259,10 +259,13 @@ export class GeminiClient {
     return new GoogleGenAI({});
   }
 
-  public async generateText(options: { model?: string; prompt: string; systemInstruction?: string; jsonMode?: boolean }): Promise<string> {
+  public async generateText(options: { model?: string; prompt: string; systemInstruction?: string; jsonMode?: boolean; grounding?: boolean; tools?: any[]; temperature?: number }): Promise<string> {
     const res = await this.generateContent(options.prompt, options.model || EnvConfig.geminiModelText, {
       systemPrompt: options.systemInstruction,
-      generationConfig: { responseMimeType: options.jsonMode ? 'application/json' : 'text/plain' },
+      grounding: options.grounding,
+      tools: options.tools,
+      temperature: options.temperature,
+      generationConfig: options.jsonMode && !options.grounding ? { responseMimeType: 'application/json' } : undefined,
     });
     return res.text;
   }
@@ -299,6 +302,26 @@ export class GeminiClient {
         contents = [{ role: 'user', parts }];
       }
 
+      // Safeguard: Ensure contents is never empty or containing only empty parts
+      const hasValidContent = contents.some((c: any) => {
+        if (!c) return false;
+        if (typeof c === 'string') return c.trim().length > 0;
+        if (Array.isArray(c.parts)) {
+          return c.parts.some((p: any) => {
+            if (!p) return false;
+            if (typeof p.text === 'string') return p.text.trim().length > 0;
+            if (p.inlineData?.data) return p.inlineData.data.length > 0;
+            if (p.fileData?.fileUri) return p.fileData.fileUri.length > 0;
+            return true;
+          });
+        }
+        return true;
+      });
+
+      if (!hasValidContent) {
+        throw new Error(`[GeminiClient] Model input cannot be empty: Payload passed to generateContent (${modelId}) has no valid text or media parts.`);
+      }
+
       const response = await (client as any).models.generateContent({
         model: modelId,
         contents,
@@ -322,7 +345,11 @@ export class GeminiClient {
   }
 
   // Helper to resolve images for Veo API structure
-  public async resolveToVeoImage(input: any) {
+  public async resolveToVeoImage(input: any): Promise<{
+    imageBytes: string,
+    mediaBytes: string,
+    mimeType: string,
+  } | undefined> {
     if (!input) return undefined;
     if (typeof input !== 'string') return input; // Already resolved or object
 
@@ -352,9 +379,16 @@ export class GeminiClient {
         }
       }
 
+      if (!buffer || buffer.length === 0) {
+        Logger.warn(`[GeminiClient] resolveToVeoImage: empty buffer for ${input}`);
+        return undefined;
+      }
+
+      const base64Data = buffer.toString('base64');
       return {
-        mediaBytes: buffer.toString('base64'),
-        mimeType
+        imageBytes: base64Data,
+        mediaBytes: base64Data,
+        mimeType,
       };
     } catch (err: any) {
       Logger.warn(`[GeminiClient] Failed to resolve reference media: ${err.message}`);
@@ -414,8 +448,8 @@ export class GeminiClient {
         ...(Array.isArray(prompt) ? prompt : [{ text: String(prompt) }]),
       ];
 
-      const response: any = await GeminiClient.executeWithRetry('generateImage', async () => {
-        return await (client as any).models.generateContent({
+      const response = await GeminiClient.executeWithRetry('generateImage', async () => {
+        return await client.models.generateContent({
           model: targetModel,
           contents: [{ role: 'user', parts }],
           config: { responseModalities: ['IMAGE'] },
@@ -453,11 +487,17 @@ export class GeminiClient {
         Logger.info(`Resolving imageStart/image: ${options.imageStart || options.image}`, 'GeminiClient');
         resolvedOptions.imageStart = await this.resolveToVeoImage(options.imageStart || options.image);
         resolvedOptions.image = resolvedOptions.imageStart;
+        if(!resolvedOptions.imageStart){
+          throw new Error('Failed to resolve start frame');
+        }
       }
 
       if (options.imageEnd) {
         Logger.info(`Resolving imageEnd: ${options.imageEnd}`, 'GeminiClient');
         resolvedOptions.imageEnd = await this.resolveToVeoImage(options.imageEnd);
+        if(!resolvedOptions.imageEnd){
+          throw new Error('Failed to resolve end frame');
+        }
       }
 
       const charRefs = options.characterImages || options.characterReferences || [];

@@ -20,50 +20,10 @@ import type {
   CharacterSceneCostumes,
   CharacterWardrobeVariant,
   SceneDialogue,
+  VideoRenderJob,
+  GenerateSceneImageParams,
+  GenerateSceneVideoParams,
 } from '@/types.js';
-
-export interface VideoRenderJob {
-  jobId: string;
-  seriesId: string;
-  episodeId: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  progress: number;
-  videoUrl?: string;
-  ssimParityScore?: number;
-  errorMessage?: string;
-}
-
-export interface GenerateSceneImageParams {
-  user_id?: string;
-  series_id?: string;
-  episode_id?: string;
-  scene_id?: string;
-  scene_index?: number;
-  prompt?: string;
-  aspect_ratio?: string;
-  style?: string;
-  characters?: string[];
-  scene_data?: Partial<SceneEntity>;
-  type?: string;
-  is_end_frame?: boolean;
-}
-
-export interface GenerateSceneVideoParams {
-  user_id?: string;
-  series_id?: string;
-  episode_id?: string;
-  scene_id?: string;
-  duration?: number | string;
-  motion?: string;
-  camera_movement?: string;
-  prompt?: string;
-  aspect_ratio?: string;
-  start_frame_url?: string;
-  end_frame_url?: string;
-  character_image_ids?: string | string[];
-  language?: string;
-  scene_data?: Partial<SceneEntity>;
-}
 
 export class VideoService {
   private jobs: Map<string, VideoRenderJob> = new Map();
@@ -492,11 +452,19 @@ export class VideoService {
         ? 'aspect-square'
         : 'aspect-[9/16]';
 
+    // Query existing versions to calculate sequential version number
+    const existingAssets = (episodeId || sceneId) ? await db.getAssets({
+      episode_id: episodeId,
+      scene_id: sceneId,
+      type: isEndFrame ? 'scene_end_image' : 'scene_image',
+    }) : [];
+    const versionNum = existingAssets.length + 1;
+
     // Save Asset in Database
     const savedAsset = await db.saveAsset({
       id: assetId,
       user_id: userId,
-      name: assetName,
+      name: `${assetName}_v${versionNum}`,
       type: isEndFrame ? 'scene_end_image' : 'scene_image',
       ext: '.PNG',
       size: `${(s3Result.size / (1024 * 1024)).toFixed(1)} MB`,
@@ -512,6 +480,8 @@ export class VideoService {
       prompt: enhancedPrompt,
       provider: imageResult.provider,
       aspect: aspectClass,
+      version: versionNum,
+      is_active: true,
       synth_id_verified: true,
       synth_id_hash: synthIdResult.synthIdHash,
       synth_id_metadata: synthIdResult.synthIdMetadata,
@@ -648,7 +618,6 @@ export class VideoService {
     }
 
     const dialogues: Array<SceneDialogue & {
-      tone?: string;
       voiceId?: string;
       speechStartSec?: number;
       speechEndSec?: number;
@@ -803,37 +772,45 @@ export class VideoService {
 
     // ─── Resolve Start Frame & End Frame (Current Shot Only) ────────
     const startFrameUrl = initialStartFrameUrl || sceneData?.storyboard_frame_url || sceneData?.image_url;
+    if (!startFrameUrl) {
+      throw new Error('Start frame is required for video generation.');
+    }
     // Strictly do not look up nextScene.storyboardFrameUrl — only use current shot end-frame if present
-    let endFrameUrl = initialEndFrameUrl || sceneData?.storyboard_end_frame_url;
-    const endFrameAction = !endFrameUrl && sceneData?.end_frame_prompt
-      ? sceneData.end_frame_prompt
-      : '';
+    const endFrameUrl = initialEndFrameUrl || sceneData?.storyboard_end_frame_url;
+    const startFrameDesc = sceneData?.frame_description || sceneData?.description || sceneData?.visual_prompt || '';
+    const endFrameDesc = sceneData?.end_frame_prompt || (sceneData as any)?.end_frame_action || '';
+    const timeOfDay = sceneData?.time_of_day || '';
+    const videoEffect = sceneData?.video_effect || (Array.isArray(sceneData?.effects) ? sceneData.effects.join(', ') : '');
 
     const isSilent = dialogues.length === 0;
+    const locationText = sceneHeading ? sceneHeading + (sceneLocation ? ` - ${sceneLocation}` : '') : sceneLocation || '';
+    const lightingText = `${sceneLighting}${sceneMood ? ` (${sceneMood})` : ''}`;
 
     // Step 1: Gemini ONLY translates and enhances the Visual Action & Cinematography into English
     let visualPart = '';
     try {
-      const locationText = sceneHeading ? sceneHeading + (sceneLocation ? ` - ${sceneLocation}` : '') : sceneLocation || 'Interior luxury room at night';
-      const lightingText = `${sceneLighting}${sceneMood ? ` (${sceneMood})` : ''}`;
       const characterContextText = characterContinuityDescriptions.length > 0 ? characterContinuityDescriptions.join('\n') : '';
 
       const visualTranslationPrompt = PromptLoader.render('scene/scene_video_translation', {
         location: locationText,
+        timeOfDay,
         sceneContext: sceneContext,
         characterContext: characterContextText,
+        startFrame: startFrameDesc,
         action: sceneAction,
-        propDetails: propDetails,
-        endFrameAction: endFrameAction,
+        endFrame: endFrameDesc,
         cameraMovement: sceneCamera,
+        propDetails: propDetails,
         lighting: lightingText,
+        videoEffect,
+        sfxCues,
         visualStyle: getVisualStylePrompt(seriesVisual),
         isSilent: isSilent,
       });
 
       const generated = await aiProviderRouter.generateText(visualTranslationPrompt, {
         systemInstruction:
-          'You are an expert cinematic visual prompt engineer. Describe ONLY specific character visual identity, actions, camera movement, scene props, and lighting in English. Do NOT write or invent dialogue.' +
+          'You are an expert cinematic visual prompt engineer. Describe ONLY specific character visual identity, actions, camera movement, scene props, lighting, and environmental atmosphere in English. Do NOT write or invent dialogue.' +
           (isSilent ? ' Note: This shot is completely silent with no dialogue; ensure characters keep their lips closed with no talking or mouth movement.' : ''),
       });
 
@@ -849,7 +826,11 @@ export class VideoService {
     if (!visualPart) {
       const cleanVisual = (prompt || sceneData?.visual_prompt || '').replace(/^(16:9|9:16|4:3|1:1)\s*aspect ratio,?\s*/i, '');
       const silencePart = isSilent ? ' Lips closed, no talking, silent action.' : '';
-      visualPart = `Cinematic ${seriesGenre} scene. ${sceneAction || cleanVisual}.${silencePart} Camera movement: ${sceneCamera}. Motion: ${motionIntensity}. Lighting: ${sceneLighting}.`;
+      const startPart = startFrameDesc ? ` Initial framing: ${startFrameDesc}.` : '';
+      const endPart = endFrameDesc ? ` Concluding frame: ${endFrameDesc}.` : '';
+      const propPart = propDetails ? ` Props: ${propDetails}.` : '';
+      const effectPart = videoEffect ? ` Atmospheric effect: ${videoEffect}.` : '';
+      visualPart = `Cinematic ${seriesGenre} scene. ${locationText}${timeOfDay ? ' (' + timeOfDay + ')' : ''}.${startPart} ${sceneAction || cleanVisual}.${endPart}${propPart}${effectPart}${silencePart} Camera movement: ${sceneCamera}. Motion: ${motionIntensity}. Lighting: ${sceneLighting}.`;
     }
 
     // Step 2: Deterministically assemble the final Google Veo prompt with exact dialogue & audio cues
@@ -859,7 +840,7 @@ export class VideoService {
       const speechClauses = dialogues
         .map(
           (d) =>
-            `[Speech & Vocal Profile]: At ${d.speechStartSec !== undefined ? d.speechStartSec.toFixed(1) : '0.5'}s to ${d.speechEndSec !== undefined ? d.speechEndSec.toFixed(1) : '3.5'}s, ${d.character} (Voice: ${d.voiceId || 'Studio'}, Tone: ${d.tone}) speaks aloud in ${targetLanguageName}: "${d.line}". Lip movements, facial expressions, and vocal cadence synchronize naturally between ${d.speechStartSec !== undefined ? d.speechStartSec.toFixed(1) : '0.5'}s and ${d.speechEndSec !== undefined ? d.speechEndSec.toFixed(1) : '3.5'}s.`
+            `[Speech & Vocal Profile]: At ${d.speechStartSec !== undefined ? d.speechStartSec.toFixed(1) : '0.5'}s to ${d.speechEndSec !== undefined ? d.speechEndSec.toFixed(1) : '3.5'}s, ${d.character} (Voice: ${d.voiceId || 'Studio'}, Tone: ${d.speech_tone}) speaks aloud in ${targetLanguageName}: "${d.line}". Lip movements, facial expressions, and vocal cadence synchronize naturally between ${d.speechStartSec !== undefined ? d.speechStartSec.toFixed(1) : '0.5'}s and ${d.speechEndSec !== undefined ? d.speechEndSec.toFixed(1) : '3.5'}s.`
         )
         .join(' ');
       videoPrompt = `${videoPrompt}. ${speechClauses}`;
@@ -901,11 +882,19 @@ export class VideoService {
     const assetId = `ast_${nanoid(8)}`;
     const assetName = `Video_${sceneId || 'Scene'}_${nanoid(4)}`;
 
+    // Query existing versions to calculate sequential version number
+    const existingVideos = (episodeId || sceneId) ? await db.getAssets({
+      episode_id: episodeId,
+      scene_id: sceneId,
+      type: 'scene_video',
+    }) : [];
+    const videoVersionNum = existingVideos.length + 1;
+
     // Save Video Asset in Database
     const savedAsset = await db.saveAsset({
       id: assetId,
       user_id: userId,
-      name: assetName,
+      name: `${assetName}_v${videoVersionNum}`,
       type: 'scene_video',
       ext: '.MP4',
       size: `${(s3Result.size / (1024 * 1024)).toFixed(1)} MB`,
@@ -921,6 +910,8 @@ export class VideoService {
       prompt: videoPrompt,
       provider: videoResult.provider,
       aspect: seriesRatio === '16:9' ? 'aspect-[16/9]' : seriesRatio === '4:3' ? 'aspect-[4/3]' : seriesRatio === '1:1' ? 'aspect-square' : 'aspect-[9/16]',
+      version: videoVersionNum,
+      is_active: true,
       synth_id_verified: true,
       synth_id_hash: synthIdResult.synthIdHash,
       synth_id_metadata: synthIdResult.synthIdMetadata,

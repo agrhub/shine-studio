@@ -86,12 +86,18 @@ aiAgenticRouter.get('/history/:sessionId', async (req: Request, res: Response): 
       return;
     }
 
-    const messages = await ChatbotAgent.getSeriesHistory(userId, sessionId);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || 50), 10) || 50));
+    const offset = Math.max(0, parseInt(String(req.query.offset || 0), 10) || 0);
+
+    const { messages, total } = await ChatbotAgent.getSeriesHistory(userId, sessionId, limit, offset);
 
     res.json({
       code: 200,
       data: {
         messages,
+        total,
+        limit,
+        offset,
       },
       message: 'Conversation history loaded',
     });

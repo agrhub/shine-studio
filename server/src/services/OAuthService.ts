@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { nanoid } from 'nanoid';
 import { getDatabaseProvider } from '~/database/index.js';
-import type { PlatformAccount } from '@/types.js';
+import type { PlatformAccount, PlatformSettings } from '@/types.js';
+import { PlatformAnalyticsService } from './PlatformAnalyticsService';
 
 export interface OAuthUserProfile {
   email: string;
@@ -18,7 +19,7 @@ export class OAuthService {
     provider: string,
     redirectUri: string,
     state: string,
-    config: any
+    config: PlatformSettings
   ): string {
     if (provider === 'google') {
       const clientId = config?.sso?.google?.clientId || process.env.GOOGLE_CLIENT_ID;
@@ -70,7 +71,7 @@ export class OAuthService {
     provider: string,
     code: string,
     redirectUri: string,
-    config: any
+    config: PlatformSettings
   ): Promise<OAuthUserProfile> {
     if (provider === 'google') {
       const clientId = config?.sso?.google?.clientId || process.env.GOOGLE_CLIENT_ID;
@@ -184,7 +185,7 @@ export class OAuthService {
     provider: string,
     redirectUri: string,
     state: string,
-    config: any
+    config: PlatformSettings
   ): string {
     if (provider === 'youtube') {
       const clientId = config?.publishing?.youtube?.clientId || process.env.YOUTUBE_CLIENT_ID;
@@ -237,7 +238,7 @@ export class OAuthService {
     provider: string,
     code: string,
     redirectUri: string,
-    config: any
+    config: PlatformSettings
   ): Promise<PlatformAccount[]> {
     if (provider === 'youtube') {
       const clientId = config?.publishing?.youtube?.clientId || process.env.YOUTUBE_CLIENT_ID;
@@ -405,7 +406,7 @@ export class OAuthService {
       if (account.refresh_token && (isExpired || !account.access_token)) {
         try {
           const db = await getDatabaseProvider();
-          const config = await db.getSystemSetting<any>('studio_config');
+          const config = await db.getSystemSetting<PlatformSettings>('platform_admin_config');
           const clientId = config?.publishing?.youtube?.clientId || process.env.YOUTUBE_CLIENT_ID;
           const clientSecret = config?.publishing?.youtube?.clientSecret || process.env.YOUTUBE_CLIENT_SECRET;
 

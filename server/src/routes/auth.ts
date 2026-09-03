@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '@/database/index.js';
+import type { PlatformAccount } from '@/types.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { nanoid } from 'nanoid';
@@ -27,9 +28,10 @@ interface OtpEntry {
   otp: string;
   expiresAt: number;
   attempts: number;
-  purpose: 'enable_2fa' | 'disable_2fa' | 'login';
+  purpose: 'enable_2fa' | 'disable_2fa' | 'login' | 'signup';
   userId?: string;
   email?: string;
+  payload?: any;
 }
 const otpStore = new Map<string, OtpEntry>();
 
@@ -44,12 +46,16 @@ function maskEmail(email: string): string {
   return `${local[0]}${'*'.repeat(Math.min(4, local.length - 2))}${local[local.length - 1]}@${domain}`;
 }
 
-// POST /api/auth/signup - Register new user
+// POST /api/auth/signup - Initiate user registration (Sends OTP to Email)
 router.post('/signup', async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password, name } = req.body;
     if (!email || !password) {
       fail(res, 400, 'Email and password are required'); return;
+    }
+
+    if (password.length < 6) {
+      fail(res, 400, 'Password must be at least 6 characters'); return;
     }
 
     const db = await getDatabaseProvider();
@@ -58,24 +64,113 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
       fail(res, 400, 'User with this email already exists'); return;
     }
 
-    // First user registered in the system automatically becomes ADMIN / OWNER
+    const signupId = nanoid(16);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const otp = generateOtp();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    otpStore.set(`signup_${signupId}`, {
+      otp,
+      expiresAt,
+      attempts: 0,
+      purpose: 'signup',
+      email,
+      payload: {
+        name: name || email.split('@')[0],
+        email,
+        password_hash: passwordHash,
+      },
+    });
+
+    // Send OTP email in background
+    emailService.sendOtpEmail(email, otp, 'signup').catch(console.error);
+
+    const tempToken = jwt.sign(
+      { signupId, email, tempSignup: true },
+      JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    ok(res, {
+      require_otp: true,
+      temp_token: tempToken,
+      email: maskEmail(email),
+    }, 'Verification code sent to your email');
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Internal server error');
+  }
+});
+
+// POST /api/auth/signup/verify-otp - Verify Signup OTP & Create Account
+router.post('/signup/verify-otp', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { temp_token, otp } = req.body;
+    if (!temp_token || !otp) {
+      fail(res, 400, 'Temporary token and OTP are required'); return;
+    }
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(temp_token, JWT_SECRET);
+    } catch {
+      fail(res, 401, 'Invalid or expired registration session. Please sign up again.'); return;
+    }
+
+    if (!decoded.tempSignup || !decoded.signupId) {
+      fail(res, 401, 'Invalid registration token'); return;
+    }
+
+    const key = `signup_${decoded.signupId}`;
+    const entry = otpStore.get(key);
+    if (!entry || !entry.payload) {
+      fail(res, 400, 'Registration session not found or expired. Please sign up again.'); return;
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      otpStore.delete(key);
+      fail(res, 400, 'Verification code has expired. Please request a new code.'); return;
+    }
+
+    entry.attempts = (entry.attempts || 0) + 1;
+    if (entry.attempts > 5) {
+      otpStore.delete(key);
+      fail(res, 429, 'Too many invalid attempts. Please sign up again.'); return;
+    }
+
+    if (entry.otp.trim() !== String(otp).trim()) {
+      fail(res, 400, `Incorrect verification code. ${5 - entry.attempts} attempts remaining.`); return;
+    }
+
+    // Success - consume OTP
+    otpStore.delete(key);
+
+    const db = await getDatabaseProvider();
+    const existingUser = await db.getUserByEmail(entry.payload.email);
+    if (existingUser) {
+      fail(res, 400, 'User with this email already exists'); return;
+    }
+
     const totalUsersCount = await db.countUsers();
     const isFirstUser = totalUsersCount === 0;
-    const assignedRole = isFirstUser || email.startsWith('admin') ? 'admin' : 'user';
+    const assignedRole = isFirstUser ? "admin" : "user";
     const assignedTier = isFirstUser ? 'ENTERPRISE' : 'FREE';
     const assignedCredits = isFirstUser ? 10000 : 100;
 
     const userId = `usr_${nanoid(10)}`;
-    const passwordHash = await bcrypt.hash(password, 10);
-
     const user = await db.createUser({
       id: userId,
-      email,
-      password_hash: passwordHash,
-      name: name || email.split('@')[0],
+      email: entry.payload.email,
+      password_hash: entry.payload.password_hash,
+      name: entry.payload.name,
       role: assignedRole,
       tier: assignedTier,
       credits: assignedCredits,
+      status: 'active',
+      is_active: true,
+      theme: 'dark',
+      language: 'en',
+      created_at: new Date().toISOString(),
+      last_login_at: new Date().toISOString(),
     });
 
     const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, tier: user.tier }, JWT_SECRET, { expiresIn: '7d' });
@@ -103,6 +198,46 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// POST /api/auth/signup/resend-otp - Resend Signup OTP
+router.post('/signup/resend-otp', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { temp_token } = req.body;
+    if (!temp_token) {
+      fail(res, 400, 'Temporary token is required'); return;
+    }
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(temp_token, JWT_SECRET);
+    } catch {
+      fail(res, 401, 'Invalid or expired registration session. Please sign up again.'); return;
+    }
+
+    if (!decoded.tempSignup || !decoded.signupId) {
+      fail(res, 401, 'Invalid registration token'); return;
+    }
+
+    const key = `signup_${decoded.signupId}`;
+    const entry = otpStore.get(key);
+    if (!entry || !entry.payload) {
+      fail(res, 400, 'Registration session not found or expired. Please sign up again.'); return;
+    }
+
+    const newOtp = generateOtp();
+    entry.otp = newOtp;
+    entry.expiresAt = Date.now() + 10 * 60 * 1000;
+    entry.attempts = 0;
+
+    emailService.sendOtpEmail(entry.email || entry.payload.email, newOtp, 'signup').catch(console.error);
+
+    ok(res, {
+      email: maskEmail(entry.email || entry.payload.email),
+    }, 'New verification code sent to your email');
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Internal server error');
+  }
+});
+
 // POST /api/auth/login - Authenticate user
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -112,36 +247,30 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     }
 
     const db = await getDatabaseProvider();
-    let user = await db.getUserByEmail(email);
+    const user = await db.getUserByEmail(email);
     if (!user) {
-      if (email.includes('admin') || email.includes('user') || email.includes('shine.studio') || email.includes('test')) {
-        const userId = `usr_${nanoid(10)}`;
-        const passwordHash = await bcrypt.hash(password, 10);
-        user = await db.createUser({
-          id: userId,
-          email,
-          password_hash: passwordHash,
-          name: email.startsWith('admin') ? 'Admin User' : 'Test Creator',
-          role: email.startsWith('admin') ? 'admin' : 'user',
-          tier: 'PRO',
-          credits: 1000,
-          theme: 'dark',
-          language: 'en',
-        });
-        
-        // Welcome newly stubbed user
-        emailService.sendWelcomeEmail(user.email, user.name || 'Admin').catch(console.error);
-      } else {
-        fail(res, 401, 'Invalid credentials'); return;
-      }
+      fail(res, 401, 'Invalid credentials'); return;
     }
 
-    if (user.password_hash) {
-      const match = await bcrypt.compare(password, user.password_hash);
-      if (!match) {
-        fail(res, 401, 'Invalid credentials'); return;
-      }
+    // Check account status
+    if (user.status === 'locked' || user.is_active === false) {
+      fail(res, 403, 'Account is locked. Please contact administrator.'); return;
     }
+
+    // SSO users without a password_hash cannot log in via password form unless they set a password
+    if (!user.password_hash) {
+      fail(res, 401, 'This account was registered using Single Sign-On (Google/OAuth). Please sign in with SSO or reset your password.');
+      return;
+    }
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      fail(res, 401, 'Invalid credentials'); return;
+    }
+
+    // Update last login timestamp
+    user.last_login_at = new Date().toISOString();
+    await db.updateUser(user).catch(() => {});
 
     // Check if Two-Factor Authentication is enabled for this user
     if (user.two_factor_enabled) {
@@ -237,6 +366,14 @@ router.post('/login/verify-2fa', async (req: Request, res: Response): Promise<vo
     if (!user) {
       fail(res, 404, 'User not found'); return;
     }
+
+    if (user.status === 'locked' || user.is_active === false) {
+      fail(res, 403, 'Account is locked. Please contact administrator.'); return;
+    }
+
+    // Update last login timestamp
+    user.last_login_at = new Date().toISOString();
+    await db.updateUser(user).catch(() => {});
 
     const userRole = user.role || (user.email.startsWith('admin') ? 'admin' : 'user');
     const token = jwt.sign({ userId: user.id, email: user.email, role: userRole, tier: user.tier }, JWT_SECRET, { expiresIn: '7d' });
@@ -514,9 +651,9 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
         api_key_rotated_at: user.api_key_rotated_at || new Date(Date.now() - 12 * 86400000).toISOString(),
         two_factor_enabled: !!user.two_factor_enabled,
         integrations: user.integrations || [
-          { id: 'tiktok', name: 'TikTok API', icon: 'Film', connected: config.integrations?.tiktok?.enabled || false },
-          { id: 'instagram', name: 'Meta Reels', icon: 'Share', connected: config.integrations?.instagram?.enabled || false },
-          { id: 'youtube', name: 'YouTube Shorts', icon: 'VideoPlay', connected: config.integrations?.youtube?.enabled || false },
+          { id: 'tiktok', name: 'TikTok API', icon: 'Film', connected: config.publishing.tiktok.enabled || false },
+          { id: 'instagram', name: 'Meta Reels', icon: 'Share', connected: config.publishing.facebook.enabled || false },
+          { id: 'youtube', name: 'YouTube Shorts', icon: 'VideoPlay', connected: config.publishing.youtube.enabled || false },
         ],
         connected_channels: (user as any).connected_channels || [],
         tier: user.tier,
@@ -535,12 +672,13 @@ router.get('/sso-providers', async (_req: Request, res: Response): Promise<void>
   try {
     const config = await getActivePlatformConfig();
     ok(res, {
-      google: config?.sso?.google?.enabled !== false,
-      facebook: config?.sso?.facebook?.enabled === true,
-      github: config?.sso?.github?.enabled !== false,
+      google: config.sso.google.enabled,
+      facebook: config.sso.facebook.enabled,
+      github: config.sso.github.enabled,
+      tiktok: config.sso.tiktok.enabled,
     });
   } catch {
-    ok(res, { google: false, facebook: false, github: false });
+    ok(res, { google: false, facebook: false, github: false, tiktok: false });
   }
 });
 
@@ -549,9 +687,9 @@ router.get('/enabled-platforms', async (_req: Request, res: Response): Promise<v
   try {
     const config = await getActivePlatformConfig();
     ok(res, {
-      youtube: config?.publishing?.youtube?.enabled !== false,
-      tiktok: config?.publishing?.tiktok?.enabled !== false,
-      facebook: config?.publishing?.facebook?.enabled !== false,
+      youtube: config.publishing.youtube.enabled,
+      tiktok: config.publishing.tiktok.enabled,
+      facebook: config.publishing.facebook.enabled,
     });
   } catch {
     ok(res, { youtube: false, tiktok: false, facebook: false });
@@ -562,9 +700,22 @@ router.get('/enabled-platforms', async (_req: Request, res: Response): Promise<v
 router.get('/sso/:provider', async (req: Request, res: Response): Promise<void> => {
   const { provider } = req.params;
   const config = await getActivePlatformConfig();
-
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  
+  if (provider === 'google' && !config.sso.google.clientId) {
+    fail(res, 400, `Google OAuth Client ID is not configured in Platforms Admin Tab.`);
+    return;
+  }
+  if (provider === 'github' && (!config.sso.github.clientId || !config.sso.github.clientSecret)) {
+    fail(res, 400, `GitHub OAuth Client ID or Client Secret is not configured in Platforms Admin Tab.`);
+    return;
+  }
+  if (provider === 'facebook' && (!config.sso.facebook.appId || !config.sso.facebook.appSecret)) {
+    fail(res, 400, `Facebook App ID or App Secret is not configured in Platforms Admin Tab.`);
+    return;
+  }
+  const baseUrl = EnvConfig.getBaseUrl(req);
   const redirectUri = `${baseUrl}/api/auth/sso/callback/${provider}`;
+
   const state = jwt.sign({ provider, timestamp: Date.now() }, JWT_SECRET, { expiresIn: '15m' });
 
   try {
@@ -626,7 +777,20 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
 
   try {
     const config = await getActivePlatformConfig();
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    if (provider === 'youtube' && (!config.publishing.youtube.clientId || !config.publishing.youtube.clientSecret)) {
+      fail(res, 400, `Youtube OAuth Client ID or Client Secret is not configured in Platforms Admin Tab.`);
+      return;
+    }
+    if (provider === 'tiktok' && (!config.publishing.tiktok.clientKey || !config.publishing.tiktok.clientSecret)) {
+      fail(res, 400, `Tiktok OAuth Client ID or Client Secret is not configured in Platforms Admin Tab.`);
+      return;
+    }
+    if (provider === 'facebook' && (!config.publishing.facebook.appId || !config.publishing.facebook.appSecret)) {
+      fail(res, 400, `Facebook App ID or App Secret is not configured in Platforms Admin Tab.`);
+      return;
+    }
+    const baseUrl = EnvConfig.getBaseUrl(req);
     const redirectUri = `${baseUrl}/api/auth/sso/callback/${provider}`;
     Logger.info(`redirectUri: ${redirectUri}`);
     
@@ -648,9 +812,20 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
         theme: 'dark',
         language: 'en',
       });
-    } else if (!user.avatar && userProfile.avatar) {
-      user.avatar = userProfile.avatar;
-      await db.updateUser(user);
+    } else {
+      if (user.status === 'locked' || user.is_active === false) {
+        res.status(403).send(`
+          <!DOCTYPE html><html><head><meta charset="utf-8"><title>Account Locked</title>
+          <style>body{background:#0f1015;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style>
+          </head><body><div><h2>Account Locked</h2><p style="color:#ef4444;">This account has been locked. Please contact support.</p></div></body></html>
+        `);
+        return;
+      }
+      if (!user.avatar && userProfile.avatar) {
+        user.avatar = userProfile.avatar;
+      }
+      user.last_login_at = new Date().toISOString();
+      await db.updateUser(user).catch(() => {});
     }
 
     const token = jwt.sign(
@@ -901,9 +1076,9 @@ router.get('/oauth/callback/:provider', async (req: Request, res: Response): Pro
     const newChannels = await OAuthService.exchangeChannelCode(provider, code, redirectUri, config);
 
     const existingChannels = (user as any).connected_channels || [];
-    const channelMap = new Map<string, any>();
-    existingChannels.forEach((c: any) => channelMap.set(c.channelId, c));
-    newChannels.forEach((c) => channelMap.set(c.channelId, c));
+    const channelMap = new Map<string, PlatformAccount>();
+    existingChannels.forEach((c: PlatformAccount) => channelMap.set(c.channel_id, c));
+    newChannels.forEach((c: PlatformAccount) => channelMap.set(c.channel_id, c));
 
     const updatedChannels = Array.from(channelMap.values());
     (user as any).connected_channels = updatedChannels;
@@ -928,7 +1103,7 @@ router.get('/oauth/callback/:provider', async (req: Request, res: Response): Pro
       <body>
         <div class="spinner"></div>
         <h2>Channel Connected!</h2>
-        <p>Successfully linked <strong>${primaryChannel?.channelName || provider}</strong> to your studio profile.</p>
+        <p>Successfully linked <strong>${primaryChannel?.channel_name || provider}</strong> to your studio profile.</p>
         <script>
           const payload = {
             type: 'PLATFORM_CONNECT_SUCCESS',
@@ -1097,8 +1272,8 @@ router.patch('/profile', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// PATCH /api/auth/preferences - Persist theme & language preferences to user profile
-router.patch('/preferences', async (req: Request, res: Response): Promise<void> => {
+// PATCH/PUT /api/auth/preferences - Persist theme & language preferences to user profile
+const handlePreferencesUpdate = async (req: Request, res: Response): Promise<void> => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     fail(res, 401, 'Unauthorized'); return;
@@ -1120,6 +1295,7 @@ router.patch('/preferences', async (req: Request, res: Response): Promise<void> 
         id: updatedUser.id,
         email: updatedUser.email,
         name: updatedUser.name,
+        role: updatedUser.role,
         tier: updatedUser.tier,
         credits: updatedUser.credits,
         theme: updatedUser.theme || 'dark',
@@ -1129,7 +1305,10 @@ router.patch('/preferences', async (req: Request, res: Response): Promise<void> 
   } catch {
     fail(res, 401, 'Invalid or expired token');
   }
-});
+};
+
+router.patch('/preferences', handlePreferencesUpdate);
+router.put('/preferences', handlePreferencesUpdate);
 
 // -----------------------------------------------------------------------------
 // SSO & OAuth2 Providers

@@ -10,24 +10,35 @@ export const jobsRouter = Router();
 jobsRouter.get('/active', async (req: Request, res: Response) => {
   try {
     const user_id = getUserId(req);
-    const series_id = req.query.series_id === 'all' ? undefined : (req.query.series_id as string);
-    const episode_id = req.query.episode_id as string;
-    const limit = Math.min(Math.max(Number(req.query.limit || 25), 1), 50);
+    const rawSeriesId = req.query.series_id as string;
+    const rawEpisodeId = req.query.episode_id as string;
+    const series_id = (!rawSeriesId || rawSeriesId === 'all' || rawSeriesId === 'undefined') ? undefined : rawSeriesId.trim();
+    const episode_id = (!rawEpisodeId || rawEpisodeId === 'all' || rawEpisodeId === 'undefined') ? undefined : rawEpisodeId.trim();
+    const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 100);
 
     const db = await getDatabaseProvider();
-    const jobs = await db.getPipelineJobs({
+    let jobs = await db.getPipelineJobs({
       user_id: user_id || undefined,
       series_id: series_id || undefined,
       episode_id: episode_id || undefined,
       limit,
     });
 
+    // If user has no jobs under specific user_id (e.g. admin or workspace jobs), load workspace jobs
+    // if ((!jobs || jobs.length === 0) && user_id) {
+    //   jobs = await db.getPipelineJobs({
+    //     series_id: series_id || undefined,
+    //     episode_id: episode_id || undefined,
+    //     limit,
+    //   });
+    // }
+
     // Enrich jobs with series_title and episode_title if missing
     const seriesCache = new Map<string, string>();
     const episodeCache = new Map<string, string>();
 
     const enrichedJobs = await Promise.all(
-      jobs.map(async (j) => {
+      (jobs || []).map(async (j) => {
         let seriesTitle = (j as any).series_title;
         let episodeTitle = (j as any).episode_title;
 
@@ -37,7 +48,7 @@ jobsRouter.get('/active', async (req: Request, res: Response) => {
           } else {
             try {
               const s = await db.getSeriesById(j.series_id);
-              if (s) {
+              if (s?.title) {
                 seriesTitle = s.title;
                 seriesCache.set(j.series_id, s.title);
               }
@@ -52,7 +63,7 @@ jobsRouter.get('/active', async (req: Request, res: Response) => {
             try {
               const ep = await db.getEpisodeById(j.episode_id);
               if (ep) {
-                episodeTitle = ep.title || `Episode ${ep.episode_number || ''}`.trim();
+                episodeTitle = ep.title || (ep.episode_number ? `Episode ${ep.episode_number}` : 'Episode 1');
                 episodeCache.set(j.episode_id, episodeTitle);
               }
             } catch {}
@@ -61,8 +72,8 @@ jobsRouter.get('/active', async (req: Request, res: Response) => {
 
         return {
           ...j,
-          series_title: seriesTitle || 'Untitled Series',
-          episode_title: episodeTitle || 'Episode 1',
+          series_title: seriesTitle || (j as any).seriesTitle || 'Untitled Series',
+          episode_title: episodeTitle || (j as any).episodeTitle || 'Episode 1',
         };
       })
     );
@@ -183,7 +194,7 @@ jobsRouter.delete('/:id', async (req: Request, res: Response) => {
 jobsRouter.post('/retry-step', async (req: Request, res: Response) => {
   try {
     const user_id = getUserId(req);
-    const { series_id, episode_id, step } = req.body;
+    const { series_id, episode_id, step, force_regenerate = false } = req.body;
 
     if (!user_id || !series_id || !episode_id || !step) {
       return res.status(400).json({ code: 400, data: null, message: 'Missing required parameters: series_id, episode_id, step' });
@@ -195,7 +206,7 @@ jobsRouter.post('/retry-step', async (req: Request, res: Response) => {
       series_id,
       episode_id,
       type,
-      force_regenerate: true,
+      force_regenerate: Boolean(force_regenerate),
       title: `Retry Step ${String(step).toUpperCase()}`,
     });
 

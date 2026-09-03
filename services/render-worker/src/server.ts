@@ -93,8 +93,25 @@ function sanitizeProjectData(projectData: any, baseUrl: string): any {
       if (!clip) continue;
 
       for (const prop of ['src', 'videoUrl', 'audioUrl', 'imageUrl', 'fontUrl']) {
-        if (typeof clip[prop] === 'string' && clip[prop].startsWith('/')) {
-          clip[prop] = base ? `${base}${clip[prop]}` : clip[prop];
+        if (typeof clip[prop] === 'string') {
+          const val: string = clip[prop].trim();
+          // 1. Strip localhost / 127.0.0.1 prefixes (from dev machines)
+          const localMatch = val.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(\/.*)$/);
+          if (localMatch) {
+            clip[prop] = `${base}${localMatch[1]}`;
+          }
+          // 2. Direct raw GCS storage URLs (e.g. https://storage.googleapis.com/bucket/key) -> worker internal GCS proxy
+          else if (val.startsWith('https://storage.googleapis.com/')) {
+            const gcsMatch = val.match(/^https:\/\/storage\.googleapis\.com\/[^/]+\/(.+)$/);
+            if (gcsMatch && gcsMatch[1]) {
+              const cleanKey = decodeURIComponent(gcsMatch[1].split('?')[0]);
+              clip[prop] = `${base}/api/assets/file/${cleanKey}`;
+            }
+          }
+          // 3. Relative endpoints (/api/...)
+          else if (val.startsWith('/')) {
+            clip[prop] = `${base}${val}`;
+          }
         }
       }
     }

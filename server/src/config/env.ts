@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import type { Request } from 'express';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -255,6 +256,12 @@ export const EnvConfig = {
         redirectUri: process.env.TIKTOK_REDIRECT_URI || 'http://localhost:3001/api/auth/oauth/callback/tiktok',
         oauthRedirectUri: process.env.TIKTOK_OAUTH_REDIRECT_URI || 'http://localhost:3001/api/auth/sso/callback/tiktok',
       },
+      github: {
+        enable: false,
+        clientId: process.env.GITHUB_CLIENT_ID || '',
+        clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
+        redirectUri: process.env.GITHUB_REDIRECT_URI || 'http://localhost:3001/api/auth/sso/callback/github',
+      }
     };
   },
   get video() {
@@ -332,4 +339,16 @@ export const EnvConfig = {
   },
   s3: storageConfig,
   isStorageConfigured,
+  getBaseUrl(req: Request): string {
+    try {
+      const environment = this.isProduction;
+      const baseUrl = environment
+        ? `https://${req.get('host')}`
+        : `${req.protocol}://${req.get('host')}`;
+      return baseUrl;
+    } catch (err) {
+      return '';
+    }
+    return this.appUrl;
+  }
 };

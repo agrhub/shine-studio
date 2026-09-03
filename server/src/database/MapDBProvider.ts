@@ -3,6 +3,8 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import {
   IDatabaseProvider,
+} from './IDatabaseProvider.js';
+import {
   UserEntity,
   SeriesEntity,
   EpisodeEntity,
@@ -16,7 +18,9 @@ import {
   TimelineSnapshotVersion,
   TimelineSnapshotHistoryItem,
   RestoreTimelineResult,
-} from './IDatabaseProvider.js';
+  ChatMessageEntity,
+  SocialAccountEntity,
+} from '~/types.js';
 import { Logger } from '../utils/logger.js';
 import { normalizePureTimeline } from '../utils/timeline.js';
 
@@ -24,6 +28,7 @@ export class MapDBProvider implements IDatabaseProvider {
   private filePath: string;
   private users: Map<string, UserEntity> = new Map();
   private creditTransactions: CreditTransactionEntity[] = [];
+  private chatMessages: ChatMessageEntity[] = [];
   private series: Map<string, SeriesEntity> = new Map();
   private episodes: Map<string, EpisodeEntity> = new Map();
   private timelines: Map<string, any> = new Map();
@@ -53,6 +58,7 @@ export class MapDBProvider implements IDatabaseProvider {
         const data = JSON.parse(raw);
         if (data.users) this.users = new Map(Object.entries(data.users));
         if (Array.isArray(data.creditTransactions)) this.creditTransactions = data.creditTransactions;
+        if (Array.isArray(data.chatMessages)) this.chatMessages = data.chatMessages;
         if (data.series) this.series = new Map(Object.entries(data.series));
         if (data.episodes) this.episodes = new Map(Object.entries(data.episodes));
         if (data.timelines) this.timelines = new Map(Object.entries(data.timelines));
@@ -62,12 +68,12 @@ export class MapDBProvider implements IDatabaseProvider {
         if (data.systemSettings) this.systemSettings = new Map(Object.entries(data.systemSettings));
         if (data.workerHeartbeats) this.workerHeartbeats = new Map(Object.entries(data.workerHeartbeats));
         if (data.workerJobs) this.workerJobs = new Map(Object.entries(data.workerJobs));
-        Logger.info(`[MapDBProvider] Loaded database from ${this.filePath} (${this.users.size} users, ${this.series.size} series, ${this.episodes.size} episodes)`);
+        Logger.info(`[MapDBProvider] Loaded database from ${this.filePath}`);
       } catch (err: any) {
-        Logger.warn(`[MapDBProvider] Failed to parse existing data from ${this.filePath}, starting fresh: ${err.message}`);
+        Logger.warn(`[MapDBProvider] Error loading database file: ${err.message}. Starting fresh.`);
       }
     } else {
-      Logger.info(`[MapDBProvider] Initialized new MapDB store at ${this.filePath}`);
+      Logger.info(`[MapDBProvider] No database file found at ${this.filePath}. Starting fresh.`);
     }
   }
 
@@ -84,6 +90,7 @@ export class MapDBProvider implements IDatabaseProvider {
     const data = {
       users: Object.fromEntries(this.users),
       creditTransactions: this.creditTransactions,
+      chatMessages: this.chatMessages,
       series: Object.fromEntries(this.series),
       episodes: Object.fromEntries(this.episodes),
       timelines: Object.fromEntries(this.timelines),
@@ -133,6 +140,62 @@ export class MapDBProvider implements IDatabaseProvider {
     return this.users.size;
   }
 
+  public async getUsers(filter?: {
+    search?: string;
+    tier?: string;
+    role?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ users: UserEntity[]; total: number }> {
+    let list = Array.from(this.users.values()).map(u => ({ ...u }));
+
+    if (filter?.search) {
+      const q = filter.search.toLowerCase().trim();
+      list = list.filter(u =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.id && u.id.toLowerCase().includes(q))
+      );
+    }
+    if (filter?.tier) {
+      const t = filter.tier.toLowerCase().trim();
+      list = list.filter(u => (u.tier || 'FREE').toLowerCase() === t);
+    }
+    if (filter?.role) {
+      const r = filter.role.toLowerCase().trim();
+      list = list.filter(u => (u.role || 'user').toLowerCase() === r);
+    }
+    if (filter?.status) {
+      const s = filter.status.toLowerCase().trim();
+      list = list.filter(u => {
+        const userStatus = (u.status || (u.is_active === false ? 'locked' : 'active')).toLowerCase();
+        return userStatus === s;
+      });
+    }
+
+    list.sort((a, b) => {
+      const dateA = new Date(a.created_at || 0).getTime();
+      const dateB = new Date(b.created_at || 0).getTime();
+      return dateB - dateA;
+    });
+
+    const total = list.length;
+    const offset = filter?.offset || 0;
+    const limit = filter?.limit || 20;
+    const paginated = list.slice(offset, offset + limit);
+
+    return { users: paginated, total };
+  }
+
+  public async deleteUser(userId: string): Promise<boolean> {
+    const existed = this.users.delete(userId);
+    if (existed) {
+      this.scheduleSave();
+    }
+    return existed;
+  }
+
   public async updateUser(user: UserEntity): Promise<UserEntity> {
     const existing = this.users.get(user.id);
     if (!existing) {
@@ -154,6 +217,67 @@ export class MapDBProvider implements IDatabaseProvider {
     this.users.set(userId, user);
     this.scheduleSave();
     return { ...user };
+  }
+
+  // ==================== Chat History & Session Messages ====================
+  public async saveChatMessage(message: ChatMessageEntity): Promise<ChatMessageEntity> {
+    const msgId = message.id || `msg_${Date.now()}_${nanoid(6)}`;
+    const entity: ChatMessageEntity = {
+      ...message,
+      id: msgId,
+      created_at: message.created_at || new Date().toISOString(),
+      timestamp: message.timestamp || Date.now(),
+    };
+    const idx = this.chatMessages.findIndex(m => m.id === msgId);
+    if (idx >= 0) {
+      this.chatMessages[idx] = entity;
+    } else {
+      this.chatMessages.push(entity);
+    }
+    this.scheduleSave();
+    return entity;
+  }
+
+  public async saveChatMessages(messages: ChatMessageEntity[]): Promise<void> {
+    if (!messages || messages.length === 0) return;
+    for (const msg of messages) {
+      await this.saveChatMessage(msg);
+    }
+  }
+
+  public async getChatMessages(filter: {
+    userId: string;
+    sessionId?: string;
+    seriesId?: string;
+    episodeId?: string;
+    scope?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ messages: ChatMessageEntity[]; total: number }> {
+    let list = this.chatMessages.filter(m => m.user_id === filter.userId);
+    if (filter.sessionId) list = list.filter(m => m.session_id === filter.sessionId);
+    if (filter.seriesId) list = list.filter(m => m.series_id === filter.seriesId);
+    if (filter.episodeId) list = list.filter(m => m.episode_id === filter.episodeId);
+    if (filter.scope) list = list.filter(m => m.scope === filter.scope);
+
+    list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const total = list.length;
+    const limit = filter.limit && filter.limit > 0 ? filter.limit : 50;
+    const offset = filter.offset || 0;
+
+    const paginated = offset > 0 ? list.slice(offset, offset + limit) : list.slice(Math.max(0, total - limit));
+    return { messages: paginated, total };
+  }
+
+  public async deleteChatSession(userId: string, sessionId: string): Promise<boolean> {
+    const prevLen = this.chatMessages.length;
+    this.chatMessages = this.chatMessages.filter(
+      m => !(m.user_id === userId && m.session_id === sessionId)
+    );
+    if (this.chatMessages.length !== prevLen) {
+      this.scheduleSave();
+    }
+    return true;
   }
 
   // ==================== Credits & Deductions ====================
@@ -211,6 +335,15 @@ export class MapDBProvider implements IDatabaseProvider {
 
   // ==================== Series ====================
   public async createSeries(series: SeriesEntity): Promise<SeriesEntity> {
+    if (!series.user_id) {
+      throw new Error('user_id is required to create a series');
+    }
+    if (!series.title) {
+      throw new Error('title is required to create a series');
+    }
+    if (series.id === 'global' || series.id?.startsWith('wiz_') || series.id?.startsWith('temp_')) {
+      throw new Error('Cannot persist temporary or global session as database series');
+    }
     const id = series.id || `ser_${nanoid(10)}`;
     const now = new Date().toISOString();
     const created: SeriesEntity = {
@@ -226,7 +359,9 @@ export class MapDBProvider implements IDatabaseProvider {
   }
 
   public async getSeriesList(userId?: string, search?: string, status?: string): Promise<SeriesEntity[]> {
-    let list = Array.from(this.series.values());
+    let list = Array.from(this.series.values())
+      .filter(s => s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
+
     if (userId) {
       list = list.filter(s => s.user_id === userId);
     }
@@ -245,11 +380,13 @@ export class MapDBProvider implements IDatabaseProvider {
   }
 
   public async getSeriesById(id: string): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     const s = this.series.get(id);
     return s ? { ...s } : null;
   }
 
   public async updateSeries(id: string, updates: Partial<SeriesEntity>): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     const s = this.series.get(id);
     if (!s) return null;
     const updated: SeriesEntity = {
@@ -265,21 +402,58 @@ export class MapDBProvider implements IDatabaseProvider {
   public async deleteSeries(id: string): Promise<boolean> {
     const existed = this.series.delete(id);
     if (existed) {
-      // Cascade delete episodes
+      const epIds: string[] = [];
       for (const [epId, ep] of this.episodes.entries()) {
         if (ep.series_id === id) {
+          epIds.push(epId);
           this.episodes.delete(epId);
           this.timelines.delete(epId);
           this.timelineVersions.delete(epId);
         }
       }
+
+      // Delete chat messages
+      this.chatMessages = this.chatMessages.filter(
+        m => m.series_id !== id && (!m.episode_id || !epIds.includes(m.episode_id))
+      );
+
+      // Delete assets
+      for (const [assetId, asset] of this.assets.entries()) {
+        if (asset.series_id === id) {
+          this.assets.delete(assetId);
+        }
+      }
+
+      // Delete pipeline jobs
+      for (const [jobId, job] of this.pipelineJobs.entries()) {
+        if (job.series_id === id || (job.episode_id && epIds.includes(job.episode_id))) {
+          this.pipelineJobs.delete(jobId);
+        }
+      }
+
       this.scheduleSave();
     }
     return existed;
   }
 
+  private syncSeriesEpisodeCounters(seriesId: string): void {
+    if (!seriesId || seriesId === 'global' || seriesId.startsWith('wiz_') || seriesId.startsWith('temp_')) return;
+    const episodes = Array.from(this.episodes.values()).filter(e => e.series_id === seriesId);
+    const series = this.series.get(seriesId);
+    if (series) {
+      series.episode_count = episodes.length;
+      series.published_episode_count = episodes.filter(e => e.status === 'PUBLISHED').length;
+      series.updated_at = new Date().toISOString();
+      this.series.set(seriesId, series);
+      this.scheduleSave();
+    }
+  }
+
   // ==================== Episodes ====================
   public async createEpisode(episode: EpisodeEntity): Promise<EpisodeEntity> {
+    if (!episode.series_id) {
+      throw new Error('series_id is required to create an episode');
+    }
     const id = episode.id || `ep_${nanoid(10)}`;
     const now = new Date().toISOString();
     const created: EpisodeEntity = {
@@ -290,6 +464,7 @@ export class MapDBProvider implements IDatabaseProvider {
       updated_at: now,
     };
     this.episodes.set(id, created);
+    this.syncSeriesEpisodeCounters(episode.series_id);
     this.scheduleSave();
     return created;
   }
@@ -313,8 +488,37 @@ export class MapDBProvider implements IDatabaseProvider {
       updated_at: new Date().toISOString(),
     };
     this.episodes.set(id, updated);
+    if (e.series_id && (updates.status !== undefined || updates.published_urls !== undefined || updates.published_platforms != undefined)) {
+      this.syncSeriesEpisodeCounters(e.series_id);
+    }
     this.scheduleSave();
     return updated;
+  }
+
+  public async deleteEpisode(id: string): Promise<boolean> {
+    const ep = this.episodes.get(id);
+    const seriesId = ep?.series_id;
+    const existed = this.episodes.delete(id);
+    if (existed) {
+      this.timelines.delete(id);
+      this.timelineVersions.delete(id);
+      this.chatMessages = this.chatMessages.filter(m => m.episode_id !== id);
+      if (seriesId) {
+        this.syncSeriesEpisodeCounters(seriesId);
+      }
+      for (const [jobId, job] of this.pipelineJobs.entries()) {
+        if (job.episode_id === id) {
+          this.pipelineJobs.delete(jobId);
+        }
+      }
+      for (const [assetId, asset] of this.assets.entries()) {
+        if (asset.episode_id === id) {
+          this.assets.delete(assetId);
+        }
+      }
+      this.scheduleSave();
+    }
+    return existed;
   }
 
   // ==================== Timeline & Versions ====================
@@ -327,7 +531,7 @@ export class MapDBProvider implements IDatabaseProvider {
     const now = new Date().toISOString();
     const version_id = `ver_${nanoid(10)}`;
 
-    const history = this.timelineVersions.get(episode_id) || [];
+    let history = this.timelineVersions.get(episode_id) || [];
     const version_number = history.length + 1;
     const pureTimeline = normalizePureTimeline(timeline_data);
 
@@ -342,6 +546,10 @@ export class MapDBProvider implements IDatabaseProvider {
     };
 
     history.unshift(versionDoc);
+    // Cap to maximum 20 versions
+    if (history.length > 20) {
+      history = history.slice(0, 20);
+    }
     this.timelineVersions.set(episode_id, history);
 
     const latestDoc = {
@@ -480,6 +688,8 @@ export class MapDBProvider implements IDatabaseProvider {
   public async getAssets(filter?: {
     user_id?: string;
     series_id?: string;
+    episode_id?: string;
+    scene_id?: string;
     type?: string;
     character_id?: string;
     search?: string;
@@ -487,6 +697,8 @@ export class MapDBProvider implements IDatabaseProvider {
     let list = Array.from(this.assets.values());
     if (filter?.user_id) list = list.filter(a => a.user_id === filter.user_id);
     if (filter?.series_id) list = list.filter(a => a.series_id === filter.series_id);
+    if (filter?.episode_id) list = list.filter(a => a.episode_id === filter.episode_id);
+    if (filter?.scene_id) list = list.filter(a => a.scene_id === filter.scene_id);
     if (filter?.type) list = list.filter(a => a.type === filter.type);
     if (filter?.character_id) list = list.filter(a => a.character_id === filter.character_id);
     if (filter?.search) {
@@ -497,6 +709,11 @@ export class MapDBProvider implements IDatabaseProvider {
       );
     }
     return list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  }
+
+  public async getAssetById(id: string): Promise<AssetEntity | null> {
+    const a = this.assets.get(id);
+    return a ? { ...a } : null;
   }
 
   public async deleteAsset(id: string): Promise<boolean> {
@@ -644,5 +861,77 @@ export class MapDBProvider implements IDatabaseProvider {
   public async findActivePipelineJob(series_id: string, episode_id: string, type?: string): Promise<any | null> {
     const jobs = await this.getPipelineJobs({ series_id, episode_id });
     return jobs.find(j => (j.status === 'running' || j.status === 'queued') && (!type || j.type === type)) || null;
+  }
+
+  // ─── Viral Trends Storage & Persistence ───────────────────────────────────
+  private viralTrends: Map<string, { country: string; language: string; items: any[]; updated_at: Date }> = new Map();
+
+  public async getViralTrends(country: string, language: string): Promise<{ items: any[]; updated_at: Date } | null> {
+    const key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+    const found = this.viralTrends.get(key);
+    return found ? { items: found.items, updated_at: found.updated_at } : null;
+  }
+
+  public async saveViralTrends(country: string, language: string, items: any[]): Promise<void> {
+    const key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+    this.viralTrends.set(key, {
+      country: country.toUpperCase(),
+      language: language.toLowerCase(),
+      items: items || [],
+      updated_at: new Date(),
+    });
+  }
+
+  public async getAllCachedViralTrends(): Promise<Array<{ cache_key: string; country: string; language: string; items: any[]; updated_at: Date }>> {
+    return Array.from(this.viralTrends.entries()).map(([cache_key, val]) => ({
+      cache_key,
+      country: val.country,
+      language: val.language,
+      items: val.items,
+      updated_at: val.updated_at,
+    }));
+  }
+
+  // ─── Social Connected Accounts ───────────────────────────────────────────
+  private socialAccounts: Map<string, SocialAccountEntity> = new Map();
+
+  public async updateSocialAccount(account: Partial<SocialAccountEntity>): Promise<SocialAccountEntity> {
+    const user_id = account.user_id || '';
+    const platform = account.platform || '';
+    const channel_id = account.channel_id || '';
+    const key = `${user_id}_${platform}_${channel_id}`;
+    const existing = this.socialAccounts.get(key) || {
+      id: `soc_${nanoid(10)}`,
+      user_id,
+      platform,
+      channel_id,
+      channel_name: account.channel_name || '',
+      access_token: account.access_token || '',
+      created_at: new Date(),
+    };
+    const updated: SocialAccountEntity = {
+      ...existing,
+      ...account,
+      updated_at: new Date(),
+    };
+    this.socialAccounts.set(key, updated);
+    this.scheduleSave();
+    return updated;
+  }
+
+  public async listSocialAccounts(user_id: string): Promise<SocialAccountEntity[]> {
+    return Array.from(this.socialAccounts.values()).filter(a => a.user_id === user_id && a.is_active !== false);
+  }
+
+  public async deleteSocialAccount(user_id: string, platform: string, channel_id?: string): Promise<boolean> {
+    let deleted = false;
+    for (const [key, a] of Array.from(this.socialAccounts.entries())) {
+      if (a.user_id === user_id && a.platform === platform && (!channel_id || a.channel_id === channel_id)) {
+        this.socialAccounts.delete(key);
+        deleted = true;
+      }
+    }
+    if (deleted) this.scheduleSave();
+    return deleted;
   }
 }

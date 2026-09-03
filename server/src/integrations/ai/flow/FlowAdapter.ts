@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { IAIAccount, AIAccount, getDatabaseProvider, AIModelType } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { IAIAccount, AIModelType } from '~/types.js';
 import { captchaService } from './CaptchaService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { flowSyncService } from './FlowSyncService.js';

@@ -1,7 +1,7 @@
 import { Request } from 'express';
 import jwt from 'jsonwebtoken';
 import { getDatabaseProvider } from '@/database/index.js';
-import type { UserEntity } from '@/database/IDatabaseProvider.js';
+import type { UserEntity } from '@/types.js';
 import { EnvConfig } from '@/config/env.js';
 
 export const JWT_SECRET = EnvConfig.jwtSecret;

@@ -1,44 +1,10 @@
 import { getDatabaseProvider } from '../database/index.js';
-import { CaptionSettings, EpisodeEntity, SceneEntity, SeriesEntity } from '../database/IDatabaseProvider.js';
+import { CaptionSettings, TimelineCaptionWord, CaptionSettings as _CS, EpisodeEntity, IProject, ITrack, SceneCaptionData, SceneEntity, SeriesEntity, TimelineDimensions, SceneCaptionWord } from '@/types.js';
 import { Logger } from '../utils/logger.js';
 import { normalizeSceneEntity } from '../utils/sceneNormalizer.js';
-import { cleanDialogueLine } from '../utils/captionAlignment.js';
 import { OPENVIDEO_EFFECTS } from '../constants/effects.js';
 import { getLanguageForCountry } from '../utils/LanguageMapping.js';
-
-export interface IProjectSettings {
-  width: number;
-  height: number;
-  fps: number;
-  duration: number;
-  backgroundColor: string;
-  [key: string]: any;
-}
-
-export interface ITrack {
-  id: string;
-  name: string;
-  type: string;
-  clipIds: string[];
-  accepts?: string[];
-  static?: boolean;
-  muted?: boolean;
-  visible?: boolean;
-  [key: string]: any;
-}
-
-export interface IProject {
-  settings: IProjectSettings;
-  tracks: ITrack[];
-  clips: Record<string, any>;
-  [key: string]: any;
-}
-
-export interface TimelineDimensions {
-  width: number;
-  height: number;
-  fps: number;
-}
+import { CaptionService } from './CaptionService.js';
 
 export class TimelineService {
   /**
@@ -502,6 +468,7 @@ export class TimelineService {
         const sceneDurUs = vClip?.timing?.duration ?? ((Number(scene.duration_seconds) || 6) * 1_000_000);
         const sceneEndUs = sceneFromUs + sceneDurUs;
         const hasDialogue = (scene.dialogue && scene.dialogue.length > 0);
+        const characterDialogue = hasDialogue ? scene.dialogue[0].character : '';
         const trans = scene.translations?.[langCode];
 
         const voClipId = `clip_vo_${episodeId}_s${scIdx}_${safeLang}`;
@@ -561,15 +528,25 @@ export class TimelineService {
         // --- Caption Cues Management ---
         const capPrefix = `clip_cap_${episodeId}_s${scIdx}_${safeLang}_`;
         if (capTrack) {
-          const ltCues = (trans?.captions_data && trans.captions_data.length > 0)
+          let ltCues: Array<SceneCaptionData> = (trans?.captions_data && trans.captions_data.length > 0)
             ? trans.captions_data
             : (isPrimary ? (scene.captions_data || []) : []);
+
+          const rawSceneWords: SceneCaptionWord[] = trans?.words || (isPrimary ? scene.words : []) || [];
+
+          // If ltCues is empty or has only 1 monolithic cue, but rawSceneWords is available:
+          if ((!ltCues || ltCues.length <= 1) && Array.isArray(rawSceneWords) && rawSceneWords.length > 0) {
+            const groupedCues = CaptionService.groupWordsIntoCues(rawSceneWords);
+            if (groupedCues.length > 0) {
+              ltCues = groupedCues;
+            }
+          }
 
           if (hasDialogue && ltCues.length > 0) {
             const activeCapClipIds = new Set<string>();
             let lastEndUs = sceneFromUs;
 
-            ltCues.forEach((cue: any, cIdx: number) => {
+            ltCues.forEach((cue: SceneCaptionData, cIdx: number) => {
               const capClipId = `${capPrefix}${cIdx + 1}`;
               activeCapClipIds.add(capClipId);
 
@@ -578,8 +555,8 @@ export class TimelineService {
               }
 
               // Calculate start and end ms safely
-              const rawStartMs = cue.start_ms !== undefined ? Number(cue.start_ms) : (cue.startMs !== undefined ? Number(cue.startMs) : (cue.from_us !== undefined ? Number(cue.from_us) / 1000 : 0));
-              const rawEndMs = cue.end_ms !== undefined ? Number(cue.end_ms) : (cue.endMs !== undefined ? Number(cue.endMs) : (rawStartMs + 2000));
+              const rawStartMs = (cue as any).start_ms !== undefined ? Number((cue as any).start_ms) : ((cue as any).startMs !== undefined ? Number((cue as any).startMs) : ((cue as any).from_us !== undefined ? Number((cue as any).from_us) / 1000 : 0));
+              const rawEndMs = (cue as any).end_ms !== undefined ? Number((cue as any).end_ms) : ((cue as any).endMs !== undefined ? Number((cue as any).endMs) : (rawStartMs + 2000));
 
               let cueFromUs = sceneFromUs + Math.round(rawStartMs * 1000);
               let cueToUs = sceneFromUs + Math.round(rawEndMs * 1000);
@@ -601,14 +578,30 @@ export class TimelineService {
               cueToUs = cueFromUs + cueDurUs;
               lastEndUs = cueToUs; // Advance watermark
 
-              const rawWords = cue.words || trans?.words || (isPrimary ? scene.words : []);
-              const cleanedCueText = cleanDialogueLine(cue.text || '');
-              const cueWords = Array.isArray(rawWords) && rawWords.length > 0 ? rawWords.map((w: any) => ({
-                text: cleanDialogueLine(w.text || w.punctuated_word || w.word || ''),
-                from: Number(w.from ?? 0),
-                to: Number(w.to ?? (cueDurUs / 1000)),
-                isKeyWord: Boolean(w.isKeyWord ?? w.is_key_word),
-              })) : [{ text: cleanedCueText, from: 0, to: Math.round(cueDurUs / 1000), isKeyWord: true }];
+              const cleanedCueText = CaptionService.cleanDialogueLine(cue.text || '', cue.character || characterDialogue);
+
+              const cueWords: TimelineCaptionWord[] = Array.isArray(cue.words) && cue.words.length > 0
+                ? (cue.words as TimelineCaptionWord[]).map((w: TimelineCaptionWord) => ({
+                    text: CaptionService.cleanDialogueLine(w.text || '', cue.character || characterDialogue),
+                    from: Number(w.from || 0),
+                    to: Number(w.to || Math.round(cueDurUs / 1000)),
+                    isKeyWord: Boolean(w.isKeyWord),
+                  }))
+                : (Array.isArray(rawSceneWords) && rawSceneWords.length > 0
+                  ? (rawSceneWords as SceneCaptionWord[]).map((w: SceneCaptionWord, idx: number) => {
+                      const wText = CaptionService.cleanDialogueLine(w.punctuated_word || w.word || '', cue.character || characterDialogue);
+                      const wStartMs = Math.round(Number(w.start || 0) * 1000);
+                      const wEndMs = Math.round(Number(w.end || (w.start || 0) + 0.3) * 1000);
+                      const fromMs = Math.max(0, wStartMs - rawStartMs);
+                      const toMs = Math.max(fromMs + 50, wEndMs - rawStartMs);
+                      return {
+                        text: wText,
+                        from: fromMs,
+                        to: toMs,
+                        isKeyWord: Boolean(idx === 0 || idx === rawSceneWords.length - 1 || wText.length > 4),
+                      };
+                    })
+                  : [{ text: cleanedCueText, from: 0, to: Math.round(cueDurUs / 1000), isKeyWord: true }]);
 
               const hasVoiceover = Boolean(hasDialogue && voUrl && timeline.clips[voClipId]);
               const targetSourceClipId = hasVoiceover ? voClipId : vClipId;
@@ -623,8 +616,7 @@ export class TimelineService {
                 metadata: {
                   sourceClipId: targetSourceClipId,
                 },
-                wordsPerLine,
-                textCase,
+                wordsPerLine: '',
                 timing: {
                   display: { from: cueFromUs, to: cueToUs },
                   trim: { from: 0, to: cueDurUs },
@@ -634,26 +626,9 @@ export class TimelineService {
                 visible: isVisible,
                 caption: {
                   words: cueWords,
-                  colors: {
-                    active: { color: activeColor },
-                    keyword: { color: activeColor },
-                  },
-                  wordAnimation: capSettings?.highlight_animate !== false ? {
-                    type: 'scale',
-                    application: 'active',
-                    value: 1.15,
-                  } : undefined,
                 },
                 style: {
-                  fontFamily,
-                  fontSize,
                   color: textColor,
-                  align: textAlign,
-                  textAlign,
-                  textCase,
-                  fontUrl,
-                  stroke: outlineWeight > 0 ? { color: outlineColor, width: outlineWeight } : undefined,
-                  backgroundColor: bgBox ? bgColor : undefined,
                 },
                 locked: false,
                 effects: [],
@@ -683,7 +658,7 @@ export class TimelineService {
               return true;
             });
           } else {
-            // Scene has no dialogue or cues: Prune all caption clips for this scene
+            // No captions: Clean up all caption clips for this scene & language
             capTrack.clipIds = capTrack.clipIds.filter((cid: string) => {
               if (cid.startsWith(capPrefix)) {
                 delete timeline.clips[cid];

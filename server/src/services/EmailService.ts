@@ -47,17 +47,19 @@ export class EmailService {
     await this.sendMail(mailOptions);
   }
 
-  public async sendOtpEmail(email: string, otp: string, purpose: 'enable_2fa' | 'disable_2fa' | 'login') {
+  public async sendOtpEmail(email: string, otp: string, purpose: 'enable_2fa' | 'disable_2fa' | 'login' | 'signup') {
     const titles = {
       'enable_2fa': 'Enable Two-Factor Authentication (2FA)',
       'disable_2fa': 'Disable Two-Factor Authentication (2FA)',
       'login': 'Two-Factor Authentication Sign In Verification',
+      'signup': 'Confirm Your Email Address & Activate Account',
     };
 
     const actionText = {
       'enable_2fa': 'enable Two-Factor Authentication for your Shine Studio account',
       'disable_2fa': 'disable Two-Factor Authentication for your Shine Studio account',
       'login': 'sign in to your Shine Studio account',
+      'signup': 'verify your email address and activate your Shine Studio account',
     };
 
     const title = titles[purpose] || 'Security Verification Code';
@@ -138,23 +140,39 @@ export class EmailService {
     await this.sendMail(mailOptions);
   }
 
-  public async sendAdminSystemAlert(serviceName: string, errorMessage: string) {
+  public async sendAdminSystemAlert(serviceName: string, errorMessage: string, stack?: string) {
     const adminEmail = EnvConfig.adminEmail;
+    const timeStr = new Date().toISOString();
     const mailOptions = {
       from: this.fromEmail,
       to: adminEmail,
       subject: `[CRITICAL ALERT] ${serviceName} Failure`,
-      text: `Service ${serviceName} encountered a critical error: ${errorMessage}`,
+      text: `Service: ${serviceName}\nTime: ${timeStr}\n\nError Message:\n${errorMessage}\n\n${stack ? `Stack Trace:\n${stack}\n\n` : ''}Please check the server logs (Grafana/OpenTelemetry) immediately.`,
       html: `
-        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-          <h2 style="color: #d9534f;">Critical System Alert</h2>
-          <p><strong>Service:</strong> ${serviceName}</p>
-          <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-          <p><strong>Error Message:</strong></p>
-          <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #d9534f; margin: 10px 0;">
-            <pre style="margin: 0; white-space: pre-wrap;">${errorMessage}</pre>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; line-height: 1.6; color: #1f2937; background: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #e5e7eb;">
+          <div style="display: flex; align-items: center; margin-bottom: 16px;">
+            <h2 style="color: #dc2626; margin: 0; font-size: 20px; font-weight: 700;">Critical System Alert</h2>
           </div>
-          <p>Please check the server logs (Grafana/OpenTelemetry) immediately.</p>
+          <div style="margin-bottom: 16px; font-size: 14px;">
+            <p style="margin: 4px 0;"><strong>Service:</strong> <span style="color: #4b5563;">${serviceName}</span></p>
+            <p style="margin: 4px 0;"><strong>Time:</strong> <span style="color: #4b5563;">${timeStr}</span></p>
+          </div>
+          
+          <p style="margin: 16px 0 8px 0; font-weight: 600; font-size: 14px; color: #111827;">Error Message:</p>
+          <div style="background-color: #fef2f2; border: 1px solid #fee2e2; border-left: 4px solid #dc2626; border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+            <pre style="margin: 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; color: #991b1b;">${errorMessage}</pre>
+          </div>
+
+          ${stack ? `
+          <p style="margin: 16px 0 8px 0; font-weight: 600; font-size: 14px; color: #111827;">Stack Trace:</p>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin-bottom: 16px; overflow-x: auto;">
+            <pre style="margin: 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #334155; line-height: 1.5;">${stack}</pre>
+          </div>
+          ` : ''}
+
+          <p style="color: #6b7280; font-size: 13px; margin: 20px 0 0 0; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+            Please check server telemetry & logs (Grafana / OpenTelemetry) immediately.
+          </p>
         </div>
       `
     };

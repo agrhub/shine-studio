@@ -341,9 +341,9 @@ export function createMasterPlanTools(context?: ToolContextParams): FunctionTool
         onItemUpdated?.({ type: 'compliance_verified', data: result });
         return {
           success: true,
-          score: result.overallScore,
-          status: result.isCompliant ? 'PASSED' : 'FLAGGED',
-          message: `Master plan scored ${result.overallScore}% compliance in ${country}.`,
+          score: result.overall_score,
+          status: result.is_compliant ? 'PASSED' : 'FLAGGED',
+          message: `Master plan scored ${result.overall_score}% compliance in ${country}.`,
           complianceResult: result,
         };
       },

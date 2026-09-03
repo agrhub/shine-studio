@@ -5,13 +5,16 @@ import {
   SeriesEntity, 
   RenderedVersionItem, 
   EpisodeRenderVersion, 
-  PlatformAccount, 
+  PlatformAccount,
+  PipelineJobEntity,
+  EpisodePublishedPlatform,
 } from '../types.js';
 import { getDatabaseProvider } from '../database/index.js';
 import { requireAuth } from '../middleware/RequireAuth.js';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { OAuthService } from '../services/OAuthService.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
+import { PatchSyncService } from '../realtime/PatchSyncService.js';
 
 export const publishRouter = Router();
 
@@ -53,6 +56,23 @@ const LANGUAGE_NAMES: Record<string, string> = {
 function getLangLabel(code?: string): string {
   if (!code) return 'en-US';
   return LANGUAGE_NAMES[code] || code;
+}
+
+function isValidImageBuffer(buffer: Buffer): { valid: boolean; mime: string } {
+  if (!buffer || buffer.length < 100) return { valid: false, mime: '' };
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { valid: true, mime: 'image/jpeg' };
+  }
+  // PNG: 89 50 4E 47
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return { valid: true, mime: 'image/png' };
+  }
+  // WEBP: RIFF .... WEBP
+  if (buffer.length > 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') {
+    return { valid: true, mime: 'image/webp' };
+  }
+  return { valid: false, mime: '' };
 }
 
 // GET /api/publish/rendered-versions/:seriesId — Fetch all rendered versions of a series
@@ -164,10 +184,9 @@ publishRouter.get('/rendered-versions/:seriesId', requireAuth, async (req: Reque
           status: 'ready',
         });
       }
-      // 4. Draft / Working episode fallback
-      else {
+      // 4. Scene video fallback (only if actual scene video exists)
+      else if (sceneWithVid?.video_url) {
         const lang = primaryLang;
-        const resolvedVideo = sceneWithVid?.video_url || '';
         versions.push({
           id: `ver_${ep.id}_default`,
           episode_id: ep.id,
@@ -177,19 +196,21 @@ publishRouter.get('/rendered-versions/:seriesId', requireAuth, async (req: Reque
           voice: `Original Audio (${getLangLabel(lang)})`,
           subtitles: [`Caption: ${getLangLabel(lang)} (Burned-in)`],
           resolution: defaultResolution,
-          video_url: resolvedVideo,
+          video_url: sceneWithVid.video_url,
           thumbnail_url: coverThumb,
           duration: epDuration,
           file_size: '26.8 MB',
           rendered_at: epRenderedAt,
-          status: resolvedVideo ? 'ready' : 'draft',
+          status: 'ready',
         });
       }
     }
 
+    const readyVersions = versions.filter(v => v.video_url && v.video_url.trim().length > 0);
+
     return res.json({
       code: 200,
-      data: versions,
+      data: readyVersions,
       message: 'Rendered versions fetched successfully',
       error: null,
     });
@@ -478,33 +499,85 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
 
     const jobId = `pub_${Date.now()}`;
     const publishedUrls: Record<string, string> = {};
+    const targetCoverUrl = coverUrl || req.body.coverUrl || req.body.cover_url || req.body.thumbnail_url || req.body.thumbnailUrl;
 
     activePublishJobs.set(jobId, {
       jobId,
       status: 'uploading',
-      progress: 0,
+      progress: 10,
       currentPlatform: platforms[0],
       publishedUrls: {},
     });
 
     (async () => {
+      const db = await getDatabaseProvider();
+      const ep = await db.getEpisodeById(episodeId);
+      const series = await db.getSeriesById(seriesId);
+      const targetVideoUrl = videoUrl || req.body.video_url || (ep?.render_versions?.[0]?.video_url || ep?.render_versions?.[0]?.url) || (ep?.video_urls && (ep.video_urls[req.body.languageCode || 'en-US'] || Object.values(ep.video_urls)[0])) || ep?.video_url;
+
+      // ─── 1. Register Job in Pipeline Task Manager (Database) ─────────────
+      const initialJobRecord: PipelineJobEntity = {
+        id: jobId,
+        user_id: userId,
+        series_id: seriesId || 'series-001',
+        episode_id: episodeId || '',
+        type: 'publish',
+        title: `Publish: ${ep?.title ? `EP #${ep.episode_number || 1} - ${ep.title}` : (caption?.slice(0, 35) || 'Episode')} (${platforms.map(p => p.toUpperCase()).join(', ')})`,
+        status: 'running',
+        progress: 10,
+        current_step: `Preparing upload to ${platforms.map(p => p.toUpperCase()).join(', ')}...`,
+        logs: [
+          { timestamp: new Date().toISOString(), level: 'info', message: `Queued social publish for ${platforms.join(', ')}` }
+        ],
+        outputs: {
+          platforms,
+          video_url: targetVideoUrl,
+          cover_url: targetCoverUrl,
+          published_urls: {},
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      try {
+        await db.savePipelineJob(initialJobRecord);
+        PatchSyncService.broadcast(seriesId || 'all', 'pipeline_job:updated', initialJobRecord);
+      } catch (saveErr: any) {
+        console.warn('[Publish] Failed to save initial pipeline job record:', saveErr?.message);
+      }
+
       try {
         const fullCaption = `${caption || ''} ${(hashtags || []).map((h: string) => (h.startsWith('#') ? h : `#${h}`)).join(' ')}`.trim();
-        const db = await getDatabaseProvider();
-        const ep = await db.getEpisodeById(episodeId);
-        const targetVideoUrl = videoUrl || req.body.video_url || (ep?.render_versions?.[0]?.video_url || ep?.render_versions?.[0]?.url) || (ep?.video_urls && (ep.video_urls[req.body.languageCode || 'en-US'] || Object.values(ep.video_urls)[0])) || ep?.video_url;
-
         const accounts = rawChannels.filter((a: PlatformAccount) => platforms.some((p: string) => p.toLowerCase() === (a.provider || '').toLowerCase()));
-
+        const publishedUrls: Record<string, string> = {};
+        const publishedPlatformsList: EpisodePublishedPlatform[] = [];
+        const publishLanguage = req.body.language || req.body.languageCode || (series as any)?.primary_language || (series as any)?.language || 'en-US';
         for (let i = 0; i < accounts.length; i++) {
           const account = accounts[i];
           const platform = (account.provider || '').toLowerCase();
+          const currentPct = Math.round(15 + ((i + 1) / accounts.length) * 75);
+
           const jobState = activePublishJobs.get(jobId);
           if (jobState) {
             jobState.status = 'uploading';
             jobState.currentPlatform = platform;
-            jobState.progress = Math.round(15 + ((i + 1) / accounts.length) * 80);
+            jobState.progress = currentPct;
           }
+
+          try {
+            const updatedJob = await db.updatePipelineJob(jobId, {
+              progress: currentPct,
+              current_step: `Uploading to ${platform.toUpperCase()}...`,
+              updated_at: new Date().toISOString(),
+              logs: [
+                ...initialJobRecord.logs,
+                { timestamp: new Date().toISOString(), level: 'info', message: `Uploading video stream to ${platform.toUpperCase()}` }
+              ]
+            });
+            if (updatedJob) {
+              PatchSyncService.broadcast(seriesId || 'all', 'pipeline_job:updated', updatedJob);
+            }
+          } catch {}
 
           const validToken = await OAuthService.getValidAccessToken(account, (req as any).user?.id || (req as any).user?.userId);
 
@@ -526,25 +599,28 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
               : (targetVideoUrl.includes('.webm') ? 'video/webm' : (targetVideoUrl.includes('.mov') ? 'video/quicktime' : 'video/mp4'));
 
             // 1. Initiate Resumable Upload
+            const totalBytes = mediaRes.buffer.length;
             const initRes = await axios.post(
               'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
               {
                 snippet: {
                   title: caption?.slice(0, 100) || `Shorts Episode ${episodeId}`,
                   description: fullCaption,
-                  tags: hashtags || ['ShortDrama', 'ShineAI'],
+                  tags: hashtags || ['ShortDrama', 'ShineAI', 'Shorts'],
                   categoryId: '24', // Entertainment
                 },
                 status: {
                   privacyStatus: 'public',
                   selfDeclaredMadeForKids: false,
+                  embeddable: true,
+                  publicStatsViewable: true,
                 },
               },
               {
                 headers: {
                   Authorization: `Bearer ${validToken}`,
                   'Content-Type': 'application/json; charset=UTF-8',
-                  'X-Upload-Content-Length': mediaRes.buffer.length.toString(),
+                  'X-Upload-Content-Length': totalBytes.toString(),
                   'X-Upload-Content-Type': videoMime,
                 },
                 timeout: 30000,
@@ -556,11 +632,12 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
               throw new Error('YouTube Resumable Upload did not return an upload URL location.');
             }
 
-            // 2. Upload video binary
+            // 2. Upload complete video binary with Content-Range
             const uploadRes = await axios.put(uploadUrl, mediaRes.buffer, {
               headers: {
                 'Content-Type': videoMime,
-                'Content-Length': mediaRes.buffer.length.toString(),
+                'Content-Length': totalBytes.toString(),
+                'Content-Range': `bytes 0-${totalBytes - 1}/${totalBytes}`,
               },
               maxContentLength: Infinity,
               maxBodyLength: Infinity,
@@ -572,7 +649,56 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
             if (!videoId) {
               throw new Error('YouTube API did not return a valid video ID');
             }
-            publishedUrls['youtube'] = `https://youtube.com/shorts/${videoId}`;
+            const ytUrl = `https://youtube.com/shorts/${videoId}`;
+            publishedUrls['youtube'] = ytUrl;
+            publishedPlatformsList.push({
+              platform: 'youtube',
+              language: publishLanguage,
+              url: ytUrl,
+              video_id: videoId,
+              channel_id: account.channel_id || account.id,
+              channel_name: account.channel_name || (account as any).account_name || account.id,
+              account_id: account.id,
+              published_at: new Date().toISOString(),
+            });
+
+            // 3. Upload Custom Thumbnail to YouTube (if valid image is available)
+            const finalThumbUrl = targetCoverUrl || ep?.cover_image || ep?.render_versions?.[0]?.thumbnail_url || (Array.isArray(ep?.scenes) ? ep?.scenes.find((s: any) => s.storyboard_frame_url || s.storyboard_end_frame_url)?.storyboard_frame_url : null);
+            if (series?.ratio !== '9:16' && finalThumbUrl && !finalThumbUrl.includes('/images/dashboard/')) {
+              try {
+                const thumbRes = await StorageFactory.getFileBuffer(finalThumbUrl);
+                if (thumbRes && thumbRes.buffer) {
+                  const imgCheck = isValidImageBuffer(thumbRes.buffer);
+                  if (imgCheck.valid) {
+                    await axios.post(
+                      `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}`,
+                      thumbRes.buffer,
+                      {
+                        headers: {
+                          Authorization: `Bearer ${validToken}`,
+                          'Content-Type': imgCheck.mime,
+                          'Content-Length': thumbRes.buffer.length.toString(),
+                        },
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity,
+                        timeout: 30000,
+                      }
+                    );
+                    console.log(`[Publish] YouTube custom thumbnail uploaded successfully (${imgCheck.mime}, ${thumbRes.buffer.length} bytes) for video ${videoId}`);
+                  } else {
+                    console.warn(`[Publish] Skipped thumbnail upload for video ${videoId}: buffer is not a valid JPEG/PNG/WEBP image`);
+                  }
+                }
+              } catch (thumbErr: any) {
+                console.warn('[Publish] YouTube custom thumbnail notice (Channel might require phone verification for custom thumbnails):', thumbErr?.response?.data?.error?.message || thumbErr?.message);
+              }
+            }
+            else {
+              // 3. YouTube Shorts Thumbnail Note:
+              // YouTube Data API v3 does not support custom thumbnails for 9:16 Shorts via thumbnails.set (causes placeholder '...' glitch).
+              // YouTube natively generates high-res frame thumbnails directly from the video stream.
+              console.log(`[Publish] YouTube Shorts video ${videoId} published. YouTube auto-generating native video frame thumbnails.`);
+            }
           } else if (platform === 'facebook' && validToken) {
             // Facebook Graph API v18.0 Video Post
             const fbRes = await axios.post(
@@ -592,7 +718,18 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
             if (!postId) {
               throw new Error('Facebook API did not return a valid post ID');
             }
-            publishedUrls['facebook'] = `https://facebook.com/reel/${postId}`;
+            const fbUrl = `https://facebook.com/reel/${postId}`;
+            publishedUrls['facebook'] = fbUrl;
+            publishedPlatformsList.push({
+              platform: 'facebook',
+              language: publishLanguage,
+              url: fbUrl,
+              video_id: postId,
+              channel_id: account.channel_id || account.id,
+              channel_name: account.channel_name || (account as any).account_name || account.id,
+              account_id: account.id,
+              published_at: new Date().toISOString(),
+            });
           } else if (platform === 'tiktok' && validToken) {
             // TikTok Content Posting API v2
             const ttRes = await axios.post(
@@ -620,9 +757,21 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
             if (!publishId) {
               throw new Error('TikTok API did not return a publish ID');
             }
-            publishedUrls['tiktok'] = `https://tiktok.com/@${encodeURIComponent(account.channel_name || 'creator')}/video/${publishId}`;
+            const ttUrl = `https://tiktok.com/@${encodeURIComponent(account.channel_name || 'creator')}/video/${publishId}`;
+            publishedUrls['tiktok'] = ttUrl;
+            publishedPlatformsList.push({
+              platform: 'tiktok',
+              language: publishLanguage,
+              url: ttUrl,
+              video_id: publishId,
+              channel_id: account.channel_id || account.id,
+              channel_name: account.channel_name || (account as any).account_name || account.id,
+              account_id: account.id,
+              published_at: new Date().toISOString(),
+            });
           } else if (platform === 'instagram' && validToken) {
             // Instagram Reels Container & Publish
+            
             const igContainer = await axios.post(
               `https://graph.facebook.com/v18.0/${encodeURIComponent(account.channel_id || account.id)}/media`,
               {
@@ -641,13 +790,55 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
             if (!containerId) {
               throw new Error('Instagram API did not return a media container ID');
             }
-            publishedUrls['instagram'] = `https://instagram.com/reels/${containerId}/`;
+            const igUrl = `https://instagram.com/reels/${containerId}/`;
+            publishedUrls['instagram'] = igUrl;
+            publishedPlatformsList.push({
+              platform: 'instagram',
+              language: publishLanguage,
+              url: igUrl,
+              video_id: containerId,
+              channel_id: account.channel_id || account.id,
+              channel_name: account.channel_name || (account as any).account_name || account.id,
+              account_id: account.id,
+              published_at: new Date().toISOString(),
+            });
           }
         }
 
-        // Update database episode status and transition series to PUBLISHED
+        // Update database episode status and transition series to PUBLISHED with full platform records
         if (episodeId) {
-          await db.updateEpisode(episodeId, { status: 'PUBLISHED' });
+          const currentEp = await db.getEpisodeById(episodeId);
+          const existingPlatforms = currentEp?.published_platforms || [];
+          const mergedPlatforms = [...existingPlatforms];
+          for (const newP of publishedPlatformsList) {
+            const idx = mergedPlatforms.findIndex(m => 
+              m.platform === newP.platform &&
+              ((newP.channel_id && m.channel_id) ? m.channel_id === newP.channel_id : true) &&
+              ((newP.language && m.language) ? m.language === newP.language : true)
+            );
+            if (idx >= 0) {
+              mergedPlatforms[idx] = { ...mergedPlatforms[idx], ...newP };
+            } else {
+              mergedPlatforms.push(newP);
+            }
+          }
+
+          const updatedUrls: Record<string, string> = { ...(currentEp?.published_urls || {}) };
+          for (const newP of publishedPlatformsList) {
+            updatedUrls[newP.platform] = newP.url;
+            if (newP.channel_id) {
+              updatedUrls[`${newP.platform}_${newP.channel_id}`] = newP.url;
+            }
+            if (newP.language) {
+              updatedUrls[`${newP.platform}_${newP.language}`] = newP.url;
+            }
+          }
+
+          await db.updateEpisode(episodeId, {
+            status: 'PUBLISHED',
+            published_urls: updatedUrls,
+            published_platforms: mergedPlatforms,
+          });
         }
         if (seriesId) {
           await db.updateSeries(seriesId, { status: 'PUBLISHED' });
@@ -659,6 +850,26 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
           jobState.progress = 100;
           jobState.publishedUrls = publishedUrls;
         }
+
+        try {
+          const completedJob = await db.updatePipelineJob(jobId, {
+            status: 'completed',
+            progress: 100,
+            current_step: 'Published successfully to all platforms',
+            outputs: {
+              published_urls: publishedUrls,
+              platforms,
+              video_url: targetVideoUrl,
+              cover_url: targetCoverUrl,
+            },
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          if (completedJob) {
+            PatchSyncService.broadcast(seriesId || 'all', 'pipeline_job:completed', completedJob);
+            PatchSyncService.broadcast(seriesId || 'all', 'pipeline_job:updated', completedJob);
+          }
+        } catch {}
       } catch (err: any) {
         const errorMsg = err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || 'Publishing failed';
         console.error('[Publish] Multi-platform publish failed:', errorMsg);
@@ -667,6 +878,18 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
           jobState.status = 'failed';
           jobState.error = errorMsg;
         }
+
+        try {
+          const failedJob = await db.updatePipelineJob(jobId, {
+            status: 'failed',
+            error: errorMsg,
+            current_step: 'Publish failed',
+            updated_at: new Date().toISOString(),
+          });
+          if (failedJob) {
+            PatchSyncService.broadcast(seriesId || 'all', 'pipeline_job:updated', failedJob);
+          }
+        } catch {}
       }
     })();
 

@@ -4,29 +4,7 @@ import { GEMINI_SUPPORTED_VOICES } from '@/integrations/ai/gemini/GeminiClient.j
 import { Logger } from '@/utils/logger.js';
 import { nanoid } from 'nanoid';
 import { normalizeSceneEntity } from '@/utils/sceneNormalizer.js';
-import type { CharacterSeriesEntity, CharacterWardrobeVariant } from '@/types.js';
-
-export interface CreateSeriesParams {
-  id?: string;
-  user_id?: string;
-  title: string;
-  genre: string;
-  synopsis?: string;
-  visual_style?: string;
-  visual_style_prompt?: string;
-  target_audience?: string;
-  country?: string;
-  language?: string;
-  ratio?: string;
-  episode_count?: number;
-  master_plan?: any;
-  characters?: any[];
-  locations?: any[];
-  props?: any[];
-  /** If true, pre-generates the full scene screenplay for Episode 1 synchronously during series creation.
-   * Defaults to false — let screenplay_writer_agent handle it via streaming chat. */
-  pre_generate_ep1?: boolean;
-}
+import type { CharacterSeriesEntity, CharacterWardrobeVariant, CreateSeriesParams } from '@/types.js';
 
 export class SeriesService {
   /**

@@ -1,8 +1,9 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
-import { getDatabaseProvider, PlatformAccount } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
 import { getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
+import { PlatformAccount } from '~/types.js';
 
 export class PublishToolExecutors {
   /**

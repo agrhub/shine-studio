@@ -12,10 +12,14 @@ analyticsPaywallRouter.get('/dashboard', async (req: Request, res: Response) => 
     const userId = getUserId(req);
     const db = await getDatabaseProvider();
     
-    // 1. Fetch user series & assets
-    const seriesList = userId ? await db.getSeriesList(userId, '', '') : [];
-    const userAssets = userId ? await db.getAssets({ user_id: userId }) : [];
-    const user = userId ? await db.getUserById(userId) : null;
+    // 1. Fetch user series & assets in parallel
+    const [seriesList, userAssets, user] = userId
+      ? await Promise.all([
+          db.getSeriesList(userId, '', ''),
+          db.getAssets({ user_id: userId }),
+          db.getUserById(userId),
+        ])
+      : [[], [], null];
     
     const totalSeries = seriesList.length;
     const activeSeries = seriesList.filter(s => s.status !== 'ARCHIVED').length;

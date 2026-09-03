@@ -5,6 +5,7 @@ import { Logger } from '@/utils/logger.js';
 import { videoService } from '@/services/VideoService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
+import type { SceneEntity, AssetJobItem } from '@/types.js';
 
 export class VideoToolExecutors {
   /**
@@ -17,6 +18,7 @@ export class VideoToolExecutors {
     sceneIndex?: number;
     motionStrength?: number;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -26,67 +28,127 @@ export class VideoToolExecutors {
       const episode = await db.getEpisodeById(params.episodeId);
       if (!episode) return { success: false, message: `Episode ${params.episodeId} not found` };
 
-      const scenes = (episode.scenes || []) as any[];
+      const scenes: SceneEntity[] = (episode.scenes || []) as SceneEntity[];
       if (scenes.length === 0) {
         return { success: false, message: `Episode "${episode.title}" has no scenes to generate video clips for.` };
       }
 
       let targets = scenes;
       if (params.sceneIndex !== undefined) {
-        targets = scenes.filter((s: any) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
+        targets = scenes.filter((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
         if (targets.length === 0) {
           return { success: false, message: `Scene #${params.sceneIndex} not found in Episode "${episode.title}".` };
         }
       }
 
       // Validate visual prerequisites
-      const unready = targets.filter((s: any) => !s.storyboard_frame_url && !s.image_url);
+      const unready = targets.filter((s: SceneEntity) => !s.storyboard_frame_url && !s.image_url);
       if (unready.length > 0) {
-        const missingList = unready.map((s: any) => `#${s.index || s.scene_number || '?'}`).join(', ');
+        const missingList = unready.map((s: SceneEntity) => `#${s.index || s.scene_number || '?'}`).join(', ');
         return {
           success: false,
           message: `Cannot generate video: Prerequisite storyboard image(s) for scene(s) ${missingList} are not ready. Please generate storyboard frames first (b2).`,
         };
       }
 
-      const results: any[] = [];
-      const updatedScenes = [...scenes];
+      const results: Array<{ sceneIndex: number; status: string; video_url?: string; error?: string }> = [];
+      const updatedScenes: SceneEntity[] = [...scenes];
 
       for (const sc of targets) {
         const scIndex = Number(sc.index || sc.scene_number);
+        const startFrame = sc.storyboard_frame_url || sc.image_url;
+        const endFrame = sc.storyboard_end_frame_url;
+        const customPrompt = `${sc.visual_prompt || ''}, ${sc.end_frame_prompt || ''}, ${sc.action || ''}`;
+
         if (!params.forceRegenerate && sc.video_url) {
           results.push({ sceneIndex: scIndex, status: 'already_exists', video_url: sc.video_url });
+          await params.onItemProgress?.({
+            asset: {
+              id: `vid_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Video Clip`,
+              type: 'video',
+              status: 'completed',
+              url: sc.video_url,
+              thumbnail: startFrame,
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Scene #${scIndex} Video Clip (Ready)`,
+          });
           continue;
         }
 
-        const startFrame = sc.storyboard_frame_url || sc.image_url;
-
-        const { result } = await executeWithRetry(`Generate Video Clip for Scene #${scIndex}`, async () => {
-          return await videoService.generateSceneVideo({
-            user_id: params.userId || 'system',
-            series_id: params.seriesId,
-            episode_id: params.episodeId,
-            scene_id: sc.id || `scene_${scIndex}`,
-            start_frame_url: startFrame,
-            prompt: sc.visual_prompt || sc.action || `Cinematic motion for scene #${scIndex}`,
-            duration: sc.duration || 5,
-            aspect_ratio: '9:16',
+        try {
+          const { result } = await executeWithRetry(`Generate Video Clip for Scene #${scIndex}`, async () => {
+            return await videoService.generateSceneVideo({
+              user_id: params.userId || 'system',
+              series_id: params.seriesId,
+              episode_id: params.episodeId,
+              scene_id: sc.id || `scene_${scIndex}`,
+              start_frame_url: startFrame,
+              end_frame_url: endFrame,
+              prompt: customPrompt,
+              duration: sc.duration_seconds || 5,
+              aspect_ratio: '9:16',
+              scene_data: sc,
+            });
           });
-        });
 
-        const videoUrl = (result as any)?.videoUrl || (result as any)?.url || (result as any)?.video_url;
-        const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
-        if (idx >= 0) {
-          updatedScenes[idx] = {
-            ...updatedScenes[idx],
-            video_url: videoUrl,
-          };
+          const videoUrl = result?.url || (result as Partial<SceneEntity>)?.video_url;
+          const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
+          if (idx >= 0 && videoUrl) {
+            updatedScenes[idx] = {
+              ...updatedScenes[idx],
+              video_url: videoUrl,
+            };
+          }
+
+          results.push({ sceneIndex: scIndex, status: 'generated', video_url: videoUrl });
+
+          await params.onItemProgress?.({
+            asset: {
+              id: `vid_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Video Clip`,
+              type: 'video',
+              status: 'completed',
+              url: videoUrl,
+              thumbnail: startFrame,
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Synthesized Video Clip for Scene #${scIndex}`,
+          });
+        } catch (scErr: any) {
+          results.push({ sceneIndex: scIndex, status: 'failed', error: scErr.message });
+          await params.onItemProgress?.({
+            asset: {
+              id: `vid_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Video Clip`,
+              type: 'video',
+              status: 'failed',
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Failed Scene #${scIndex} Video Clip: ${scErr.message}`,
+          });
         }
-
-        results.push({ sceneIndex: scIndex, status: 'generated', video_url: videoUrl });
       }
 
       await db.updateEpisode(params.episodeId, { scenes: updatedScenes });
+
+      const failedResults = results.filter((r) => r.status === 'failed');
+      if (failedResults.length > 0) {
+        const errorDetails = failedResults.map((f) => `Scene #${f.sceneIndex}: ${f.error}`).join('; ');
+        return {
+          success: false,
+          message: `Failed to generate video clip(s) for ${failedResults.length} scene(s): ${errorDetails}`,
+          error: errorDetails,
+          data: { episode_id: params.episodeId, scenes: updatedScenes, details: results },
+        };
+      }
 
       const generatedCount = results.filter((r) => r.status === 'generated').length;
       return {

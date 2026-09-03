@@ -5,64 +5,21 @@ import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
 import { getLanguageForCountry } from '../utils/LanguageMapping.js';
 import { getVisualStylePrompt } from '../constants/VisualStyles.js';
-import { buildWordLevelCaptionsFromDialogue } from '../utils/captionAlignment.js';
-import { ShotFrame, SceneEntity, LocationAsset, PropAsset, CharacterSeriesEntity, CharacterWardrobeVariant } from '../types.js';
-import { ScriptItemSchema, SceneEntitySchema, validateAiJson } from '~/schemas/AISchemas.js';
+import {
+  ShotFrame,
+  SceneEntity,
+  LocationAsset,
+  PropAsset,
+  CharacterSeriesEntity,
+  CharacterWardrobeVariant,
+  ScriptAgentInput,
+  ScriptShot,
+  ScriptScene,
+  ScriptSceneGroup,
+  ScriptItem,
+} from '../types.js';
 import { nanoid } from 'nanoid';
-
-export interface ScriptAgentInput {
-  series_id?: string;
-  episode_number: number;
-  title?: string;
-  genre?: string;
-  visual_style?: string;
-  visual_style_prompt?: string;
-  synopsis?: string;
-  scene_core?: string;
-  conflict_escalation?: string;
-  cliffhanger_hook?: string;
-  characters?: CharacterSeriesEntity[];
-  locations?: LocationAsset[];
-  props?: PropAsset[];
-  story_core?: {
-    core_attraction?: string;
-    psychological_pleasure?: string;
-    gold_finger_rule?: string;
-  };
-  country?: string;
-  language?: string;
-  ratio?: string;
-  target_duration_seconds?: number;
-}
-
-export type ScriptShot = SceneEntity;
-export type ScriptScene = SceneEntity;
-
-export interface ScriptSceneGroup {
-  scene_number: number;
-  heading: string;
-  location: string;
-  time_of_day: string;
-  lighting_mood?: string;
-  shots: ScriptShot[];
-}
-
-export interface ScriptItem {
-  episode: string;
-  episode_number: number;
-  title: string;
-  synopsis: string;
-  screenplay?: string;
-  scene_core?: string;
-  conflict_escalation?: string;
-  cliffhanger_hook?: string;
-  total_duration_seconds: number;
-  scenes: SceneEntity[];
-  scene_groups?: ScriptSceneGroup[];
-  characters?: CharacterSeriesEntity[];
-  locations?: LocationAsset[];
-  props?: PropAsset[];
-}
+import { CaptionService } from '~/services/CaptionService.js';
 
 export class ScriptAgent {
   // ── 1. DURATION & SCENE/SHOT TIER SCALING ─────────────────────────────────
@@ -390,7 +347,7 @@ export class ScriptAgent {
     }
 
     const startSec = Number(firstDlg.speech_start_sec !== undefined ? firstDlg.speech_start_sec : (firstDlg.speechStartSec !== undefined ? firstDlg.speechStartSec : 0.5));
-    const { voice_start_us, voice_duration_us, captions_data, words } = buildWordLevelCaptionsFromDialogue(
+    const { voice_start_us, voice_duration_us, captions_data, words } = CaptionService.buildWordLevelCaptionsFromDialogue(
       [firstDlg],
       durSec,
       startSec

@@ -11,13 +11,7 @@ if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
 }
 
-export interface DspSeparationResult {
-  bgmUrl: string;
-  speechStartUs: number;
-  speechEndUs: number;
-  speechDurationUs: number;
-  hasSpeechActivity: boolean;
-}
+import { DspSeparationResult } from '@/types.js';
 
 /**
  * DspAudioService: Digital Signal Processing (DSP) for Center-Channel Vocal Cancellation & VAD

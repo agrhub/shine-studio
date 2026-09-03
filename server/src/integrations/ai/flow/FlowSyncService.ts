@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { chromium, BrowserContext, Browser } from 'playwright';
-import { AIAccount, AIAccountStatus, AIAccountType, IAIAccount, getDatabaseProvider } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { AIAccountStatus, AIAccountType, IAIAccount } from '~/types.js';
 import { Logger } from '@/utils/logger.js';
 
 export class FlowSyncService {

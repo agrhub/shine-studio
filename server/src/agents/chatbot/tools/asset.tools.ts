@@ -5,7 +5,7 @@ import { Logger } from '@/utils/logger.js';
 import { AssetService } from '@/services/AssetService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
-import type { LocationAsset, PropAsset, SceneEntity } from '@/types.js';
+import type { LocationAsset, PropAsset, SceneEntity, EpisodeEntity, AssetJobItem } from '@/types.js';
 
 export class AssetToolExecutors {
   /**
@@ -18,18 +18,19 @@ export class AssetToolExecutors {
     locationName?: string;
     locationId?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
       const series = await db.getSeriesById(params.seriesId);
       if (!series) return { success: false, message: `Series ${params.seriesId} not found` };
 
-      let episode: any = null;
+      let episode: EpisodeEntity | null = null;
       if (params.episodeId) {
         episode = await db.getEpisodeById(params.episodeId);
       }
 
-      const allLocations = (episode?.locations?.length ? episode.locations : series?.locations || []) as any[];
+      const allLocations: LocationAsset[] = (series?.locations || []) as LocationAsset[];
       if (allLocations.length === 0) {
         return { success: false, message: `Series "${series.title}" has no locations defined.` };
       }
@@ -45,12 +46,26 @@ export class AssetToolExecutors {
         if (found.length > 0) targets = found;
       }
 
-      const results: any[] = [];
-      const updatedLocations = [...allLocations];
+      const results: Array<{ name: string; status: string; image_url?: string }> = [];
+      const updatedLocations: LocationAsset[] = [...allLocations];
 
       for (const loc of targets) {
-        if (!params.forceRegenerate && (loc.image_url || loc.image)) {
-          results.push({ name: loc.name, status: 'already_exists', image_url: loc.image_url || loc.image });
+        const existingUrl = loc.image_url;
+        if (!params.forceRegenerate && existingUrl) {
+          results.push({ name: loc.name, status: 'already_exists', image_url: existingUrl });
+          await params.onItemProgress?.({
+            asset: {
+              id: loc.id,
+              name: `Location: ${loc.name}`,
+              type: 'location',
+              status: 'completed',
+              url: existingUrl,
+              thumbnail: existingUrl,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Location: ${loc.name} (Ready)`,
+          });
           continue;
         }
 
@@ -60,7 +75,7 @@ export class AssetToolExecutors {
             episode_id: params.episodeId,
             location_id: loc.id,
             name: loc.name,
-            physical_characteristics: loc.physical_characteristics || loc.description,
+            physical_characteristics: loc.physical_characteristics,
             time_of_day: loc.time_of_day,
             visual_style: series.visual_style,
             user_id: params.userId,
@@ -73,6 +88,20 @@ export class AssetToolExecutors {
         }
 
         results.push({ name: loc.name, status: 'generated', image_url: result.image_url });
+
+        await params.onItemProgress?.({
+          asset: {
+            id: loc.id,
+            name: `Location: ${loc.name}`,
+            type: 'location',
+            status: 'completed',
+            url: result.image_url,
+            thumbnail: result.image_url,
+          },
+          current: results.length,
+          total: targets.length,
+          description: `Generated Location: ${loc.name}`,
+        });
       }
 
       await db.updateSeries(params.seriesId, { locations: updatedLocations });
@@ -99,18 +128,19 @@ export class AssetToolExecutors {
     propName?: string;
     propId?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
       const series = await db.getSeriesById(params.seriesId);
       if (!series) return { success: false, message: `Series ${params.seriesId} not found` };
 
-      let episode: any = null;
+      let episode: EpisodeEntity | null = null;
       if (params.episodeId) {
         episode = await db.getEpisodeById(params.episodeId);
       }
 
-      const allProps = (episode?.props?.length ? episode.props : series?.props || []) as any[];
+      const allProps: PropAsset[] = (series?.props || []) as PropAsset[];
       if (allProps.length === 0) {
         return { success: false, message: `Series "${series.title}" has no props defined.` };
       }
@@ -124,12 +154,26 @@ export class AssetToolExecutors {
         if (found.length > 0) targets = found;
       }
 
-      const results: any[] = [];
-      const updatedProps = [...allProps];
+      const results: Array<{ name: string; status: string; image_url?: string }> = [];
+      const updatedProps: PropAsset[] = [...allProps];
 
       for (const prop of targets) {
-        if (!params.forceRegenerate && (prop.image_url || prop.image)) {
-          results.push({ name: prop.name, status: 'already_exists', image_url: prop.image_url || prop.image });
+        const existingUrl = prop.image_url;
+        if (!params.forceRegenerate && existingUrl) {
+          results.push({ name: prop.name, status: 'already_exists', image_url: existingUrl });
+          await params.onItemProgress?.({
+            asset: {
+              id: prop.id,
+              name: `Prop: ${prop.name}`,
+              type: 'prop',
+              status: 'completed',
+              url: existingUrl,
+              thumbnail: existingUrl,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Prop: ${prop.name} (Ready)`,
+          });
           continue;
         }
 
@@ -139,7 +183,7 @@ export class AssetToolExecutors {
             episode_id: params.episodeId,
             prop_id: prop.id,
             name: prop.name,
-            physical_characteristics: prop.physical_characteristics || prop.description,
+            physical_characteristics: prop.physical_characteristics,
             owner: prop.owner,
             visual_style: series.visual_style,
             user_id: params.userId,
@@ -152,6 +196,20 @@ export class AssetToolExecutors {
         }
 
         results.push({ name: prop.name, status: 'generated', image_url: result.image_url });
+
+        await params.onItemProgress?.({
+          asset: {
+            id: prop.id,
+            name: `Prop: ${prop.name}`,
+            type: 'prop',
+            status: 'completed',
+            url: result.image_url,
+            thumbnail: result.image_url,
+          },
+          current: results.length,
+          total: targets.length,
+          description: `Generated Prop: ${prop.name}`,
+        });
       }
 
       await db.updateSeries(params.seriesId, { props: updatedProps });
@@ -173,9 +231,10 @@ export class AssetToolExecutors {
     seriesId: string;
     episodeId: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
-    try{
-      const { userId, seriesId, episodeId, forceRegenerate } = params;
+    try {
+      const { userId, seriesId, episodeId, forceRegenerate, onItemProgress } = params;
       if (!userId) {
         return { success: false, message: 'User ID is required' };
       }
@@ -193,7 +252,7 @@ export class AssetToolExecutors {
       if (!series) return { success: false, message: `Series ${seriesId} not found` };
       if (!episode) return { success: false, message: `Episode ${episodeId} not found` };
 
-      const scenes = (episode.scenes || []) as any[];
+      const scenes: SceneEntity[] = (episode.scenes || []) as SceneEntity[];
       if (scenes.length === 0) {
         return { success: false, message: 'Episode has no scenes' };
       }
@@ -203,6 +262,7 @@ export class AssetToolExecutors {
         seriesId,
         episodeId,
         forceRegenerate,
+        onItemProgress,
       });
 
       return res;
@@ -222,6 +282,7 @@ export class AssetToolExecutors {
     shotIndex?: number;
     visualPrompt?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -231,48 +292,112 @@ export class AssetToolExecutors {
       const episode = await db.getEpisodeById(params.episodeId);
       if (!episode) return { success: false, message: `Episode ${params.episodeId} not found` };
 
-      const scenes = (episode.scenes || []) as any[];
+      const scenes: SceneEntity[] = (episode.scenes || []) as SceneEntity[];
       if (scenes.length === 0) {
         return { success: false, message: `Episode "${episode.title}" has no scenes to generate storyboards for.` };
       }
 
       let targets = scenes;
       if (params.sceneIndex !== undefined) {
-        targets = scenes.filter((s: any) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
+        targets = scenes.filter((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
         if (targets.length === 0) {
           return { success: false, message: `Scene #${params.sceneIndex} not found in Episode "${episode.title}".` };
         }
       }
 
-      const results: any[] = [];
-      const updatedScenes = [...scenes];
+      const results: Array<{ sceneIndex: number; status: string; image_url?: string; error?: string }> = [];
+      const updatedScenes: SceneEntity[] = [...scenes];
+      let hasFailures = false;
+      const failureReasons: string[] = [];
 
       for (const sc of targets) {
         const scIndex = Number(sc.index || sc.scene_number);
-        if (!params.forceRegenerate && (sc.storyboard_frame_url || sc.image_url)) {
-          results.push({ sceneIndex: scIndex, status: 'already_exists', image_url: sc.storyboard_frame_url || sc.image_url });
+        const existingUrl = sc.storyboard_frame_url || sc.image_url;
+        if (!params.forceRegenerate && existingUrl) {
+          results.push({ sceneIndex: scIndex, status: 'already_exists', image_url: existingUrl });
+          await params.onItemProgress?.({
+            asset: {
+              id: `sb_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Storyboard`,
+              type: 'storyboard',
+              status: 'completed',
+              url: existingUrl,
+              thumbnail: existingUrl,
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Scene #${scIndex} Storyboard (Ready)`,
+          });
           continue;
         }
 
-        const { result } = await executeWithRetry(`Generate Storyboard Frame for Scene #${scIndex}`, async () => {
-          return await AssetService.generateStoryboardShot({
-            series_id: params.seriesId,
-            episode_id: params.episodeId,
-            scene_index: scIndex,
-            visual_prompt: params.visualPrompt,
-            user_id: params.userId,
+        try {
+          const { result } = await executeWithRetry(`Generate Storyboard Frame for Scene #${scIndex}`, async () => {
+            return await AssetService.generateStoryboardShot({
+              series_id: params.seriesId,
+              episode_id: params.episodeId,
+              scene_index: scIndex,
+              visual_prompt: params.visualPrompt,
+              user_id: params.userId,
+            });
           });
-        });
 
-        const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
-        if (idx >= 0) {
-          updatedScenes[idx] = result.scene;
+          if (!result?.image_url) {
+            throw new Error(`AI generated an empty storyboard image URL for scene #${scIndex}`);
+          }
+
+          const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
+          if (idx >= 0 && result.scene) {
+            updatedScenes[idx] = result.scene;
+          }
+
+          results.push({ sceneIndex: scIndex, status: 'generated', image_url: result.image_url });
+
+          await params.onItemProgress?.({
+            asset: {
+              id: `sb_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Storyboard`,
+              type: 'storyboard',
+              status: 'completed',
+              url: result.image_url,
+              thumbnail: result.image_url,
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Generated Storyboard for Scene #${scIndex}`,
+          });
+        } catch (scErr: any) {
+          hasFailures = true;
+          failureReasons.push(`Scene #${scIndex}: ${scErr.message}`);
+          Logger.error(`[AssetTools] Failed to generate storyboard for Scene #${scIndex}: ${scErr.message}`);
+          results.push({ sceneIndex: scIndex, status: 'failed', error: scErr.message });
+          await params.onItemProgress?.({
+            asset: {
+              id: `sb_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Storyboard`,
+              type: 'storyboard',
+              status: 'failed',
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Failed Scene #${scIndex} Storyboard: ${scErr.message}`,
+          });
         }
-
-        results.push({ sceneIndex: scIndex, status: 'generated', image_url: result.image_url });
       }
 
+      // Persist any scenes that succeeded into database
       await db.updateEpisode(params.episodeId, { scenes: updatedScenes });
+
+      if (hasFailures) {
+        return {
+          success: false,
+          message: `Storyboard generation failed for some scenes: ${failureReasons.join('; ')}`,
+          data: { episode_id: params.episodeId, scenes: updatedScenes, details: results },
+        };
+      }
 
       const generatedCount = results.filter((r) => r.status === 'generated').length;
       return {

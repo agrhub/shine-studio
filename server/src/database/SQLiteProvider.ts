@@ -4,21 +4,24 @@ import Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import {
   IDatabaseProvider,
+} from './IDatabaseProvider.js';
+import {
   UserEntity,
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
   CreditTransactionEntity,
+  AssetEntity,
   WorkerHeartbeatEntity,
   WorkerJobEntity,
   ClusterMetricsSummary,
+  IProject,
   TimelineSnapshotVersion,
   TimelineSnapshotHistoryItem,
   RestoreTimelineResult,
-  AssetEntity,
-  PipelineJobEntity,
-  IProject,
-} from './IDatabaseProvider.js';
+  ChatMessageEntity,
+  SocialAccountEntity,
+} from '~/types.js';
 import { normalizePureTimeline } from '../utils/timeline.js';
 
 export class SQLiteProvider implements IDatabaseProvider {
@@ -28,6 +31,7 @@ export class SQLiteProvider implements IDatabaseProvider {
   // In-memory fallback stores if native bindings are unavailable
   private usersStore: UserEntity[] = [];
   private creditTxStore: CreditTransactionEntity[] = [];
+  private chatMessagesStore: ChatMessageEntity[] = [];
   private seriesStore: SeriesEntity[] = [];
   private episodesStore: EpisodeEntity[] = [];
   private flowStore: FlowAccountEntity[] = [];
@@ -109,6 +113,23 @@ export class SQLiteProvider implements IDatabaseProvider {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(series_id) REFERENCES series(id)
         );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          scope TEXT DEFAULT 'global',
+          series_id TEXT,
+          episode_id TEXT,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tool_calls TEXT,
+          suggestions TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          timestamp INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_user_session ON chat_messages(user_id, session_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
 
         CREATE TABLE IF NOT EXISTS flow_accounts (
           id TEXT PRIMARY KEY,
@@ -342,13 +363,68 @@ export class SQLiteProvider implements IDatabaseProvider {
     return this.mapUserRow(row);
   }
 
-  async getUsers(): Promise<UserEntity[]> {
-    if (this.isFallback) return [...this.usersStore];
+  async getUsers(filter?: {
+    search?: string;
+    tier?: string;
+    role?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ users: UserEntity[]; total: number }> {
+    let list: UserEntity[] = [];
+    if (this.isFallback) {
+      list = [...this.usersStore];
+    } else {
+      try {
+        const rows = this.db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as any[];
+        list = rows.map((r) => this.mapUserRow(r)!).filter(Boolean);
+      } catch {
+        list = [];
+      }
+    }
+
+    if (filter?.search) {
+      const q = filter.search.toLowerCase().trim();
+      list = list.filter(u =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.id && u.id.toLowerCase().includes(q))
+      );
+    }
+    if (filter?.tier) {
+      const t = filter.tier.toLowerCase().trim();
+      list = list.filter(u => (u.tier || 'FREE').toLowerCase() === t);
+    }
+    if (filter?.role) {
+      const r = filter.role.toLowerCase().trim();
+      list = list.filter(u => (u.role || 'user').toLowerCase() === r);
+    }
+    if (filter?.status) {
+      const s = filter.status.toLowerCase().trim();
+      list = list.filter(u => {
+        const userStatus = (u.status || (u.is_active === false ? 'locked' : 'active')).toLowerCase();
+        return userStatus === s;
+      });
+    }
+
+    const total = list.length;
+    const offset = filter?.offset || 0;
+    const limit = filter?.limit || 20;
+    const paginated = list.slice(offset, offset + limit);
+
+    return { users: paginated, total };
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    if (this.isFallback) {
+      this.usersStore = this.usersStore.filter(u => u.id !== userId);
+      return true;
+    }
     try {
-      const rows = this.db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as any[];
-      return rows.map((r) => this.mapUserRow(r)!).filter(Boolean);
+      this.db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+      return true;
     } catch {
-      return [];
+      return false;
     }
   }
 
@@ -430,6 +506,148 @@ export class SQLiteProvider implements IDatabaseProvider {
     return (await this.getUserById(user.id)) || user;
   }
 
+  // ==================== Chat History & Session Messages ====================
+  async saveChatMessage(message: ChatMessageEntity): Promise<ChatMessageEntity> {
+    const msgId = message.id || `msg_${Date.now()}_${nanoid(6)}`;
+    const entity: ChatMessageEntity = {
+      ...message,
+      id: msgId,
+      created_at: message.created_at || new Date().toISOString(),
+      timestamp: message.timestamp || Date.now(),
+    };
+
+    if (this.isFallback) {
+      this.chatMessagesStore.push(entity);
+      return entity;
+    }
+
+    try {
+      this.db.prepare(`
+        INSERT INTO chat_messages (id, user_id, session_id, scope, series_id, episode_id, role, content, tool_calls, suggestions, created_at, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          content = excluded.content,
+          tool_calls = excluded.tool_calls,
+          suggestions = excluded.suggestions
+      `).run(
+        entity.id,
+        entity.user_id,
+        entity.session_id,
+        entity.scope || 'global',
+        entity.series_id || null,
+        entity.episode_id || null,
+        entity.role,
+        entity.content,
+        entity.tool_calls ? JSON.stringify(entity.tool_calls) : null,
+        entity.suggestions ? JSON.stringify(entity.suggestions) : null,
+        entity.created_at,
+        entity.timestamp
+      );
+    } catch (e: any) {
+      console.warn('[SQLiteProvider] Error saving chat message:', e.message);
+    }
+
+    return entity;
+  }
+
+  async saveChatMessages(messages: ChatMessageEntity[]): Promise<void> {
+    if (!messages || messages.length === 0) return;
+    for (const msg of messages) {
+      await this.saveChatMessage(msg);
+    }
+  }
+
+  async getChatMessages(filter: {
+    userId: string;
+    sessionId?: string;
+    seriesId?: string;
+    episodeId?: string;
+    scope?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ messages: ChatMessageEntity[]; total: number }> {
+    if (this.isFallback) {
+      let list = this.chatMessagesStore.filter(m => m.user_id === filter.userId);
+      if (filter.sessionId) list = list.filter(m => m.session_id === filter.sessionId);
+      if (filter.seriesId) list = list.filter(m => m.series_id === filter.seriesId);
+      if (filter.episodeId) list = list.filter(m => m.episode_id === filter.episodeId);
+      if (filter.scope) list = list.filter(m => m.scope === filter.scope);
+
+      list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      const total = list.length;
+      const limit = filter.limit && filter.limit > 0 ? filter.limit : 50;
+      const offset = filter.offset || 0;
+      const paginated = offset > 0 ? list.slice(offset, offset + limit) : list.slice(Math.max(0, total - limit));
+      return { messages: paginated, total };
+    }
+
+    try {
+      let sql = 'SELECT * FROM chat_messages WHERE user_id = ?';
+      const params: any[] = [filter.userId];
+
+      if (filter.sessionId) {
+        sql += ' AND session_id = ?';
+        params.push(filter.sessionId);
+      }
+      if (filter.seriesId) {
+        sql += ' AND series_id = ?';
+        params.push(filter.seriesId);
+      }
+      if (filter.episodeId) {
+        sql += ' AND episode_id = ?';
+        params.push(filter.episodeId);
+      }
+      if (filter.scope) {
+        sql += ' AND scope = ?';
+        params.push(filter.scope);
+      }
+
+      sql += ' ORDER BY timestamp ASC';
+
+      const rows = this.db.prepare(sql).all(...params) as any[];
+      const total = rows.length;
+      const limit = filter.limit && filter.limit > 0 ? filter.limit : 50;
+      const offset = filter.offset || 0;
+
+      const sliceRows = offset > 0 ? rows.slice(offset, offset + limit) : rows.slice(Math.max(0, total - limit));
+
+      const messages: ChatMessageEntity[] = sliceRows.map(r => ({
+        id: r.id,
+        user_id: r.user_id,
+        session_id: r.session_id,
+        scope: r.scope || 'global',
+        series_id: r.series_id || undefined,
+        episode_id: r.episode_id || undefined,
+        role: r.role,
+        content: r.content,
+        tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : undefined,
+        suggestions: r.suggestions ? JSON.parse(r.suggestions) : undefined,
+        created_at: r.created_at,
+        timestamp: Number(r.timestamp || 0),
+      }));
+
+      return { messages, total };
+    } catch (e: any) {
+      console.warn('[SQLiteProvider] Error fetching chat messages:', e.message);
+      return { messages: [], total: 0 };
+    }
+  }
+
+  async deleteChatSession(userId: string, sessionId: string): Promise<boolean> {
+    if (this.isFallback) {
+      this.chatMessagesStore = this.chatMessagesStore.filter(
+        m => !(m.user_id === userId && m.session_id === sessionId)
+      );
+      return true;
+    }
+    try {
+      this.db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND session_id = ?').run(userId, sessionId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async deductCredits(userId: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
     const user = await this.getUserById(userId);
     if (!user) {
@@ -499,6 +717,15 @@ export class SQLiteProvider implements IDatabaseProvider {
   }
 
   async createSeries(series: SeriesEntity): Promise<SeriesEntity> {
+    if (!series.user_id) {
+      throw new Error('user_id is required to create a series');
+    }
+    if (!series.title) {
+      throw new Error('title is required to create a series');
+    }
+    if (series.id === 'global' || series.id?.startsWith('wiz_') || series.id?.startsWith('temp_')) {
+      throw new Error('Cannot persist temporary or global session as database series');
+    }
     if (this.isFallback) {
       this.seriesStore.push(series);
       return series;
@@ -541,21 +768,17 @@ export class SQLiteProvider implements IDatabaseProvider {
     if (typeof masterPlan === 'string') {
       try { masterPlan = JSON.parse(masterPlan); } catch {}
     }
-    let chatHistory = row.chat_history;
-    if (typeof chatHistory === 'string') {
-      try { chatHistory = JSON.parse(chatHistory); } catch {}
-    }
     return {
       ...row,
       characters: Array.isArray(characters) ? characters : [],
       locations: Array.isArray(locations) ? locations : [],
       props: Array.isArray(props) ? props : [],
       master_plan: masterPlan || undefined,
-      chat_history: Array.isArray(chatHistory) ? chatHistory : [],
     };
   }
 
   async getSeriesById(id: string): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     if (this.isFallback) {
       return this.seriesStore.find((s) => s.id === id) || null;
     }
@@ -565,7 +788,7 @@ export class SQLiteProvider implements IDatabaseProvider {
 
   async getSeriesList(userId?: string, search?: string, status?: string): Promise<SeriesEntity[]> {
     if (this.isFallback) {
-      let res = [...this.seriesStore];
+      let res = this.seriesStore.filter(s => s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
       if (search) res = res.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
       if (status) res = res.filter((s) => s.status === status);
       return res;
@@ -586,10 +809,13 @@ export class SQLiteProvider implements IDatabaseProvider {
     }
     query += ' ORDER BY created_at DESC';
     const rows = this.db.prepare(query).all(...params) as any[];
-    return rows.map(r => this.formatSeriesRow(r)!).filter(Boolean);
+    return rows
+      .map(r => this.formatSeriesRow(r)!)
+      .filter(s => s && s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
   }
 
   async updateSeries(id: string, updates: Partial<SeriesEntity>): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     if (this.isFallback) {
       const idx = this.seriesStore.findIndex(s => s.id === id);
       if (idx >= 0) {
@@ -616,14 +842,28 @@ export class SQLiteProvider implements IDatabaseProvider {
 
   async deleteSeries(id: string): Promise<boolean> {
     if (this.isFallback) {
+      const epIds = this.episodesStore.filter(e => e.series_id === id).map(e => e.id);
+      this.timelineSnapshotsStore = this.timelineSnapshotsStore.filter(s => !epIds.includes(s.episode_id));
+      this.chatMessagesStore = this.chatMessagesStore.filter(m => m.series_id !== id);
       this.episodesStore = this.episodesStore.filter(e => e.series_id !== id);
       const prevLen = this.seriesStore.length;
       this.seriesStore = this.seriesStore.filter(s => s.id !== id);
       return this.seriesStore.length < prevLen;
     }
-    this.db.prepare('DELETE FROM episodes WHERE series_id = ?').run(id);
-    const res = this.db.prepare('DELETE FROM series WHERE id = ?').run(id);
-    return res.changes > 0;
+    try {
+      const episodes = this.db.prepare('SELECT id FROM episodes WHERE series_id = ?').all(id) as any[];
+      for (const ep of episodes) {
+        this.db.prepare('DELETE FROM timeline_snapshots WHERE episode_id = ?').run(ep.id);
+      }
+      this.db.prepare('DELETE FROM episodes WHERE series_id = ?').run(id);
+      this.db.prepare('DELETE FROM chat_messages WHERE series_id = ?').run(id);
+      this.db.prepare('DELETE FROM assets WHERE series_id = ?').run(id);
+      this.db.prepare('DELETE FROM pipeline_jobs WHERE series_id = ?').run(id);
+      const res = this.db.prepare('DELETE FROM series WHERE id = ?').run(id);
+      return res.changes > 0;
+    } catch {
+      return false;
+    }
   }
 
   private formatEpisodeRow(row: any): EpisodeEntity {
@@ -776,6 +1016,27 @@ export class SQLiteProvider implements IDatabaseProvider {
     return this.getEpisodeById(id);
   }
 
+  async deleteEpisode(id: string): Promise<boolean> {
+    if (this.isFallback) {
+      this.timelineSnapshotsStore = this.timelineSnapshotsStore.filter(s => s.episode_id !== id);
+      this.chatMessagesStore = this.chatMessagesStore.filter(m => m.episode_id !== id);
+      this.assetsStore = this.assetsStore.filter(a => a.episode_id !== id && (a as any).episodeId !== id);
+      const prevLen = this.episodesStore.length;
+      this.episodesStore = this.episodesStore.filter(e => e.id !== id);
+      return this.episodesStore.length < prevLen;
+    }
+    try {
+      this.db.prepare('DELETE FROM timeline_snapshots WHERE episode_id = ?').run(id);
+      this.db.prepare('DELETE FROM chat_messages WHERE episode_id = ?').run(id);
+      this.db.prepare('DELETE FROM pipeline_jobs WHERE episode_id = ?').run(id);
+      this.assetsStore = this.assetsStore.filter(a => a.episode_id !== id && (a as any).episodeId !== id);
+      const res = this.db.prepare('DELETE FROM episodes WHERE id = ?').run(id);
+      return res.changes > 0;
+    } catch {
+      return false;
+    }
+  }
+
   async getFlowAccounts(status?: string): Promise<FlowAccountEntity[]> {
     let list: FlowAccountEntity[] = [];
     if (this.isFallback) {
@@ -857,6 +1118,14 @@ export class SQLiteProvider implements IDatabaseProvider {
         timeline_data: serializedData,
         created_at: now,
       });
+
+      // Prune fallback snapshots to max 20 per episode
+      const epSnaps = this.timelineSnapshotsStore.filter(s => s.episode_id === episode_id);
+      if (epSnaps.length > 20) {
+        const excess = epSnaps.slice(20).map(s => s.id);
+        this.timelineSnapshotsStore = this.timelineSnapshotsStore.filter(s => !excess.includes(s.id));
+      }
+
       return { version_id, version_number, updated_at: now };
     }
 
@@ -875,6 +1144,16 @@ export class SQLiteProvider implements IDatabaseProvider {
       serializedData,
       now
     );
+
+    // Prune sqlite database snapshots to keep only top 20 latest versions
+    try {
+      this.db.prepare(`
+        DELETE FROM timeline_snapshots 
+        WHERE episode_id = ? AND id NOT IN (
+          SELECT id FROM timeline_snapshots WHERE episode_id = ? ORDER BY version_number DESC LIMIT 20
+        )
+      `).run(episode_id, episode_id);
+    } catch {}
 
     return { version_id, version_number, updated_at: now };
   }
@@ -1017,17 +1296,29 @@ export class SQLiteProvider implements IDatabaseProvider {
     }
   }
 
-  async getAssets(filter?: { userId?: string; seriesId?: string; type?: string; characterId?: string; search?: string }): Promise<any[]> {
+  async getAssets(filter?: { userId?: string; user_id?: string; seriesId?: string; series_id?: string; episodeId?: string; episode_id?: string; sceneId?: string; scene_id?: string; type?: string; characterId?: string; character_id?: string; search?: string }): Promise<any[]> {
     let filtered = [...this.assetsStore];
-    if (filter?.userId) filtered = filtered.filter(a => a.userId === filter.userId || a.user_id === filter.userId);
-    if (filter?.seriesId) filtered = filtered.filter(a => a.seriesId === filter.seriesId);
+    const uId = filter?.userId || filter?.user_id;
+    if (uId) filtered = filtered.filter(a => a.userId === uId || a.user_id === uId);
+    const sId = filter?.seriesId || filter?.series_id;
+    if (sId) filtered = filtered.filter(a => a.seriesId === sId || a.series_id === sId);
+    const epId = filter?.episodeId || filter?.episode_id;
+    if (epId) filtered = filtered.filter(a => (a as any).episodeId === epId || a.episode_id === epId);
+    const scId = filter?.sceneId || filter?.scene_id;
+    if (scId) filtered = filtered.filter(a => (a as any).sceneId === scId || a.scene_id === scId);
     if (filter?.type && filter.type !== 'all') filtered = filtered.filter(a => a.type?.toLowerCase() === filter.type?.toLowerCase());
-    if (filter?.characterId) filtered = filtered.filter(a => a.characterId === filter.characterId);
+    const cId = filter?.characterId || filter?.character_id;
+    if (cId) filtered = filtered.filter(a => a.characterId === cId || a.character_id === cId);
     if (filter?.search) {
       const q = filter.search.toLowerCase();
       filtered = filtered.filter(a => a.name?.toLowerCase().includes(q) || a.categoryLabel?.toLowerCase().includes(q) || a.prompt?.toLowerCase().includes(q));
     }
     return filtered;
+  }
+
+  async getAssetById(id: string): Promise<AssetEntity | null> {
+    const a = this.assetsStore.find(item => item.id === id);
+    return a ? { ...a } : null;
   }
 
   async deleteAsset(id: string): Promise<boolean> {
@@ -1206,12 +1497,16 @@ export class SQLiteProvider implements IDatabaseProvider {
     }
   }
 
-  async getPipelineJobs(filter?: { userId?: string; seriesId?: string; episodeId?: string; status?: string; limit?: number }): Promise<any[]> {
+  async getPipelineJobs(filter?: { userId?: string; user_id?: string; seriesId?: string; series_id?: string; episodeId?: string; episode_id?: string; status?: string; limit?: number }): Promise<any[]> {
+    const uid = filter?.userId || filter?.user_id;
+    const sid = filter?.seriesId || filter?.series_id;
+    const eid = filter?.episodeId || filter?.episode_id;
+
     if (this.isFallback || !this.db) {
       let list = Array.from(this.pipelineJobsStore.values());
-      if (filter?.userId) list = list.filter(j => j.user_id === filter.userId);
-      if (filter?.seriesId) list = list.filter(j => j.series_id === filter.seriesId);
-      if (filter?.episodeId) list = list.filter(j => j.episode_id === filter.episodeId);
+      if (uid) list = list.filter(j => j.user_id === uid);
+      if (sid) list = list.filter(j => j.series_id === sid);
+      if (eid) list = list.filter(j => j.episode_id === eid);
       if (filter?.status) list = list.filter(j => j.status?.toLowerCase() === filter.status?.toLowerCase());
       list.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
       if (filter?.limit) list = list.slice(0, filter.limit);
@@ -1221,9 +1516,9 @@ export class SQLiteProvider implements IDatabaseProvider {
     try {
       const conditions: string[] = [];
       const params: any[] = [];
-      if (filter?.userId) { conditions.push('user_id = ?'); params.push(filter.userId); }
-      if (filter?.seriesId) { conditions.push('series_id = ?'); params.push(filter.seriesId); }
-      if (filter?.episodeId) { conditions.push('episode_id = ?'); params.push(filter.episodeId); }
+      if (uid) { conditions.push('user_id = ?'); params.push(uid); }
+      if (sid) { conditions.push('series_id = ?'); params.push(sid); }
+      if (eid) { conditions.push('episode_id = ?'); params.push(eid); }
       if (filter?.status) { conditions.push('status = ?'); params.push(filter.status); }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1269,5 +1564,75 @@ export class SQLiteProvider implements IDatabaseProvider {
     const jobs = await this.getPipelineJobs({ seriesId, episodeId });
     const active = jobs.find(j => (j.status === 'running' || j.status === 'queued') && (!type || j.type === type));
     return active || null;
+  }
+
+  // ─── Viral Trends Storage & Persistence ───────────────────────────────────
+  private viralTrendsStore: Map<string, { country: string; language: string; items: any[]; updated_at: Date }> = new Map();
+
+  async getViralTrends(country: string, language: string): Promise<{ items: any[]; updated_at: Date } | null> {
+    const key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+    const found = this.viralTrendsStore.get(key);
+    return found ? { items: found.items, updated_at: found.updated_at } : null;
+  }
+
+  async saveViralTrends(country: string, language: string, items: any[]): Promise<void> {
+    const key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+    this.viralTrendsStore.set(key, {
+      country: country.toUpperCase(),
+      language: language.toLowerCase(),
+      items: items || [],
+      updated_at: new Date(),
+    });
+  }
+
+  async getAllCachedViralTrends(): Promise<Array<{ cache_key: string; country: string; language: string; items: any[]; updated_at: Date }>> {
+    return Array.from(this.viralTrendsStore.entries()).map(([cache_key, val]) => ({
+      cache_key,
+      country: val.country,
+      language: val.language,
+      items: val.items,
+      updated_at: val.updated_at,
+    }));
+  }
+
+  // ─── Social Connected Accounts ───────────────────────────────────────────
+  private socialAccountsStore: Map<string, SocialAccountEntity> = new Map();
+
+  async updateSocialAccount(account: Partial<SocialAccountEntity>): Promise<SocialAccountEntity> {
+    const user_id = account.user_id || '';
+    const platform = account.platform || '';
+    const channel_id = account.channel_id || '';
+    const key = `${user_id}_${platform}_${channel_id}`;
+    const existing = this.socialAccountsStore.get(key) || {
+      id: `soc_${nanoid(10)}`,
+      user_id,
+      platform,
+      channel_id,
+      channel_name: account.channel_name || '',
+      access_token: account.access_token || '',
+      created_at: new Date(),
+    };
+    const updated: SocialAccountEntity = {
+      ...existing,
+      ...account,
+      updated_at: new Date(),
+    };
+    this.socialAccountsStore.set(key, updated);
+    return updated;
+  }
+
+  async listSocialAccounts(user_id: string): Promise<SocialAccountEntity[]> {
+    return Array.from(this.socialAccountsStore.values()).filter(a => a.user_id === user_id && a.is_active !== false);
+  }
+
+  async deleteSocialAccount(user_id: string, platform: string, channel_id?: string): Promise<boolean> {
+    let deleted = false;
+    for (const [key, a] of Array.from(this.socialAccountsStore.entries())) {
+      if (a.user_id === user_id && a.platform === platform && (!channel_id || a.channel_id === channel_id)) {
+        this.socialAccountsStore.delete(key);
+        deleted = true;
+      }
+    }
+    return deleted;
   }
 }

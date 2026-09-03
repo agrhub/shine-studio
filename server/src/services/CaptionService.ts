@@ -8,8 +8,8 @@ import { geminiClient } from '@/integrations/ai/gemini/GeminiClient.js';
 import { ttsService } from '@/services/TtsService.js';
 import { DemucsAudioService } from '@/services/DemucsAudioService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
-import { CharacterSeriesEntity, getDatabaseProvider, SceneDialogue, SceneEntity } from '@/database/index.js';
-import { cleanDialogueLine } from '@/utils/captionAlignment.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { TimelineCaptionWord, CharacterSeriesEntity, SceneAudioPipelineResult, SceneDialogue, SceneEntity, SceneCaptionWord, SceneCaptionData } from '@/types.js';
 import { EnvConfig } from '@/config/env.js';
 import { Logger } from '@/utils/logger.js';
 
@@ -17,45 +17,167 @@ if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
 }
 
-export interface DeepgramWord {
-  word: string;
-  start: number;      // Seconds (float, 0-based in the media)
-  end: number;        // Seconds (float, 0-based in the media)
-  confidence?: number;
-  punctuated_word?: string;
-}
-
-export interface CaptionWord {
-  text: string;
-  from: number;       // Milliseconds relative to start of this cue (0 to cueDurationMs)
-  to: number;         // Milliseconds relative to start of this cue
-  isKeyWord?: boolean;
-}
-
-export interface CaptionCue {
-  id: string;
-  text: string;
-  startMs: number;    // Milliseconds from start of video/scene (0-based in the video)
-  endMs: number;      // Milliseconds from start of video/scene
-  fromUs: number;     // Microseconds in the video
-  toUs: number;       // Microseconds in the video
-  durationUs?: number;
-  words: CaptionWord[];
-}
-
-export interface SceneAudioPipelineResult {
-  videoUrl: string;
-  bgmUrl: string;
-  voiceoverUrl: string;
-  voiceId: string;
-  voiceStartUs: number;
-  voiceDurationUs: number;
-  speechOnsetDetected: boolean;
-  words: DeepgramWord[];
-  captionsData: CaptionCue[];
-}
-
 export class CaptionService {
+  /**
+   * Sanitizes dialogue line by stripping character name prefix (e.g. "Trần Minh Quân: ..."), quotes, and stage directions.
+   */
+  public static cleanDialogueLine(rawLine: string, characterName?: string): string {
+    if (!rawLine || typeof rawLine !== 'string') return '';
+    let line = rawLine.trim();
+
+    // 1. Remove specific character name prefix
+    if (characterName && line.toLowerCase().startsWith(characterName.toLowerCase() + ':')) {
+      line = line.slice(characterName.length + 1).trim();
+    }
+
+    // 2. Remove generic "[Speaker Name]: " pattern at start of line
+    line = line.replace(/^[A-ZÀ-Ỹa-zà-ỹ0-9\s._-]{1,35}:\s*/u, '');
+
+    // 3. Remove parenthesized stage directions at beginning e.g. "(crying) Hello"
+    line = line.replace(/^\([^)]*\)\s*/, '').replace(/^\[[^\]]*\]\s*/, '');
+
+    // 4. Remove surrounding quotes
+    line = line.replace(/^["'“](.*)["'”]$/, '$1').trim();
+
+    return line;
+  }
+
+  /**
+   * Translate a list of SceneDialogue objects into target language using Gemini
+   */
+  public static async translateDialogueList(
+    dialogueList: SceneDialogue[],
+    targetLanguage: string
+  ): Promise<SceneDialogue[]> {
+    if (!Array.isArray(dialogueList) || dialogueList.length === 0) return [];
+    try {
+      const cleanedInput = dialogueList.map(d => ({
+        character: d.character || 'Character',
+        emotion: d.emotion || 'Dramatic',
+        line: CaptionService.cleanDialogueLine(d.line || (d as any).text || '', d.character),
+        speech_tone: d.speech_tone || (d as any).speechTone || 'Standard',
+      }));
+
+      const prompt = `You are a professional cinematic localization translator for micro-dramas.
+Translate the following dialogue lines into language code/name: "${targetLanguage}".
+Ensure punchy, natural acting delivery while preserving character emotions, tone, and sentence rhythm.
+DO NOT prepend character names into the "line" field.
+
+Input Dialogue:
+${JSON.stringify(cleanedInput, null, 2)}
+
+Respond with a JSON array where each object has:
+- character: string
+- emotion: string
+- line: string (translated line in ${targetLanguage}, containing ONLY spoken dialogue)
+- speech_tone: string`;
+
+      const raw = await geminiClient.generateText({
+        prompt,
+        systemInstruction: 'You are an expert film dialogue localization translator. Return ONLY a valid JSON array of SceneDialogue objects without character name prefixes in the line property.',
+        jsonMode: true,
+      });
+
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : (parsed.dialogue || parsed.translations || []);
+      if (Array.isArray(list) && list.length > 0) {
+        return list.map((d: any, idx: number) => {
+          const charName = String(d.character || dialogueList[idx]?.character || 'Character').trim();
+          const rawTranslated = String(d.line || d.text || dialogueList[idx]?.line || '').trim();
+          return {
+            character: charName,
+            emotion: String(d.emotion || dialogueList[idx]?.emotion || 'Dramatic').trim(),
+            line: CaptionService.cleanDialogueLine(rawTranslated, charName),
+            speech_tone: String(d.speech_tone || d.speechTone || dialogueList[idx]?.speech_tone || 'Standard').trim(),
+          };
+        });
+      }
+    } catch (err: any) {
+      Logger.warn(`[CaptionService.translateDialogueList] Gemini translation to ${targetLanguage} failed: ${err.message}. Using original lines.`);
+    }
+    return dialogueList.map(d => ({
+      ...d,
+      line: CaptionService.cleanDialogueLine(d.line || (d as any).text || '', d.character),
+    }));
+  }
+
+  /**
+   * Builds word-by-word timestamps and multi-word kinetic caption cues from dialogue.
+   * Leverages groupWordsIntoCues for unified cue partitioning.
+   */
+  public static buildWordLevelCaptionsFromDialogue(
+    dialogueList: SceneDialogue[],
+    durSec: number,
+    startSecOverride = 0.5
+  ): {
+    voice_start_us: number;
+    voice_duration_us: number;
+    captions_data: SceneCaptionData[];
+    words: SceneCaptionWord[];
+  } {
+    if (!Array.isArray(dialogueList) || dialogueList.length === 0) {
+      return {
+        voice_start_us: 0,
+        voice_duration_us: 0,
+        captions_data: [],
+        words: [],
+      };
+    }
+
+    const firstCharacter = dialogueList[0]?.character || '';
+    const fullLine = dialogueList
+      .map(d => CaptionService.cleanDialogueLine(d.line || (d as any).text || '', d.character))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    if (!fullLine) {
+      return {
+        voice_start_us: 0,
+        voice_duration_us: 0,
+        captions_data: [],
+        words: [],
+      };
+    }
+
+    const lineWords = fullLine.split(/\s+/).filter(Boolean);
+    const startSec = Math.max(0.1, Number(startSecOverride) || 0.5);
+    const estimatedDurSec = Math.max(1.0, Math.min(Math.max(1.0, durSec - startSec - 0.2), lineWords.length * 0.32));
+    const endSec = startSec + estimatedDurSec;
+    const voiceDurSec = Math.max(0.8, endSec - startSec);
+
+    const voice_start_us = Math.round(startSec * 1_000_000);
+    const voice_duration_us = Math.round(voiceDurSec * 1_000_000);
+
+    // 1. Build word-by-word absolute timestamps
+    const totalChars = lineWords.reduce((sum, w) => sum + w.length, 0) || 1;
+    let curSec = startSec;
+    const words: SceneCaptionWord[] = lineWords.map((wordStr) => {
+      const cleanWord = wordStr.toLowerCase().replace(/[.,!?;:"'()]/g, '');
+      const wWeight = Math.max(0.08, wordStr.length / totalChars);
+      const wDur = Math.max(0.15, voiceDurSec * wWeight);
+      const wStart = Math.round(curSec * 1000) / 1000;
+      const wEnd = Math.round(Math.min(endSec, wStart + wDur) * 1000) / 1000;
+      curSec = wEnd;
+      return {
+        word: cleanWord,
+        punctuated_word: wordStr,
+        start: wStart,
+        end: wEnd,
+        confidence: 0.99,
+      };
+    });
+
+    // 2. Reuse groupWordsIntoCues to produce standard captions_data without duplicate logic
+    const captions_data = CaptionService.groupWordsIntoCues(words, firstCharacter);
+
+    return {
+      voice_start_us,
+      voice_duration_us,
+      captions_data,
+      words,
+    };
+  }
   /**
    * Fast FFmpeg extraction of compressed 64kbps mono MP3 audio from a video buffer.
    * Reduces payload from 15-25MB down to ~80-150KB for instant Gemini processing.
@@ -155,14 +277,14 @@ export class CaptionService {
     dialogue?: any[];
     language?: string;
     durationSeconds?: number;
-  }): Promise<{ words: DeepgramWord[]; cues: CaptionCue[]; speechStartUs: number; speechEndUs: number; hasSpeechActivity: boolean }> {
+  }): Promise<{ words: SceneCaptionWord[]; captions_data: SceneCaptionData[]; speech_start_us: number; speech_end_us: number; has_speech_activity: boolean }> {
     const { videoUrl, dialogue = [], language = 'en-US', durationSeconds = 6 } = params;
 
     const fullText = Array.isArray(dialogue)
-      ? dialogue.map((d: any) => cleanDialogueLine(d.line || d.text || '', d.character)).filter(Boolean).join(' ')
+      ? dialogue.map((d: any) => CaptionService.cleanDialogueLine(d.line || d.text || '', d.character)).filter(Boolean).join(' ')
       : '';
 
-    const { buffer, mimeType } = await this.fetchMediaBuffer(videoUrl);
+    const { buffer, mimeType } = await this.fetchMediaBuffer(videoUrl, true);
 
     if (!buffer || buffer.length === 0) {
       throw new Error(`[CaptionService] Cannot fetch audio/video buffer from: ${videoUrl}`);
@@ -183,8 +305,8 @@ Rules for Output:
 
 Respond with ONLY a JSON object matching this schema:
 {
-  "speechStart": 0.40,
-  "speechEnd": 2.42,
+  "speech_start": 0.40,
+  "speech_end": 2.42,
   "words": [
     { "word": "you've", "punctuated_word": "You've", "start": 0.40, "end": 1.04, "confidence": 0.98 },
     { "word": "got", "punctuated_word": "got", "start": 1.04, "end": 1.28, "confidence": 1.0 },
@@ -197,7 +319,7 @@ Respond with ONLY a JSON object matching this schema:
       {
         inlineData: {
           data: buffer.toString('base64'),
-          mimeType,
+          mimeType: mimeType || 'audio/mp3',
         },
       },
       {
@@ -235,40 +357,41 @@ Respond with ONLY a JSON object matching this schema:
       throw new Error(`Gemini Multimodal returned invalid JSON: ${raw.slice(0, 300)}`);
     }
 
-    const rawWords: any[] = Array.isArray(parsed) ? parsed : (parsed?.words || parsed?.results?.words || []);
+    const rawWords: SceneCaptionWord[] = Array.isArray(parsed) ? parsed : (parsed?.words || parsed?.results?.words || []);
 
     if (rawWords.length === 0) {
       throw new Error(`Gemini Multimodal could not detect any spoken words in the audio stream.`);
     }
 
-    const words: DeepgramWord[] = rawWords.map((w: any) => {
-      const startSec = Number(w.start !== undefined ? w.start : (w.from !== undefined ? (w.from > 1000 ? w.from / 1000000 : w.from / 1000) : 0));
-      const endSec = Number(w.end !== undefined ? w.end : (w.to !== undefined ? (w.to > 1000 ? w.to / 1000000 : w.to / 1000) : startSec + 0.3));
-      const wordStr = String(w.word || w.text || '').trim();
-      const punctuated = String(w.punctuated_word || w.punctuatedWord || wordStr);
-
-      return {
-        word: wordStr.toLowerCase(),
-        punctuated_word: punctuated,
-        start: Math.round(startSec * 1000) / 1000,
-        end: Math.round(endSec * 1000) / 1000,
-        confidence: Number(w.confidence || 0.98),
-      };
-    });
+    const words: SceneCaptionWord[] = rawWords
+      .filter((w: SceneCaptionWord) => Boolean(w.word || w.punctuated_word))
+      .map((w: SceneCaptionWord) => {
+        const startSec = Number(w.start !== undefined ? w.start : 0);
+        const endSec = Number(w.end !== undefined ? w.end : startSec + 0.3);
+        const wordStr = String(w.word || w.punctuated_word || '').trim();
+        const punctuated = String(w.punctuated_word || w.word || '').trim();
+        return {
+          word: wordStr.toLowerCase(),
+          punctuated_word: punctuated,
+          start: Math.round(startSec * 1000) / 1000,
+          end: Math.round(endSec * 1000) / 1000,
+          confidence: Number(w.confidence || 0.98),
+        };
+      });
 
     // Group words into natural subtitle chunks (3-5 words per cue)
-    const cues = this.groupDeepgramWordsIntoCues(words);
+    const captionData = CaptionService.groupWordsIntoCues(words);
     const speechStartUs = Math.round(words[0].start * 1_000_000);
     const speechEndUs = Math.round(words[words.length - 1].end * 1_000_000);
 
-    Logger.info(`[CaptionService] Gemini Deepgram transcription successful: ${words.length} words, ${cues.length} cues, speechStart: ${speechStartUs}us, speechEnd: ${speechEndUs}us`);
+    Logger.info(`[CaptionService] Gemini Deepgram transcription successful: ${words.length} words, ${captionData.length} cues, speechStart: ${speechStartUs}us, speechEnd: ${speechEndUs}us`);
 
     return {
       words,
-      cues,
-      speechStartUs,
-      speechEndUs,
-      hasSpeechActivity: true,
+      captions_data: captionData,
+      speech_start_us: speechStartUs,
+      speech_end_us: speechEndUs,
+      has_speech_activity: true,
     };
   }
 
@@ -345,7 +468,7 @@ Respond with ONLY a JSON object matching this schema:
 
     if (hasDialogue) {
       const dialogueText = dialogue
-        .map((d: SceneDialogue) => cleanDialogueLine(d.line || '', d.character))
+        .map((d: SceneDialogue) => CaptionService.cleanDialogueLine(d.line || '', d.character))
         .filter(Boolean)
         .join(' ');
 
@@ -416,11 +539,11 @@ Respond with ONLY a JSON object matching this schema:
     }
 
     // 4. Extract exact Word-by-Word Captions and Speech Timestamps directly with Gemini Multimodal
-    let captionsData: CaptionCue[] = [];
+    let captionsData: SceneCaptionData[] = [];
     let speechStartUs = 0;
     let speechEndUs = totalVoiceDurationUs;
     let hasSpeechActivity = false;
-    let extractedWords: DeepgramWord[] = [];
+    let extractedWords: SceneCaptionWord[] = [];
 
     if (hasDialogue) {
       const mediaForTranscription = voiceoverUrl || videoUrl;
@@ -434,10 +557,10 @@ Respond with ONLY a JSON object matching this schema:
           });
 
           extractedWords = extractionResult.words;
-          captionsData = extractionResult.cues;
-          speechStartUs = extractionResult.speechStartUs;
-          speechEndUs = extractionResult.speechEndUs;
-          hasSpeechActivity = extractionResult.hasSpeechActivity;
+          captionsData = extractionResult.captions_data;
+          speechStartUs = extractionResult.speech_start_us;
+          speechEndUs = extractionResult.speech_end_us;
+          hasSpeechActivity = extractionResult.has_speech_activity;
         } catch (capErr: any) {
           Logger.warn(`[CaptionService] Word-level caption extraction notice: ${capErr.message}`);
         }
@@ -451,11 +574,14 @@ Respond with ONLY a JSON object matching this schema:
         if (ep && Array.isArray(ep.scenes)) {
           const sIdx = ep.scenes.findIndex((s: any) => (sceneId && s.id === sceneId) || s.index === sceneIndex || s.id === `scene_${sceneIndex}`);
           if (sIdx !== -1) {
-            if (bgmUrl) ep.scenes[sIdx].bgm_url = bgmUrl;
-            if (voiceoverUrl) ep.scenes[sIdx].voiceover_url = voiceoverUrl;
+            const scene = ep.scenes[sIdx];
+            let character = scene.dialogue && scene.dialogue[0] ? scene.dialogue[0].character : '';
+            if (bgmUrl) scene.bgm_url = bgmUrl;
+            if (voiceoverUrl) scene.voiceover_url = voiceoverUrl;
             if (captionsData.length > 0) {
-              ep.scenes[sIdx].captions_data = captionsData.map((c: any) => ({
+              scene.captions_data = captionsData.map((c: any) => ({
                 id: c.id || `cue_${Date.now()}`,
+                character: character,
                 text: c.text || '',
                 start_ms: c.start_ms ?? c.startMs ?? (c.from_us ? Math.round(c.from_us / 1000) : 0),
                 end_ms: c.end_ms ?? c.endMs ?? (c.to_us ? Math.round(c.to_us / 1000) : 0),
@@ -494,50 +620,69 @@ Respond with ONLY a JSON object matching this schema:
     };
   }
 
-  // ─── Internal Fallback & Grouping Helpers ─────────────────────────────────
+  // ─── Word-by-Word Grouping & Cues Generator ─────────────────────────────────
 
-  private static groupDeepgramWordsIntoCues(words: DeepgramWord[]): CaptionCue[] {
+  public static groupWordsIntoCues(words: SceneCaptionWord[], character = ''): SceneCaptionData[] {
     if (!words || words.length === 0) return [];
 
-    const cues: CaptionCue[] = [];
-    let currentChunk: DeepgramWord[] = [];
-    const MAX_WORDS_PER_CUE = 5;
+    const cues: SceneCaptionData[] = [];
+    let currentChunk: SceneCaptionWord[] = [];
+    const MAX_WORDS_PER_CUE = 4;
 
     for (let i = 0; i < words.length; i++) {
-      const w = words[i];
+      const w: SceneCaptionWord = words[i];
       currentChunk.push(w);
 
-      const isPunctuationEnd = /[.!?]$/.test(w.punctuated_word || w.word);
+      const text = w.punctuated_word || w.word || '';
+      const isPunctuationEnd = /[.!?…]$/.test(text);
       const isChunkFull = currentChunk.length >= MAX_WORDS_PER_CUE;
-      const isNextWordFar = (i < words.length - 1) && (words[i + 1].start - w.end > 0.6);
+      const startSec = Number(w.start ?? 0);
+      const endSec = Number(w.end ?? 0);
+      const nextWord = words[i + 1];
+      const nextStartSec = nextWord ? Number(nextWord.start ?? 0) : 0;
+      const isNextWordFar = (i < words.length - 1) && (nextStartSec - endSec > 0.6);
 
       if (isPunctuationEnd || isChunkFull || isNextWordFar || i === words.length - 1) {
         const firstW = currentChunk[0];
         const lastW = currentChunk[currentChunk.length - 1];
 
-        const startMs = Math.round(firstW.start * 1000);
-        const endMs = Math.round(lastW.end * 1000);
-        const fromUs = Math.round(firstW.start * 1_000_000);
-        const toUs = Math.round(lastW.end * 1_000_000);
+        const firstStartSec = Number(firstW.start ?? 0);
+        const lastEndSec = Number(lastW.end ?? 0);
+
+        const startMs = Math.round(firstStartSec * 1000);
+        const endMs = Math.max(startMs + 200, Math.round(lastEndSec * 1000));
+        const durationMs = endMs - startMs;
+        const fromUs = Math.round(firstStartSec * 1_000_000);
+        const toUs = Math.max(fromUs + 200_000, Math.round(lastEndSec * 1_000_000));
         const durationUs = toUs - fromUs;
 
-        const phraseText = currentChunk.map(cw => cw.punctuated_word || cw.word).join(' ');
+        const phraseBody = currentChunk.map(cw => cw.punctuated_word || cw.word || '').join(' ').trim();
+        const phraseText = phraseBody;
 
-        const cueWords: CaptionWord[] = currentChunk.map((cw, idx) => ({
-          text: cw.punctuated_word || cw.word,
-          from: Math.round((cw.start - firstW.start) * 1000),
-          to: Math.round((cw.end - firstW.start) * 1000),
-          isKeyWord: idx === 0 || idx === currentChunk.length - 1 || cw.word.length > 4,
-        }));
+        const cueWords: TimelineCaptionWord[] = currentChunk.map((cw, idx) => {
+          const cwStartSec = Number(cw.start ?? 0);
+          const cwEndSec = Number(cw.end ?? 0);
+          const wFromMs = Math.max(0, Math.round((cwStartSec - firstStartSec) * 1000));
+          const wToMs = Math.max(wFromMs + 50, Math.round((cwEndSec - firstStartSec) * 1000));
+          const wStr = cw.punctuated_word || cw.word || '';
+          return {
+            text: wStr,
+            from: wFromMs,
+            to: wToMs,
+            isKeyWord: Boolean(idx === 0 || idx === currentChunk.length - 1 || wStr.length > 4),
+          };
+        });
 
         cues.push({
           id: `cue_${cues.length + 1}`,
+          character: character || '',
           text: phraseText,
-          startMs,
-          endMs,
-          fromUs,
-          toUs,
-          durationUs,
+          start_ms: startMs,
+          end_ms: endMs,
+          duration_ms: durationMs,
+          from_us: fromUs,
+          to_us: toUs,
+          duration_us: durationUs,
           words: cueWords,
         });
 

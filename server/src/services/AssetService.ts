@@ -6,13 +6,7 @@ import { Logger } from '@/utils/logger.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { CreditService } from '@/services/CreditService.js';
-import type { LocationAsset, PropAsset, ShotFrame, SceneEntity } from '@/types.js';
-
-export interface ScreenplayAssetsResult {
-  characters: string[];
-  locations: string[];
-  props: string[];
-}
+import type { LocationAsset, PropAsset, ShotFrame, SceneEntity, ScreenplayAssetsResult, CharacterSeriesEntity, CharacterSceneCostumes, CharacterWardrobeVariant } from '@/types.js';
 
 /**
  * AssetService: Responsible for Image Asset Generation (Character sheets, Location sheets, Prop shots, Storyboard shot images)
@@ -344,17 +338,17 @@ export class AssetService {
     const episode = await db.getEpisodeById(params.episode_id);
     if (!episode) throw new Error(`Episode ${params.episode_id} not found`);
 
-    const scenesList = (episode.scenes || []) as any[];
-    const sceneIdx = scenesList.findIndex((s: any) => Number(s.index || s.scene_number) === Number(params.scene_index));
+    const scenesList = (episode.scenes || []) as SceneEntity[];
+    const sceneIdx = scenesList.findIndex((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.scene_index));
     if (sceneIdx === -1) throw new Error(`Scene #${params.scene_index} not found in episode`);
 
     const scene = scenesList[sceneIdx];
     const stylePrompt = getVisualStylePrompt(series.visual_style || 'realistic');
 
     // 1. Collect all series master assets
-    const allChars: any[] = (Array.isArray(series.characters) ? series.characters : []).map((c: any) => ({ ...c, type: 'character' }));
-    const allLocs: any[] = (Array.isArray(series.locations) ? series.locations : []).map((l: any) => ({ ...l, type: 'location' }));
-    const allProps: any[] = (Array.isArray(series.props) ? series.props : []).map((p: any) => ({ ...p, type: 'prop' }));
+    const allChars: CharacterSeriesEntity[] = (Array.isArray(series.characters) ? series.characters : []).map((c: any) => ({ ...c, type: 'character' }));
+    const allLocs: LocationAsset[] = (Array.isArray(series.locations) ? series.locations : []).map((l: any) => ({ ...l, type: 'location' }));
+    const allProps: PropAsset[] = (Array.isArray(series.props) ? series.props : []).map((p: any) => ({ ...p, type: 'prop' }));
 
     const referenceImages: string[] = [];
     const characterContextList: string[] = [];
@@ -368,24 +362,24 @@ export class AssetService {
 
     for (const cName of sceneCharNames) {
       if (!cName) continue;
-      const cNameLower = String(cName).toLowerCase().trim();
-      const matchedChar = allChars.find((c: any) => (c.name || '').toLowerCase().trim() === cNameLower || c.id === cName);
+      const cNameOrIdLower = String(cName).toLowerCase().trim();
+      const matchedChar = allChars.find((c: any) => (c.name || '').toLowerCase().trim() === cNameOrIdLower || c.id === cNameOrIdLower);
       if (matchedChar) {
         // Find wardrobe variant
         const sceneCostume = Array.isArray(scene.character_costumes)
-          ? scene.character_costumes.find((cc: any) => (cc.character || '').toLowerCase().trim() === cNameLower)
+          ? scene.character_costumes.find((cc: CharacterSceneCostumes) => (cc.character || '').toLowerCase().trim() === cNameOrIdLower)
           : null;
         const variants = Array.isArray(matchedChar.wardrobe_variants) ? matchedChar.wardrobe_variants : [];
-        let matchedVariant: any = null;
+        let matchedVariant: CharacterWardrobeVariant | undefined = undefined;
         if (sceneCostume?.variant_id && variants.length > 0) {
-          matchedVariant = variants.find((v: any) => v.variant_id?.toLowerCase() === String(sceneCostume.variant_id).toLowerCase());
+          matchedVariant = variants.find((v: CharacterWardrobeVariant) => v.variant_id?.toLowerCase() === String(sceneCostume.variant_id).toLowerCase());
         }
         if (!matchedVariant && sceneCostume?.wardrobe && variants.length > 0) {
           const wLower = String(sceneCostume.wardrobe).toLowerCase();
-          matchedVariant = variants.find((v: any) => (v.name && wLower.includes(v.name.toLowerCase())) || (v.clothing_and_accessories && wLower.includes(v.clothing_and_accessories.toLowerCase())));
+          matchedVariant = variants.find((v: CharacterWardrobeVariant) => (v.name && wLower.includes(v.name.toLowerCase())) || (v.clothing_and_accessories && wLower.includes(v.clothing_and_accessories.toLowerCase())));
         }
 
-        const charImg = matchedVariant?.image_url || matchedChar.avatar || matchedChar.image_url || variants.find((v: any) => v.image_url)?.image_url;
+        const charImg = matchedVariant?.image_url || matchedChar.avatar;
         if (charImg && !referenceImages.includes(charImg)) {
           referenceImages.push(charImg);
         }
@@ -404,28 +398,28 @@ export class AssetService {
     for (const lName of sceneLocNames) {
       if (!lName) continue;
       const lNameLower = String(lName).toLowerCase().trim();
-      const matchedLoc = allLocs.find((l: any) => (l.name || '').toLowerCase().trim() === lNameLower || lNameLower.includes((l.name || '').toLowerCase().trim()) || (l.name || '').toLowerCase().includes(lNameLower));
+      const matchedLoc = allLocs.find((l: LocationAsset) => (l.name || '').toLowerCase().trim() === lNameLower || lNameLower.includes((l.name || '').toLowerCase().trim()) || (l.name || '').toLowerCase().includes(lNameLower));
       if (matchedLoc) {
         if (matchedLoc.image_url && !referenceImages.includes(matchedLoc.image_url)) {
           referenceImages.push(matchedLoc.image_url);
         }
-        const locDesc = matchedLoc.physical_characteristics || matchedLoc.description || '';
+        const locDesc = matchedLoc.physical_characteristics || '';
         locationContext = `[LOCATION: ${matchedLoc.name}] Environment: ${locDesc} (Time: ${matchedLoc.time_of_day || scene.time_of_day || 'Daytime'}).`;
         break;
       }
     }
 
     // 4. Resolve Props
-    const scenePropNames: string[] = Array.isArray(scene.reference_assets?.props) ? scene.reference_assets.props : (Array.isArray(scene.props) ? scene.props : []);
+    const scenePropNames: string[] = Array.isArray(scene.reference_assets?.props) ? scene.reference_assets.props : [];
     for (const pName of scenePropNames) {
       if (!pName) continue;
       const pNameLower = String(pName).toLowerCase().trim();
-      const matchedProp = allProps.find((p: any) => (p.name || '').toLowerCase().trim() === pNameLower || p.id === pName);
+      const matchedProp = allProps.find((p: PropAsset) => (p.name || '').toLowerCase().trim() === pNameLower || p.id === pName);
       if (matchedProp) {
         if (matchedProp.image_url && !referenceImages.includes(matchedProp.image_url)) {
           referenceImages.push(matchedProp.image_url);
         }
-        propContextList.push(`[PROP: ${matchedProp.name}] Details: ${matchedProp.physical_characteristics || matchedProp.description || ''}`);
+        propContextList.push(`[PROP: ${matchedProp.name}] Details: ${matchedProp.physical_characteristics || ''}`);
       }
     }
 
@@ -478,7 +472,7 @@ export class AssetService {
     if (shouldGenerateEndFrame) {
       try {
         Logger.info(`[AssetService.generateStoryboardShot] GENERATE_START_END_FRAME=true: Generating end frame for Scene #${params.scene_index}`);
-        const endVisualDesc = scene.end_frame_prompt || scene.visual_prompt_end || `${visualDesc}, concluding moment of the action`;
+        const endVisualDesc = scene.end_frame_prompt || `${visualDesc}, concluding moment of the action`;
         const endPrompt = PromptLoader.render('scene/scene_image_final', {
           locationContext: locationContext || undefined,
           propContext: propContextList.length > 0 ? propContextList.join('; ') : (scene.prop_details || undefined),

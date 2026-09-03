@@ -1,20 +1,10 @@
 import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
-import { EpisodeSkeleton, MasterPlanOutput } from '@/types.js';
+import { EpisodeSkeleton, MasterPlanOutput, RefinePlanInput, RefinePlanOutput } from '@/types.js';
 import { storySkeletonAgent } from './StorySkeletonAgent.js';
 import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
 import { getLanguageForCountry } from '../utils/LanguageMapping.js';
-
-export interface RefinePlanInput {
-  currentPlan: any;
-  userInstruction: string;
-}
-
-export interface RefinePlanOutput {
-  updatedPlan: MasterPlanOutput;
-  explanation: string;
-}
 
 export class MasterPlanRefineAgent {
   async execute(input: RefinePlanInput): Promise<RefinePlanOutput> {

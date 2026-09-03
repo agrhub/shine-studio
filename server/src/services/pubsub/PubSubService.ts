@@ -117,7 +117,7 @@ export class PubSubService {
           if (event && event.jobId) {
             this.emitProgress(event);
 
-            // Persist job telemetry to Database
+            // 1. Persist job telemetry to Database
             try {
               const db = await getDatabaseProvider();
               await db.recordWorkerJob({
@@ -138,6 +138,80 @@ export class PubSubService {
                 submitted_at: event.submittedAt || new Date().toISOString(),
                 updated_at: event.timestamp || new Date().toISOString(),
               });
+
+              // 2. Global Pipeline Job Sync: Update active pipeline_jobs even if server restarted or was idle
+              try {
+                const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+                let targetJob = await db.getPipelineJobById(event.jobId);
+                
+                // If not found by exact ID, search running pipeline jobs matching episode_id or remoteJobId
+                if (!targetJob && event.episodeId) {
+                  const runningJobs = await db.getPipelineJobs({ series_id: event.seriesId, status: 'running' });
+                  targetJob = runningJobs.find((j: any) => 
+                    (j.episode_id === event.episodeId || j.metadata?.remoteJobId === event.jobId || j.metadata?.remoteJobIds?.includes(event.jobId))
+                    && j.status === 'running'
+                  ) || null;
+                }
+
+                if (targetJob) {
+                  const currentPct = Math.min(100, Math.max(0, Math.round(event.progressPercent !== undefined ? event.progressPercent : (event.progress || 0))));
+                  targetJob.progress = currentPct;
+                  targetJob.current_step = `Rendering (Cloud Run): ${currentPct}%`;
+                  targetJob.updated_at = new Date().toISOString();
+
+                  if (targetJob.step_progress?.render) {
+                    targetJob.step_progress.render.progress = currentPct;
+                    targetJob.step_progress.render.message = `Rendering (Cloud Run): ${currentPct}%`;
+                  }
+
+                  if (event.status === 'completed') {
+                    targetJob.status = 'completed';
+                    targetJob.progress = 100;
+                    targetJob.completed_at = new Date().toISOString();
+                    const finalVideoUrl = event.downloadUrl || event.outputUrl || '';
+                    if (finalVideoUrl) {
+                      targetJob.outputs = {
+                        ...(targetJob.outputs || {}),
+                        video: finalVideoUrl,
+                      };
+                    }
+
+                    if (event.episodeId) {
+                      try {
+                        const ep = await db.getEpisodeById(event.episodeId);
+                        if (ep) {
+                          const langKey = (event as any).language || targetJob.metadata?.language || ep.dubbing_languages?.[0] || 'en-US';
+                          const mergedUrls = {
+                            ...(ep.video_urls || {}),
+                            [langKey]: finalVideoUrl,
+                          };
+                          const updatedEp = await db.updateEpisode(event.episodeId, {
+                            video_url: finalVideoUrl,
+                            video_urls: mergedUrls,
+                            status: 'RENDER',
+                          });
+                          if (updatedEp) {
+                            PatchSyncService.broadcast(targetJob.series_id || event.seriesId || 'all', 'episode:updated', updatedEp);
+                          }
+                        }
+                      } catch (epUpdateErr: any) {
+                        Logger.warn(`[PubSubService] Episode auto-sync notice: ${epUpdateErr.message}`);
+                      }
+                    }
+                  } else if (event.status === 'failed') {
+                    targetJob.status = 'failed';
+                    targetJob.error = event.error || 'Cloud Run Render Worker reported an error';
+                  }
+
+                  await db.savePipelineJob(targetJob);
+                  PatchSyncService.broadcast(targetJob.series_id || event.seriesId || 'all', 'pipeline_job:updated', targetJob);
+                  if (targetJob.status === 'completed') {
+                    PatchSyncService.broadcast(targetJob.series_id || event.seriesId || 'all', 'pipeline_job:completed', targetJob);
+                  }
+                }
+              } catch (pipelineSyncErr: any) {
+                Logger.debug(`[PubSubService] Pipeline job global sync notice: ${pipelineSyncErr.message}`);
+              }
             } catch (dbErr: any) {
               Logger.warn(`[PubSubService] Failed to record worker job: ${dbErr.message}`);
             }

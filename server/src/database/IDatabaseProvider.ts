@@ -30,10 +30,8 @@ import type {
   TimelineSnapshotVersion,
   TimelineSnapshotHistoryItem,
   RestoreTimelineResult,
+  ChatMessageEntity,
 } from '@/types.js';
-
-// Re-export all centralized types for backwards-compatibility
-export * from '@/types.js';
 
 export interface IDatabaseProvider {
   initialize(): Promise<void>;
@@ -42,9 +40,17 @@ export interface IDatabaseProvider {
   createUser(user: UserEntity): Promise<UserEntity>;
   getUserByEmail(email: string): Promise<UserEntity | null>;
   getUserById(id: string): Promise<UserEntity | null>;
+  getUsers(filter?: { search?: string; tier?: string; role?: string; status?: string; limit?: number; offset?: number }): Promise<{ users: UserEntity[]; total: number }>;
   countUsers(): Promise<number>;
   updateUser(user: UserEntity): Promise<UserEntity>;
   updateUserPreferences(user_id: string, prefs: { theme?: string; language?: string }): Promise<UserEntity | null>;
+  deleteUser(user_id: string): Promise<boolean>;
+
+  // Chat History & Session Messages (Isolated from user/series entities)
+  saveChatMessage(message: ChatMessageEntity): Promise<ChatMessageEntity>;
+  saveChatMessages(messages: ChatMessageEntity[]): Promise<void>;
+  getChatMessages(filter: { userId: string; sessionId?: string; seriesId?: string; episodeId?: string; scope?: string; limit?: number; offset?: number }): Promise<{ messages: ChatMessageEntity[]; total: number }>;
+  deleteChatSession(userId: string, sessionId: string): Promise<boolean>;
 
   // Credits & Deductions
   deductCredits(user_id: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }>;
@@ -63,6 +69,7 @@ export interface IDatabaseProvider {
   getEpisodesBySeriesId(series_id: string): Promise<EpisodeEntity[]>;
   getEpisodeById(id: string): Promise<EpisodeEntity | null>;
   updateEpisode(id: string, updates: Partial<EpisodeEntity>): Promise<EpisodeEntity | null>;
+  deleteEpisode(id: string): Promise<boolean>;
 
   // Timeline & History Snapshots (Zero-Render Preview & Restore)
   saveTimeline(episode_id: string, timeline_data: IProject, author: { id: string; name: string; avatar?: string }, change_summary?: string): Promise<{ version_id: string; version_number: number; updated_at: string }>;
@@ -78,7 +85,8 @@ export interface IDatabaseProvider {
 
   // Assets Library & Storage
   saveAsset(asset: AssetEntity): Promise<AssetEntity>;
-  getAssets(filter?: { user_id?: string; series_id?: string; type?: string; character_id?: string; search?: string }): Promise<AssetEntity[]>;
+  getAssets(filter?: { user_id?: string; series_id?: string; episode_id?: string; scene_id?: string; type?: string; character_id?: string; search?: string }): Promise<AssetEntity[]>;
+  getAssetById(id: string): Promise<AssetEntity | null>;
   deleteAsset(id: string): Promise<boolean>;
 
   // Pipeline Background Jobs
@@ -99,4 +107,14 @@ export interface IDatabaseProvider {
   recordWorkerJob(job: WorkerJobEntity): Promise<void>;
   getWorkerJobs(filter?: { status?: string; limit?: number }): Promise<WorkerJobEntity[]>;
   getClusterMetrics(): Promise<ClusterMetricsSummary>;
+
+  // Viral Trends Storage & Persistence
+  getViralTrends(country: string, language: string): Promise<{ items: any[]; updated_at: Date } | null>;
+  saveViralTrends(country: string, language: string, items: any[]): Promise<void>;
+  getAllCachedViralTrends(): Promise<Array<{ cache_key: string; country: string; language: string; items: any[]; updated_at: Date }>>;
+
+  // Social Connected Accounts
+  updateSocialAccount(account: Partial<SocialAccountEntity>, options?: { upsert?: boolean; returnDocument?: string }): Promise<SocialAccountEntity>;
+  listSocialAccounts(user_id: string): Promise<SocialAccountEntity[]>;
+  deleteSocialAccount(user_id: string, platform: string, channelId?: string): Promise<boolean>;
 }

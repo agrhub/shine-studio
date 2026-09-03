@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { AIAccount, AIAccountType, AIAccountStatus, getDatabaseProvider } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { AIAccountType, AIAccountStatus } from '~/types.js';
 import { flowSyncService } from '../integrations/ai/flow/FlowSyncService.js';
 import { captchaService } from '../integrations/ai/flow/CaptchaService.js';
 

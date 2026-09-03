@@ -1,19 +1,4 @@
-export interface AdaptationInput {
-  synopsis: string;
-  targetEpisodeCount: number;
-  pacingStyle: 'aggressive_hook' | 'slow_burn' | 'climax_twist';
-}
-
-export interface AdaptationOutput {
-  targetEpisodeCount: number;
-  pacingStyle: string;
-  actBreakdown: {
-    act1: { range: string; focus: string };
-    act2: { range: string; focus: string };
-    act3: { range: string; focus: string };
-  };
-  keyClimaxEpisodes: number[];
-}
+import { AdaptationInput, AdaptationOutput } from '../types.js';
 
 export class AdaptationStrategyAgent {
   async execute(input: AdaptationInput): Promise<AdaptationOutput> {

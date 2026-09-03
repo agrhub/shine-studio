@@ -1,9 +1,9 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
 import { getDatabaseProvider } from '@/database/index.js';
-import type { SceneEntity, SceneDialogue, SceneCaption, SceneCaptionWordLevel } from '@/types.js';
+import type { SceneEntity, SceneDialogue, SceneCaptionData, SceneCaptionWord, AssetJobItem } from '@/types.js';
 import { Logger } from '@/utils/logger.js';
-import { translateDialogueList, buildWordLevelCaptionsFromDialogue } from '@/utils/captionAlignment.js';
+import { CaptionService } from '@/services/CaptionService.js';
 import { executeWithRetry, withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
 
 export class CaptionToolExecutors {
@@ -19,6 +19,7 @@ export class CaptionToolExecutors {
     sceneIndex?: number;
     languageCode?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -46,7 +47,7 @@ export class CaptionToolExecutors {
         }
       }
 
-      const results: any[] = [];
+      const results: Array<{ sceneIndex: number; language?: string; status: string; captions_count?: number }> = [];
       const updatedScenes: SceneEntity[] = [...scenes];
 
       for (const sc of targets) {
@@ -73,11 +74,23 @@ export class CaptionToolExecutors {
               status: 'main_language_already_exists',
               captions_count: existingCaptions.length,
             });
+            await params.onItemProgress?.({
+              asset: {
+                id: `sub_${params.episodeId}_s${scIndex}`,
+                name: `Scene #${scIndex} Subtitle`,
+                type: 'subtitle',
+                status: 'completed',
+                scene_index: scIndex,
+              },
+              current: results.length,
+              total: targets.length,
+              description: `Scene #${scIndex} Subtitles (Ready)`,
+            });
             continue;
           }
 
           // Build root-level word-by-word captions
-          const { captions_data, words, voice_start_us, voice_duration_us } = buildWordLevelCaptionsFromDialogue(
+          const { captions_data, words, voice_start_us, voice_duration_us } = CaptionService.buildWordLevelCaptionsFromDialogue(
             sourceDialogue,
             sceneDur,
             sc.voice_start_us ? sc.voice_start_us / 1_000_000 : 0.5
@@ -93,8 +106,21 @@ export class CaptionToolExecutors {
           results.push({
             sceneIndex: scIndex,
             language: primaryLang,
-            status: 'main_language_caption_generated',
+            status: 'captions_generated',
             captions_count: captions_data.length,
+          });
+
+          await params.onItemProgress?.({
+            asset: {
+              id: `sub_${params.episodeId}_s${scIndex}`,
+              name: `Scene #${scIndex} Subtitle`,
+              type: 'subtitle',
+              status: 'completed',
+              scene_index: scIndex,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Generated Subtitles for Scene #${scIndex}`,
           });
         } else {
           // ── SUB-LANGUAGE: Translate and generate word-level captions ──────────
@@ -121,7 +147,7 @@ export class CaptionToolExecutors {
           if (!Array.isArray(translatedDialogue) || translatedDialogue.length === 0) {
             const { result: transList } = await executeWithRetry(`Translate Scene #${scIndex} Dialogue to ${targetLang}`, async () => {
               return await withCreditDeduction(params.userId, 'subtitleTranslate', 'Dialogue Translation', `Translated Scene #${scIndex} to ${targetLang}`, async () => {
-                return await translateDialogueList(sourceDialogue, targetLang);
+                return await CaptionService.translateDialogueList(sourceDialogue, targetLang);
               });
             });
             translatedDialogue = transList || sourceDialogue;
@@ -130,7 +156,7 @@ export class CaptionToolExecutors {
 
           // 2. Build word-by-word timestamps in sub-language
           const voiceStartSec = (updatedScenes[idx].translations[targetLang]?.voice_start_us || sc.voice_start_us || 500_000) / 1_000_000;
-          const { captions_data, words, voice_start_us, voice_duration_us } = buildWordLevelCaptionsFromDialogue(
+          const { captions_data, words, voice_start_us, voice_duration_us } = CaptionService.buildWordLevelCaptionsFromDialogue(
             translatedDialogue,
             sceneDur,
             voiceStartSec

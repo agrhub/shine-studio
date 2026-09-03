@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getDatabaseProvider, UserEntity } from '../database/index.js';
+import { getDatabaseProvider } from '../database/index.js';
 import { scriptAgent } from '../agents/ScriptAgent.js';
 import { SeriesService } from '../services/SeriesService.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
@@ -38,24 +38,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     const db = await getDatabaseProvider();
     const seriesList = await db.getSeriesList(userId, search, status);
-    const enhancedSeries = await Promise.all(
-      seriesList.map(async (s) => {
-        try {
-          const episodes = await db.getEpisodesBySeriesId(s.id);
-          const publishedCount = Array.isArray(episodes) ? episodes.filter((e) => e.status === 'PUBLISHED').length : 0;
-          return {
-            ...s,
-            published_episode_count: publishedCount,
-            episode_count: (Array.isArray(episodes) && episodes.length > 0) ? episodes.length : (s.episode_count || 1),
-          };
-        } catch {
-          return {
-            ...s,
-            published_episode_count: 0,
-          };
-        }
-      })
-    );
+    const enhancedSeries = (seriesList || []).map((s) => ({
+      ...s,
+      published_episode_count: typeof s.published_episode_count === 'number' ? s.published_episode_count : 0,
+      episode_count: s.episode_count || 1,
+    }));
     ok(res, { series: enhancedSeries, total: enhancedSeries.length });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -88,6 +75,22 @@ router.patch('/:id', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+function extractStorageKeysFromAsset(asset: any): string[] {
+  const keys: string[] = [];
+  if (asset.s3_key) {
+    keys.push(asset.s3_key);
+  }
+  if (asset.url && typeof asset.url === 'string' && asset.url.includes('/api/assets/file/')) {
+    const key = asset.url.replace('/api/assets/file/', '').replace(/^\/+/, '');
+    if (key && !keys.includes(key)) keys.push(key);
+  }
+  if (asset.thumbnail && typeof asset.thumbnail === 'string' && asset.thumbnail.includes('/api/assets/file/')) {
+    const thumbKey = asset.thumbnail.replace('/api/assets/file/', '').replace(/^\/+/, '');
+    if (thumbKey && !keys.includes(thumbKey)) keys.push(thumbKey);
+  }
+  return keys;
+}
+
 // DELETE /api/series/:id - Permanently delete series and all S3/cloud assets
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -100,7 +103,7 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
 
     const episodes = await db.getEpisodesBySeriesId(seriesId);
 
-    // 1. Purge all related assets on S3 / Storage Provider before deleting DB records
+    // 1. Purge all related assets on S3 / Storage Provider BEFORE deleting DB records
     try {
       const storage = await StorageFactory.getActiveAdapter();
       Logger.info(`[SeriesDelete] Purging cloud assets for series "${seriesId}" and ${episodes.length} episodes...`);
@@ -115,6 +118,27 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       for (const ep of episodes) {
         await storage.deleteFolder(`episodes/${ep.id}`);
       }
+
+      // Delete individual asset files associated with this series
+      const seriesAssets = await db.getAssets({ series_id: seriesId });
+      for (const a of seriesAssets) {
+        const keys = extractStorageKeysFromAsset(a);
+        for (const k of keys) {
+          await storage.deleteFile(k);
+        }
+      }
+
+      // Also delete asset files for all episodes of this series
+      for (const ep of episodes) {
+        const epAssets = await db.getAssets({ episode_id: ep.id });
+        for (const a of epAssets) {
+          const keys = extractStorageKeysFromAsset(a);
+          for (const k of keys) {
+            await storage.deleteFile(k);
+          }
+        }
+      }
+
       Logger.info(`[SeriesDelete] Successfully purged cloud assets for "${seriesId}".`);
     } catch (storageErr: any) {
       Logger.warn(`[SeriesDelete] Cloud storage asset purge warning: ${storageErr.message}`);
@@ -865,6 +889,53 @@ episodesRouter.post('/:episodeId/timeline/restore', async (req: Request, res: Re
     const restoreResult = await db.restoreTimelineVersion(episodeId, versionId, authorObj, reason || 'Restored version');
 
     ok(res, restoreResult, 'Timeline version successfully restored');
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Internal server error');
+  }
+});
+
+// DELETE /api/episodes/:episodeId
+episodesRouter.delete('/:episodeId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const episodeId = req.params.episodeId as string;
+    const userId = getUserId(req);
+    if (!userId) {
+      fail(res, 401, 'Unauthorized');
+      return;
+    }
+
+    const db = await getDatabaseProvider();
+    const episode = await db.getEpisodeById(episodeId);
+    if (!episode) {
+      fail(res, 404, 'Episode not found');
+      return;
+    }
+
+    // 1. Purge cloud storage files and asset files for this episode BEFORE deleting database records
+    try {
+      const storage = await StorageFactory.getActiveAdapter();
+
+      // Delete individual asset files associated with this episode
+      const epAssets = await db.getAssets({ episode_id: episodeId });
+      for (const a of epAssets) {
+        const keys = extractStorageKeysFromAsset(a);
+        for (const k of keys) {
+          await storage.deleteFile(k);
+        }
+      }
+
+      // Delete episode storage folder
+      await storage.deleteFolder(`episodes/${episodeId}`);
+
+      Logger.info(`[EpisodeDelete] Successfully purged cloud assets for episode "${episodeId}".`);
+    } catch (storageErr: any) {
+      Logger.warn(`[EpisodeDelete] Cloud storage asset purge warning: ${storageErr.message}`);
+    }
+
+    // 2. Cascade delete episode, timelines, versions, chat_messages, pipeline_jobs
+    await db.deleteEpisode(episodeId);
+
+    ok(res, { deleted: true, episodeId }, 'Episode and all associated history/assets deleted successfully');
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
   }

@@ -41,7 +41,7 @@ export interface CharacterSeriesEntity {
   wardrobe_variants: CharacterWardrobeVariant[];
   speech_style: string;
   avatar?: string | null;
-  image_url?: string;
+  // image_url?: string;
   lora_model?: string;
   description: string;
   created_at?: string;
@@ -95,39 +95,39 @@ export interface SceneReferenceAssets {
   props: string[];
 }
 
-export interface CaptionWord {
+export interface TimelineCaptionWord {
   text: string;
-  from: number;//ms
-  to: number;//ms
-  is_key_word: boolean;
+  from: number; // ms relative to start of cue
+  to: number;   // ms relative to start of cue
+  isKeyWord?: boolean;
 }
 
-
-export interface SceneCaptionWordLevel {
+export interface SceneCaptionWord {
   word: string;
-  start: number;//ms
-  end: number;//ms
+  start: number; // s (seconds in scene/video)
+  end: number;   // s (seconds in scene/video)
   punctuated_word: string;
   confidence: number;
-};
+}
 
-export interface SceneCaption {
+export interface SceneCaptionData {
   id: string;
+  character?: string;
   text: string;
-  duration_ms: number;
-  duration_us: number;
-  from_us: number;
+  duration_ms?: number;
+  duration_us?: number;
+  from_us?: number;
   end_ms: number;
   start_ms: number;
-  to_us: number;
-  words: CaptionWord[];
+  to_us?: number;
+  words?: TimelineCaptionWord[];//using for timeline data later
 }
 
 export interface SceneDialogue {
   character: string;
-  emotion: string;
+  emotion?: string;
   line: string;
-  speech_tone: string;
+  speech_tone?: string;
   speed?: number;
 }
 
@@ -182,20 +182,34 @@ export interface SceneEntity {
     | `glowFilter` | `oldFilmFilter` | `crtFilter` | `motionBlur`
     | `cameraMove` | `fastZoom` | `shockwaveFilter` | '';
   sfx_cues?: string[];
-  captions_data?: SceneCaption[];
-  words?: SceneCaptionWordLevel[];
+  captions_data?: SceneCaptionData[];
+  words?: SceneCaptionWord[];
   translations?: Record<string, {
     dialogue?: SceneDialogue[];
-    translated_dialogue?: SceneDialogue[];
     voiceover_url?: string;
     voice_duration_us?: number;
     voice_duration_ms?: number;
     voice_start_us?: number;
-    captions_data?: SceneCaption[];
-    words?: SceneCaptionWordLevel[];
+    captions_data?: SceneCaptionData[];
+    words?: SceneCaptionWord[];
   }>;
   voice_duration_us?: number;
   voice_start_us?: number;
+}
+
+export interface ChatMessageEntity {
+  id: string;
+  user_id: string;
+  session_id: string;
+  scope: 'global' | 'series' | 'wizard';
+  series_id?: string;
+  episode_id?: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  tool_calls?: any[];
+  suggestions?: Array<{ label: string; prompt: string }>;
+  created_at: string;
+  timestamp: number;
 }
 
 export interface SeriesEntity {
@@ -220,7 +234,6 @@ export interface SeriesEntity {
   characters: CharacterSeriesEntity[];
   locations: LocationAsset[];
   props: PropAsset[];
-  chat_history?: any[];
   status: 'DRAFT' | 'ACTIVE' | 'PUBLISHED' | 'ARCHIVED';
   created_at?: string;
   updated_at?: string;
@@ -316,6 +329,21 @@ export interface RenderedVersionItem {
   status: string;
 }
 
+export interface EpisodePublishedPlatform {
+  platform: 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'twitter' | string;
+  language?: string;
+  channel_id?: string;
+  channel_name?: string;
+  account_id?: string;
+  url: string;
+  video_id?: string;
+  published_at: string;
+  views?: number;
+  likes?: number;
+  comments_count?: number;
+  shares?: number;
+}
+
 export interface EpisodeEntity {
   id: string;
   series_id: string;
@@ -341,9 +369,63 @@ export interface EpisodeEntity {
   video_url?: string;
   video_urls?: Record<string, string>;
   render_versions?: EpisodeRenderVersion[];
+  published_urls?: Record<string, string>;
+  published_platforms?: EpisodePublishedPlatform[];
   created_at?: string;
   updated_at?: string;
 }
+
+export interface PlatformSettings {
+  publishing: {
+    youtube: {
+      enabled: boolean,
+      clientId: string,
+      clientSecret: string,
+      redirectUrl: string,
+      scopes: string[],
+    },
+    tiktok: {
+      enabled: boolean,
+      clientKey: string,
+      clientSecret: string,
+      redirectUrl: string,
+      scopes: string[],
+    },
+    facebook: {
+      enabled: boolean,
+      appId: string,
+      appSecret: string,
+      redirectUrl: string,
+      scopes: string[],
+    },
+  },
+  sso: {
+    google: {
+      enabled: boolean,
+      clientId: string,
+      clientSecret: string,
+      redirectUrl: string,
+    },
+    facebook: {
+      enabled: boolean,
+      appId: string,
+      appSecret: string,
+      redirectUrl: string,
+    },
+    tiktok: {
+      enabled: boolean,
+      clientId: string,
+      clientSecret: string,
+      redirectUrl: string,
+    },
+    github: {
+      enabled: boolean,
+      clientId: string,
+      clientSecret: string,
+      redirectUrl: string,
+    }
+  },
+};
 
 export interface PlatformAccount {
   id: string; 
@@ -378,6 +460,10 @@ export interface UserEntity {
   connected_channels?: PlatformAccount[];
   tier: 'FREE' | 'PRO' | 'ENTERPRISE';
   credits: number;
+  status?: 'active' | 'locked' | 'suspended';
+  is_active?: boolean;
+  phone?: string;
+  last_login_at?: string;
   theme?: string;
   language?: string;
   created_at?: string;
@@ -397,34 +483,99 @@ export interface StorageSystemConfig {
 export interface StudioSystemConfig {
   s3?: StorageSystemConfig;
   storage?: StorageSystemConfig;
-  gcs?: {
-    bucketName?: string;
-    projectId?: string;
-    clientEmail?: string;
-    privateKey?: string;
-  };
   gemini?: {
     textModel?: string;
     imageModel?: string;
     videoModel?: string;
     apiKey?: string;
+    agentModel: string,
+    audioModel: string,
+    enableThinking: boolean,
+    maxTokens: number,
+    musicModel: string,
+    temperature: number,
   };
-  parallel?: Record<string, unknown>;
-  grafana?: Record<string, unknown>;
-  pixabay?: Record<string, unknown>;
-  freesound?: Record<string, unknown>;
-  pexels?: Record<string, unknown>;
   captcha?: {
     enabled?: boolean;
-    provider?: string;
-    siteKey?: string;
-    secretKey?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    method?: string;
   };
-  email?: Record<string, unknown>;
-  notifications?: Record<string, unknown>;
-  cloudRun?: Record<string, unknown>;
-  pubsub?: Record<string, unknown>;
-  creditRates?: Record<string, number>;
+  cloudRun?: {
+    region?: string;
+    renderUrl?: string;
+    serviceName?: string;
+  };
+  creditRates?: {
+    bgmMusic?: number;
+    characterAnchors?: number;
+    cliffhangerHook?: number;
+    sceneImage?: number;
+    scriptGeneration?: number;
+    subtitleTranslate?: number;
+    videoGeneration?: number;
+    videoRender?: number;
+    voiceoverTts?: number;
+  };
+  deepgram?: {
+    apiKey?: string;
+    model?: string;
+    url?: string;
+  };
+  elevenlabs?: {
+    apiKey?: string;
+    model?: string;
+    url?: string;
+  };
+  email?: {
+    enabled?: boolean;
+    host?: string;
+    password?: string;
+    senderEmail?: string;
+    senderName?: string;
+    smtpHost?: string;
+    smtpPort?: number;
+    ssl?: boolean;
+  };
+  freesound?: {
+    apiKey?: string;
+    clientId?: string;
+    endpoint?: string;
+  };
+  gcs?: {
+    bucketName?: string;
+    enabled?: boolean;
+    keyFilename?: string;
+    projectId?: string;
+    publicDomain?: string;
+  };
+  grafana?: {
+    apiKey?: string;
+    mcpEndpoint?: string;
+    url?: string;
+  };
+  notifications?: {
+    discordWebhook?: string;
+    emailAlerts?: boolean;
+    slackWebhook?: string;
+  };
+  parallel?: {
+    apiKey?: string;
+    endpoint?: string;
+  };
+  pexels?: {
+    apiKey?: string;
+    endpoint?: string;
+  };
+  pixabay?: {
+    apiKey?: string;
+    endpoint?: string;
+  };
+  pubsub?: {
+    projectId?: string;
+    subscriptionRender?: string;
+    topicRender?: string;
+  };
 }
 
 export interface SystemSettingEntity {
@@ -432,6 +583,111 @@ export interface SystemSettingEntity {
   value: any;
   updated_at?: string;
 }
+
+// export interface SystemSettings {
+//   captcha: {
+//     apiKey: string,
+//     baseUrl: string,
+//     method: "capsolver" | "capmonster" | "2captcha" | "anti-captcha" | "anticaptcha" | "anti-captcha"
+//   },
+//   cloudrun: {
+//     region: string,
+//     renderUrl: string,
+//     serviceName: string
+//   },
+//   creditRates: {
+//     bgmMusic: number,
+//     characterAnchors: number,
+//     cliffhangerHook: number,
+//     sceneImage: number,
+//     scriptGeneration: number,
+//     subtitleTranslate: number,
+//     videoGeneration: number,
+//     videoRender: number,
+//     voiceoverTts: number
+//   },
+//   deepgram: {
+//     apiKey: string,
+//     model: string,
+//     url: string
+//   },
+//   elevenlabs: {
+//     apiKey: string,
+//     model: string,
+//     url: string
+//   },
+//   email: {
+//     enabled: boolean,
+//     host: string,
+//     password: string,
+//     senderEmail: string,
+//     senderName: string,
+//     smtpHost: string,
+//     smtpPort: number,
+//     ssl: boolean,
+//   },
+//   freesound: {
+//     apiKey: string,
+//     clientId: string,
+//     endpoint: string,
+//   },
+//   gcs: {
+//     bucketName: string,
+//     enabled: boolean,
+//     keyFilename: string,
+//     projectId: string,
+//     publicDomain: string,
+//   },
+//   gemini: {
+//     agentModel: string,
+//     audioModel: string,
+//     enableThinking: boolean,
+//     imageModel: string,
+//     maxTokens: number,
+//     musicModel: string,
+//     temperature: number,
+//     textModel: string,
+//     videoModel: string,
+//   },
+//   grafana: {
+//     apiKey: string,
+//     mcpEndpoint: string,
+//     url: string,
+//   },
+//   notifications: {
+//     discordWebhook: string,
+//     emailAlerts: boolean,
+//     slackWebhook: string
+//   },
+//   parallel: {
+//     apiKey: string,
+//     endpoint: string
+//   },
+//   pexels: {
+//     apiKey: string,
+//     endpoint: string
+//   },
+//   pixabay: {
+//     apiKey: string,
+//     endpoint: string
+//   },
+//   pubsub: {
+//     projectId: string,
+//     subscriptionRender: string,
+//     topicRender: string
+//   },
+//   s3: {
+//     accessKeyId: string,
+//     accountId: string,
+//     bucketName: string,
+//     enabled: boolean,
+//     endpoint: string,
+//     provider: string,
+//     publicDomain: string,
+//     region: string,
+//     secretAccessKey: string
+//   }
+// }
 
 export interface ApiKeyEntity {
   id: string;
@@ -563,7 +819,7 @@ export interface AssetEntity {
   id: string;
   user_id?: string;
   name: string;
-  type: 'image' | 'video' | 'audio' | 'voice' | 'text' | 'render' | string;
+  type: 'image' | 'video' | 'audio' | 'voice' | 'bgm' | 'text' | 'render' | 'scene_image' | 'scene_end_image' | 'scene_video' | 'character_sheet' | 'character_avatar' | 'location_image' | 'prop_image' | string;
   ext?: string;
   size?: string;
   size_bytes?: number;
@@ -579,6 +835,8 @@ export interface AssetEntity {
   prompt?: string;
   provider?: string;
   aspect?: string;
+  version?: number;
+  is_active?: boolean;
   is_video?: boolean;
   is_audio?: boolean;
   synth_id_verified?: boolean;
@@ -663,6 +921,7 @@ export interface PipelineJobEntity {
   current_step: string;
   step_progress?: Record<string, PipelineJobStepProgress>;
   outputs?: Record<string, any>;
+  metadata?: Record<string, any>;
   logs: PipelineJobLog[];
   error?: string | null;
   created_at: string;
@@ -817,7 +1076,7 @@ export interface IProjectSettings {
   width: number;
   height: number;
   fps: number;
-  duration?: number;
+  duration: number;
   backgroundColor?: string;
   artboardColor?: string;
   format?: string;
@@ -880,4 +1139,442 @@ export interface RestoreTimelineResult {
   new_version_number: number;
   active_timeline: IProject;
   created_at: string;
+}
+
+// export interface IProjectSettings {
+//   width: number;
+//   height: number;
+//   fps: number;
+//   duration: number;
+//   backgroundColor: string;
+//   [key: string]: any;
+// }
+
+// export interface ITrack {
+//   id: string;
+//   name: string;
+//   type: string;
+//   clipIds: string[];
+//   accepts?: string[];
+//   static?: boolean;
+//   muted?: boolean;
+//   visible?: boolean;
+//   [key: string]: any;
+// }
+
+export interface IProject {
+  settings: IProjectSettings;
+  tracks: ITrack[];
+  clips: Record<string, any>;
+  // [key: string]: any;
+}
+
+export interface TimelineDimensions {
+  width: number;
+  height: number;
+  fps: number;
+}
+
+export interface SupervisionResult {
+  score: number;
+  pacing_score: number;
+  hook_strength_score: number;
+  consistency_score: number;
+  issues: string[];
+  suggestions: string[];
+}
+
+export interface ComplianceDimension {
+  label: string;
+  score: number;
+  status: string;
+  safe: boolean;
+  notes?: string;
+}
+
+export interface DeepResearch {
+  country: string;
+  copyright_findings: string;
+  regulatory_findings: string;
+  cultural_findings: string;
+  grounded_sources?: { title: string; url: string }[];
+}
+
+export interface ComplianceVerificationResult {
+  overall_score: number;
+  is_compliant: boolean;
+  market_research?: {
+    country: string;
+    copyright_findings: string;
+    regulatory_findings: string;
+    cultural_findings: string;
+    grounded_sources?: { title: string; url: string }[];
+  };
+  categories: {
+    violence: ComplianceDimension;
+    adult_content: ComplianceDimension;
+    cultural_sensitivity: ComplianceDimension;
+    copyright_ip: ComplianceDimension;
+  };
+  copyright_checks: Array<{
+    label: string;
+    status: string;
+    safe: boolean;
+  }>;
+  identified_issues: string[];
+  recommendations: string[];
+}
+
+
+export interface TrendTopic {
+  id?: string;
+  topic: string;
+  viralScore: number;
+  platform: string;
+  region: string;
+  tropes: string[];
+  description?: string;
+  competitorHook?: string;
+  hashtagVelocity?: string;
+  language?: string;
+}
+
+export interface TrendTopicOutput {
+  id: string;
+  topic: string;
+  description?: string;
+  trope: string;
+  hashtag_velocity: string;
+  competitor_hook: string;
+  country: string;
+  engagement_score: number;
+  genre?: string;
+}
+
+export interface ViralTrendItem extends TrendTopicOutput {
+  genre?: string;
+  target_episodes?: number;
+  duration_seconds?: number;
+  category?: string;
+  created_at?: string;
+}
+
+export interface ViralTrendPaginationResult {
+  items: ViralTrendItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  country: string;
+  updatedAt: string;
+  fromCache?: boolean;
+}
+
+export type ScriptShot = SceneEntity;
+export type ScriptScene = SceneEntity;
+
+export interface ScriptSceneGroup {
+  scene_number: number;
+  heading: string;
+  location: string;
+  time_of_day: string;
+  lighting_mood?: string;
+  shots: ScriptShot[];
+}
+
+export interface ScriptItem {
+  episode: string;
+  episode_number: number;
+  title: string;
+  synopsis: string;
+  screenplay?: string;
+  scene_core?: string;
+  conflict_escalation?: string;
+  cliffhanger_hook?: string;
+  total_duration_seconds: number;
+  scenes: SceneEntity[];
+  scene_groups?: ScriptSceneGroup[];
+  characters?: CharacterSeriesEntity[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
+}
+
+export interface ScriptAgentInput {
+  series_id?: string;
+  episode_number: number;
+  title?: string;
+  genre?: string;
+  visual_style?: string;
+  visual_style_prompt?: string;
+  synopsis?: string;
+  scene_core?: string;
+  conflict_escalation?: string;
+  cliffhanger_hook?: string;
+  characters?: CharacterSeriesEntity[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
+  story_core?: {
+    core_attraction?: string;
+    psychological_pleasure?: string;
+    gold_finger_rule?: string;
+  };
+  country?: string;
+  language?: string;
+  ratio?: string;
+  target_duration_seconds?: number;
+}
+
+export interface RefinePlanInput {
+  currentPlan: any;
+  userInstruction: string;
+}
+
+export interface RefinePlanOutput {
+  updatedPlan: MasterPlanOutput;
+  explanation: string;
+}
+
+export interface FullScriptPipelineRequest {
+  title: string;
+  genre: string;
+  visualStyle?: string;
+  visual_style?: string;
+  synopsis: string;
+  episodeNumber?: number;
+  episode_number?: number;
+  totalEpisodes?: number;
+  total_episodes?: number;
+}
+
+export interface FullScriptPipelineResponse {
+  outline: MasterPlanOutput;
+  adaptation: any;
+  scriptItem: ScriptItem;
+  supervision: SupervisionResult;
+}
+
+export interface AdaptationInput {
+  synopsis: string;
+  targetEpisodeCount: number;
+  pacingStyle: 'aggressive_hook' | 'slow_burn' | 'climax_twist';
+}
+
+export interface AdaptationOutput {
+  targetEpisodeCount: number;
+  pacingStyle: string;
+  actBreakdown: {
+    act1: { range: string; focus: string };
+    act2: { range: string; focus: string };
+    act3: { range: string; focus: string };
+  };
+  keyClimaxEpisodes: number[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  timestamp: number;
+  toolCalls?: Array<{
+    name: string;
+    args: any;
+    status: 'running' | 'success' | 'error';
+    result?: any;
+    retries?: number;
+  }>;
+  suggestions?: Array<{ label: string; prompt: string }>;
+}
+
+export interface EpisodeChatSession {
+  sessionId: string;
+  userId: string;
+  seriesId: string;
+  episodeId: string;
+  messages: ChatMessage[];
+  lastActive: number;
+  masterPlan?: MasterPlanOutput;
+  contextData?: any;
+}
+
+export interface StoryboardPanel {
+  id: string;
+  scene_index: number;
+  shot_number: number;
+  prompt: string;
+  camera_movement: string;
+  lighting_style: string;
+  character_anchors: string[];
+  image_url?: string;
+  duration_seconds: number;
+}
+
+export interface CreateSeriesParams {
+  id?: string;
+  user_id?: string;
+  title: string;
+  genre: string;
+  synopsis?: string;
+  visual_style?: string;
+  visual_style_prompt?: string;
+  target_audience?: string;
+  country?: string;
+  language?: string;
+  ratio?: string;
+  episode_count?: number;
+  master_plan?: any;
+  characters?: any[];
+  locations?: any[];
+  props?: any[];
+  pre_generate_ep1?: boolean;
+}
+
+export interface VideoRenderJob {
+  jobId: string;
+  seriesId: string;
+  episodeId: string;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  progress: number;
+  videoUrl?: string;
+  ssimParityScore?: number;
+  errorMessage?: string;
+}
+
+export interface GenerateSceneImageParams {
+  user_id?: string;
+  series_id?: string;
+  episode_id?: string;
+  scene_id?: string;
+  scene_index?: number;
+  prompt?: string;
+  aspect_ratio?: string;
+  style?: string;
+  characters?: string[];
+  scene_data?: Partial<SceneEntity>;
+  type?: string;
+  is_end_frame?: boolean;
+}
+
+export interface GenerateSceneVideoParams {
+  user_id?: string;
+  series_id?: string;
+  episode_id?: string;
+  scene_id?: string;
+  duration?: number | string;
+  motion?: string;
+  camera_movement?: string;
+  prompt?: string;
+  aspect_ratio?: string;
+  start_frame_url?: string;
+  end_frame_url?: string;
+  character_image_ids?: string | string[];
+  language?: string;
+  scene_data?: Partial<SceneEntity>;
+}
+
+export interface TTSRequest {
+  text: string;
+  voiceId: string;
+  language?: string;
+  speed?: number;
+  emotion?: string;
+  speech_tone?: string;
+}
+
+export interface ScreenplayAssetsResult {
+  characters: string[];
+  locations: string[];
+  props: string[];
+}
+
+export interface SfxCandidate {
+  id: string | number;
+  title: string;
+  url: string;
+  duration: number;
+  tags?: string[];
+  provider: 'freesound' | 'pixabay' | 'flexclip' | 'parallel';
+}
+
+export interface PlatformMetricItem {
+  platform: string;
+  channelName: string;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  estimatedRevenue: number;
+  retentionRatePct: number;
+  lastUpdated: string;
+}
+
+export interface DspSeparationResult {
+  bgmUrl: string;
+  speechStartUs: number;
+  speechEndUs: number;
+  speechDurationUs: number;
+  hasSpeechActivity: boolean;
+}
+
+export interface StemSeparationResult {
+  bgmUrl: string;
+  vocalsUrl?: string;
+  source: 'demucs-cloud-run';
+}
+
+export interface ViralTrendEntity {
+  id?: string;
+  cache_key: string;
+  country: string;
+  language: string;
+  items: ViralTrendItem[];
+  updated_at: Date | string;
+}
+
+export const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English',
+  vi: 'Vietnamese (Tiếng Việt)',
+  zh: 'Simplified Chinese (简体中文)',
+  'zh-cn': 'Simplified Chinese (简体中文)',
+  'zh-tw': 'Traditional Chinese (繁體中文)',
+  jp: 'Japanese (日本語)',
+  ja: 'Japanese (日本語)',
+  es: 'Spanish (Español)',
+  fr: 'French (Français)',
+  de: 'German (Deutsch)',
+  ko: 'Korean (한국어)',
+  th: 'Thai (ไทย)',
+  id: 'Indonesian (Bahasa Indonesia)',
+};
+
+export const MAX_TRENDS = 20;
+
+// export interface DeepgramWord {
+//   word: string;
+//   start: number;      // Seconds (float, 0-based in the media)
+//   end: number;        // Seconds (float, 0-based in the media)
+//   confidence?: number;
+//   punctuated_word?: string;
+// }
+
+// export interface CaptionCue {
+//   id: string;
+//   text: string;
+//   startMs: number;    // Milliseconds from start of video/scene (0-based in the video)
+//   endMs: number;      // Milliseconds from start of video/scene
+//   fromUs: number;     // Microseconds in the video
+//   toUs: number;       // Microseconds in the video
+//   durationUs?: number;
+//   words: CaptionWord[];
+// }
+
+export interface SceneAudioPipelineResult {
+  videoUrl: string;
+  bgmUrl: string;
+  voiceoverUrl: string;
+  voiceId: string;
+  voiceStartUs: number;
+  voiceDurationUs: number;
+  speechOnsetDetected: boolean;
+  words: SceneCaptionWord[];
+  captionsData: SceneCaptionData[];
 }

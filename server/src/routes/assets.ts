@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { nanoid } from 'nanoid';
 import { aiProviderRouter } from '@/integrations/ai/router/AIProviderRouter.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
@@ -42,6 +43,22 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
     const localStorage = LocalStorageAdapter.getInstance();
     const localPath = localStorage.getLocalFilePath(normalizedKey);
     if (localPath) {
+      // Background Auto-Sync: If active adapter is Cloud (GCS/S3/B2), sync local file up to cloud asynchronously
+      StorageFactory.getActiveAdapter().then(async (activeAdapter) => {
+        if (activeAdapter && !(activeAdapter instanceof LocalStorageAdapter)) {
+          const existsOnCloud = await activeAdapter.exists?.(normalizedKey);
+          if (!existsOnCloud) {
+            try {
+              const fileBuf = await fs.promises.readFile(localPath);
+              await activeAdapter.uploadFile(normalizedKey, fileBuf, mimeType);
+              Logger.info(`[StorageFactory] Auto-synced local file to Cloud Storage: ${normalizedKey}`);
+            } catch (syncErr: any) {
+              Logger.warn(`[StorageFactory] Background cloud sync failed for ${normalizedKey}: ${syncErr.message}`);
+            }
+          }
+        }
+      }).catch(() => {});
+
       return res.sendFile(localPath, {
         acceptRanges: true,
         cacheControl: true,
@@ -121,15 +138,18 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
 // GET /api/assets - List all assets directly from Database
 assetsRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const { type, search, series_id } = req.query;
+    const { type, search, series_id, episode_id, scene_id, character_id } = req.query;
     const db = await getDatabaseProvider();
     const userId = getUserId(req);
 
     const assets = await db.getAssets({
       user_id: userId,
       series_id: series_id as string | undefined,
-      type: type as string,
-      search: search as string,
+      episode_id: episode_id as string | undefined,
+      scene_id: scene_id as string | undefined,
+      character_id: character_id as string | undefined,
+      type: type as string | undefined,
+      search: search as string | undefined,
     });
 
     return res.json({
@@ -137,6 +157,100 @@ assetsRouter.get('/', async (req: Request, res: Response) => {
       data: assets,
       total: assets.length,
       message: 'Assets retrieved successfully from database',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SERVER_ERROR' });
+  }
+});
+
+// GET /api/assets/versions - Get all versions of assets for a specific episode/scene/character
+assetsRouter.get('/versions', async (req: Request, res: Response) => {
+  try {
+    const { series_id, episode_id, scene_id, character_id, type } = req.query;
+    const db = await getDatabaseProvider();
+    const userId = getUserId(req);
+
+    const assets = await db.getAssets({
+      user_id: userId,
+      series_id: series_id as string | undefined,
+      episode_id: episode_id as string | undefined,
+      scene_id: scene_id as string | undefined,
+      character_id: character_id as string | undefined,
+      type: type as string | undefined,
+    });
+
+    const totalCount = assets.length;
+    const versions = assets.map((a, index) => ({
+      ...a,
+      version: a.version || (totalCount - index),
+    }));
+
+    return res.json({
+      code: 200,
+      data: versions,
+      total: versions.length,
+      message: 'Asset versions retrieved successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/assets/select-version - Select and activate an asset version for a scene/episode
+assetsRouter.post('/select-version', async (req: Request, res: Response) => {
+  try {
+    const { asset_id, series_id, episode_id, scene_id, scene_index, is_end_frame } = req.body;
+    if (!asset_id) {
+      return res.status(400).json({ code: 400, data: null, message: 'asset_id is required', error: 'INVALID_PAYLOAD' });
+    }
+
+    const db = await getDatabaseProvider();
+    const asset = await db.getAssetById(asset_id);
+    if (!asset) {
+      return res.status(404).json({ code: 404, data: null, message: 'Asset not found', error: 'NOT_FOUND' });
+    }
+
+    const targetEpisodeId = episode_id || asset.episode_id;
+    const targetSceneId = scene_id || asset.scene_id;
+
+    if (targetEpisodeId) {
+      const episode = await db.getEpisodeById(targetEpisodeId);
+      if (episode && Array.isArray(episode.scenes)) {
+        const scIdx = scene_index !== undefined ? Number(scene_index) : undefined;
+        const targetScene = episode.scenes.find((s: any) => 
+          (targetSceneId && s.id === targetSceneId) || 
+          (scIdx !== undefined && s.index === scIdx)
+        );
+
+        if (targetScene) {
+          if (asset.type === 'scene_video') {
+            targetScene.video_url = asset.url;
+            targetScene.status = 'video_ready';
+          } else if (asset.type === 'scene_end_image' || is_end_frame) {
+            targetScene.storyboard_end_frame_url = asset.url;
+          } else if (asset.type === 'voice') {
+            targetScene.voiceover_url = asset.url;
+          } else if (asset.type === 'audio' || asset.type === 'bgm') {
+            targetScene.bgm_url = asset.url;
+          } else {
+            targetScene.storyboard_frame_url = asset.url;
+            targetScene.image_url = asset.url;
+            if (targetScene.status === 'draft') targetScene.status = 'image_ready';
+          }
+          await db.updateEpisode(targetEpisodeId, { scenes: episode.scenes });
+        }
+      }
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        asset,
+        activated: true,
+      },
+      message: `Asset version "${asset.name}" selected and activated successfully`,
       error: null,
     });
   } catch (err: any) {
@@ -188,18 +302,50 @@ assetsRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/assets/:id - Delete an asset from Database
+// DELETE /api/assets/:id - Delete an asset from Storage and Database
 assetsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const assetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const db = await getDatabaseProvider();
-    const deleted = await db.deleteAsset(assetId);
+    const asset = await db.getAssetById(assetId);
 
-    if (!deleted) {
+    if (!asset) {
       return res.status(404).json({ code: 404, data: null, message: 'Asset not found in database', error: 'NOT_FOUND' });
     }
 
-    return res.json({ code: 200, data: { id: assetId, deleted: true }, message: 'Asset deleted from database successfully', error: null });
+    // 1. Delete physical files on Storage Provider before deleting DB records
+    try {
+      const storage = await StorageFactory.getActiveAdapter();
+      const keysToDelete: string[] = [];
+
+      if (asset.s3_key) {
+        keysToDelete.push(asset.s3_key);
+      }
+      if (asset.url && asset.url.includes('/api/assets/file/')) {
+        const key = asset.url.replace('/api/assets/file/', '').replace(/^\/+/, '');
+        if (key && !keysToDelete.includes(key)) {
+          keysToDelete.push(key);
+        }
+      }
+      if (asset.thumbnail && asset.thumbnail.includes('/api/assets/file/')) {
+        const thumbKey = asset.thumbnail.replace('/api/assets/file/', '').replace(/^\/+/, '');
+        if (thumbKey && !keysToDelete.includes(thumbKey)) {
+          keysToDelete.push(thumbKey);
+        }
+      }
+
+      for (const key of keysToDelete) {
+        await storage.deleteFile(key);
+      }
+      Logger.info(`[AssetDelete] Successfully deleted ${keysToDelete.length} storage file(s) for asset "${assetId}".`);
+    } catch (storageErr: any) {
+      Logger.warn(`[AssetDelete] Cloud storage file deletion warning for asset "${assetId}": ${storageErr.message}`);
+    }
+
+    // 2. Delete asset record from Database
+    const deleted = await db.deleteAsset(assetId);
+
+    return res.json({ code: 200, data: { id: assetId, deleted: true }, message: 'Asset deleted from storage and database successfully', error: null });
   } catch (err: any) {
     return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SERVER_ERROR' });
   }

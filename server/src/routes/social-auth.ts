@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express';
-import { SocialAccount, SocialPlatform } from '@/database/index.js';
+import { SocialPlatform } from '@/types.js';
 import axios from 'axios';
 import { requireAuth } from '../middleware/RequireAuth.js';
 import { EnvConfig } from '@/config/env.js';
+import { getDatabaseProvider } from '~/database/index.js';
+import { getUserId } from '~/utils/auth.js';
+// import { SocialAccount } from '~/database/MongoDBProvider.js';
 
 const router = Router();
 
@@ -43,8 +46,13 @@ router.get('/callback/:platform', async (req: Request, res: Response) => {
     if (!state) {
       return res.status(400).send('Invalid state');
     }
+    
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-    const { userId } = JSON.parse(Buffer.from(state as string, 'base64').toString('ascii'));
+    // const { userId } = JSON.parse(Buffer.from(state as string, 'base64').toString('ascii'));
 
     let accessToken = '';
     let refreshToken = '';
@@ -129,14 +137,17 @@ router.get('/callback/:platform', async (req: Request, res: Response) => {
       channelName = userRes.data.data?.user?.display_name || 'TikTok Profile';
     }
 
-    await SocialAccount.findOneAndUpdate(
-      { userId, platform, channelId },
-      {
-        channelName,
-        accessToken,
-        refreshToken,
+    const db = await getDatabaseProvider();
+
+    await db.updateSocialAccount({
+        user_id: userId,
+        platform,
+        channel_id: channelId,
+        channel_name: channelName,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         scopes: ['publish', 'comments'],
-        isActive: true,
+        is_active: true,
       },
       { upsert: true, returnDocument: 'after' }
     );
@@ -152,8 +163,12 @@ router.get('/callback/:platform', async (req: Request, res: Response) => {
 // GET /api/v1/social/connections - List user's connected social accounts
 router.get('/connections', requireAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
-    const connections = await SocialAccount.find({ userId }).select('-accessToken -refreshToken');
+    const userId = getUserId(req);
+    if(!userId){
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const db = await getDatabaseProvider();
+    const connections = await db.listSocialAccounts(userId);
     res.json({ success: true, connections });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

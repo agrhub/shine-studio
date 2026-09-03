@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { SceneEntity, LocationAsset, PropAsset, CharacterSeriesEntity, SceneCaption, SceneCaptionWordLevel, SceneReferenceAssets, CharacterSceneCostumes, CharacterWardrobeVariant } from '../types.js';
+import type { SceneEntity, LocationAsset, PropAsset, CharacterSeriesEntity, SceneCaptionData, SceneCaptionWord, SceneReferenceAssets, CharacterSceneCostumes, CharacterWardrobeVariant } from '../types.js';
 
 export function normalizeSceneEntity(s: any, idx?: number): SceneEntity | null {
   if (!s || typeof s !== 'object') {
@@ -33,8 +33,8 @@ export function normalizeSceneEntity(s: any, idx?: number): SceneEntity | null {
   const voiceStartUs = Number(s.voice_start_us) || 0;
   const voiceDurationUs = Number(s.voice_duration_us) || 0;
 
-  const captionsData: SceneCaption[] = Array.isArray(s.captions_data) ? s.captions_data : [];
-  const words: SceneCaptionWordLevel[] = Array.isArray(s.words) ? s.words : [];
+  const captionsData: SceneCaptionData[] = Array.isArray(s.captions_data) ? s.captions_data : [];
+  const words: SceneCaptionWord[] = Array.isArray(s.words) ? s.words : [];
   const characterCostumes: CharacterSceneCostumes[] = Array.isArray(s.character_costumes) ? s.character_costumes : [];
 
   const rawRef = s.reference_assets || {};

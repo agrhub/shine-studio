@@ -1,6 +1,7 @@
 import { EnvConfig } from '@/config/env.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { nanoid } from 'nanoid';
+import type { StudioSystemConfig } from '@/types.js';
 
 export interface GrafanaLogEntry {
   id: string;
@@ -162,7 +163,7 @@ export class GrafanaObservabilityService {
   private async getGrafanaConfig(): Promise<{ url: string; mcpEndpoint: string; apiKey: string }> {
     try {
       const db = await getDatabaseProvider();
-      const savedConfig = await db.getSystemSetting('studio_config');
+      const savedConfig = await db.getSystemSetting<StudioSystemConfig>('studio_config');
       if (savedConfig?.grafana) {
         return {
           url: savedConfig.grafana.url || EnvConfig.grafana.url,

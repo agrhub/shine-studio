@@ -6,14 +6,7 @@ import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { Logger } from '@/utils/logger.js';
 import { PromptLoader } from '@/utils/PromptLoader.js';
 
-export interface SfxCandidate {
-  id: string | number;
-  title: string;
-  url: string;
-  duration: number;
-  tags?: string[];
-  provider: 'freesound' | 'pixabay' | 'flexclip' | 'parallel';
-}
+import { SfxCandidate } from '@/types.js';
 
 const FLEXCLIP_SFX_JSON_URL = 'https://resource.flexclip.com/json/stock/audio/stock_audio-audioSoundEffect-1.json';
 let flexclipStockCache: { timestamp: number; items: SfxCandidate[] } | null = null;

@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../gemini/GeminiClient.js';
 import { flowAdapter } from '../flow/FlowAdapter.js';
-import { getDatabaseProvider, AIAccountStatus, AIAccountType } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { AIAccountStatus, AIAccountType } from '~/types.js';
 import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import type { StudioSystemConfig } from '@/types.js';

@@ -6,7 +6,8 @@ import { DspAudioService } from '@/services/DspAudioService.js';
 import { CaptionService } from '@/services/CaptionService.js';
 import { SynthIDService } from '@/services/SynthIDService.js';
 import { CreditService } from '@/services/CreditService.js';
-import { CharacterSeriesEntity, getDatabaseProvider, SceneDialogue, SceneEntity } from '@/database/index.js';
+import { getDatabaseProvider } from '@/database/index.js';
+import { CharacterSeriesEntity, SceneDialogue, SceneEntity } from '@/types.js';
 import { getUserId } from '@/utils/auth.js';
 import { Logger } from '@/utils/logger.js';
 
@@ -245,12 +246,54 @@ router.post('/tts', async (req: Request, res: Response) => {
       sceneId: scene_id,
     });
 
+    // Save Asset Version in Database
+    let savedVoiceAsset: any = null;
+    try {
+      const db = await getDatabaseProvider();
+      const existingVoices = (episode_id || scene_id) ? await db.getAssets({
+        episode_id,
+        scene_id,
+        type: 'voice',
+      }) : [];
+      const voiceVersion = existingVoices.length + 1;
+
+      savedVoiceAsset = await db.saveAsset({
+        id: `ast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        user_id: userId,
+        name: `Voiceover_${scene_id || 'Scene'}_v${voiceVersion}`,
+        type: 'voice',
+        ext: '.wav',
+        size: `${((ttsResult.size_bytes || 0) / (1024 * 1024)).toFixed(1)} MB`,
+        size_bytes: ttsResult.size_bytes || 0,
+        category_label: 'Voiceover Audio',
+        category_color: 'text-emerald-500 dark:text-emerald-400',
+        s3_key: ttsResult.s3_key,
+        url: ttsResult.url,
+        thumbnail: ttsResult.url,
+        episode_id,
+        scene_id,
+        prompt: text || (Array.isArray(dialogue) ? dialogue.map((d: any) => d.line).join(' ') : ''),
+        provider: ttsResult.voice_name || ttsResult.voice_id,
+        version: voiceVersion,
+        is_active: true,
+        is_audio: true,
+        synth_id_verified: true,
+        synth_id_hash: synthIdResult.synthIdHash,
+        synth_id_metadata: synthIdResult.synthIdMetadata,
+        created_at: new Date().toISOString(),
+      });
+    } catch (dbErr: any) {
+      Logger.warn(`[VoicesTTS] Failed to record asset in DB: ${dbErr.message}`);
+    }
+
     res.set(synthIdResult.headers);
 
     return res.json({
       code: 200,
       data: {
         ...ttsResult,
+        asset_id: savedVoiceAsset?.id || undefined,
+        version: savedVoiceAsset?.version || 1,
         emotion: emotion || 'Neutral',
         intensity: intensity || 80,
         synth_id: synthIdResult.synthIdMetadata,

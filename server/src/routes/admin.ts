@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '../database/index.js';
+import type { PlatformAccount, PlatformSettings, StudioSystemConfig } from '../types.js';
 import { EnvConfig } from '../config/env.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
 import { GrafanaObservabilityService } from '../services/observability/GrafanaObservabilityService.js';
@@ -7,16 +8,28 @@ import os from 'os';
 
 export const adminRouter = Router();
 
-// GET /api/admin/users — Live user directory list from DB
+// GET /api/admin/users — Live user directory list from DB with search, filter, and pagination
 adminRouter.get('/users', async (req: Request, res: Response) => {
   try {
-    const dbProvider = await getDatabaseProvider();
-    let usersList: any[] = [];
-    if (typeof (dbProvider as any).getUsers === 'function') {
-      usersList = await (dbProvider as any).getUsers();
-    }
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const offset = (page - 1) * limit;
+    const search = (req.query.search as string) || '';
+    const tier = (req.query.tier as string) || '';
+    const role = (req.query.role as string) || '';
+    const status = (req.query.status as string) || '';
 
-    const normalized = (usersList || []).map((u: any) => ({
+    const dbProvider = await getDatabaseProvider();
+    const result = await dbProvider.getUsers({
+      search,
+      tier,
+      role,
+      status,
+      limit,
+      offset,
+    });
+
+    const normalized = (result.users || []).map((u: any) => ({
       id: u.id,
       name: u.name || (u.email ? u.email.split('@')[0] : 'Anonymous'),
       email: u.email || '',
@@ -26,24 +39,98 @@ adminRouter.get('/users', async (req: Request, res: Response) => {
       role: u.role || 'user',
       creditBalance: Number(u.credits ?? 100),
       credits: Number(u.credits ?? 100),
-      status: 'active',
+      status: u.status || (u.is_active === false ? 'locked' : 'active'),
+      is_active: u.is_active !== undefined ? u.is_active : u.status !== 'locked',
+      phone: u.phone || '',
+      last_login_at: u.last_login_at || null,
       two_factor_enabled: !!u.two_factor_enabled,
       created_at: u.created_at || u.createdAt || new Date().toISOString(),
     }));
 
     return res.json({
       code: 200,
-      data: normalized,
+      data: {
+        users: normalized,
+        total: result.total,
+        page,
+        limit,
+        totalPages: Math.ceil(result.total / limit) || 1,
+      },
       message: 'User directory retrieved from database',
       error: null,
     });
   } catch (err: any) {
     return res.status(500).json({
       code: 500,
-      data: [],
+      data: { users: [], total: 0, page: 1, limit: 10, totalPages: 1 },
       message: 'Failed to retrieve user directory',
       error: err.message,
     });
+  }
+});
+
+// GET /api/admin/users/:id — Get single user detail & credit activity
+adminRouter.get('/users/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.id;
+    const dbProvider = await getDatabaseProvider();
+    const user = await dbProvider.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ code: 404, message: 'User not found' });
+    }
+
+    let creditHistory: any[] = [];
+    try {
+      creditHistory = await dbProvider.getCreditHistory(userId, 15);
+    } catch {
+      creditHistory = [];
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        ...user,
+        creditBalance: Number(user.credits ?? 100),
+        status: user.status || (user.is_active === false ? 'locked' : 'active'),
+        is_active: user.is_active !== undefined ? user.is_active : user.status !== 'locked',
+        creditHistory,
+      },
+      message: 'User details retrieved',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, message: err.message });
+  }
+});
+
+// PATCH /api/admin/users/:id/status — Lock / Unlock user account
+adminRouter.patch('/users/:id/status', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.id;
+    const { status, is_active } = req.body;
+    const dbProvider = await getDatabaseProvider();
+    const user = await dbProvider.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ code: 404, message: 'User not found' });
+    }
+
+    if (status !== undefined) {
+      user.status = status;
+      user.is_active = status === 'active';
+    } else if (is_active !== undefined) {
+      user.is_active = Boolean(is_active);
+      user.status = is_active ? 'active' : 'locked';
+    }
+
+    await dbProvider.updateUser(user);
+    return res.json({
+      code: 200,
+      data: { id: user.id, status: user.status, is_active: user.is_active },
+      message: `User account has been ${user.status === 'locked' ? 'locked' : 'unlocked'} successfully`,
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, message: err.message });
   }
 });
 
@@ -70,18 +157,86 @@ adminRouter.patch('/users/:id/role', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/admin/users/:id/credits — Update user credits in DB
-adminRouter.patch('/users/:id/credits', async (req: Request, res: Response) => {
+// POST /api/admin/users/:id/topup — Top-up / adjust user credits in DB
+adminRouter.post('/users/:id/topup', async (req: Request, res: Response) => {
   try {
     const userId = req.params.id;
-    const { credits } = req.body;
+    const { amount, type = 'add', reason = 'Admin top-up' } = req.body;
     const dbProvider = await getDatabaseProvider();
     const user = await dbProvider.getUserById(userId);
     if (!user) {
       return res.status(404).json({ code: 404, message: 'User not found' });
     }
-    user.credits = Number(credits);
+
+    const currentBalance = Number(user.credits ?? 0);
+    const deltaAmount = Number(amount || 0);
+
+    if (type === 'set') {
+      user.credits = Math.max(0, deltaAmount);
+    } else {
+      user.credits = Math.max(0, currentBalance + deltaAmount);
+    }
+
     await dbProvider.updateUser(user);
+
+    // Record credit transaction
+    try {
+      await dbProvider.recordCreditTransaction({
+        id: `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        user_id: user.id,
+        amount: type === 'set' ? user.credits - currentBalance : deltaAmount,
+        activity: 'ADMIN_TOPUP',
+        details: reason,
+        balance_after: user.credits,
+        status: 'Success',
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
+
+    return res.json({
+      code: 200,
+      data: { id: user.id, credits: user.credits, previousCredits: currentBalance },
+      message: `Successfully updated user credits to ${user.credits}`,
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, message: err.message });
+  }
+});
+
+// PATCH /api/admin/users/:id/credits — Update user credits in DB (compatibility)
+adminRouter.patch('/users/:id/credits', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.id;
+    const { credits, amount, type = 'set', reason = 'Admin credit adjustment' } = req.body;
+    const dbProvider = await getDatabaseProvider();
+    const user = await dbProvider.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ code: 404, message: 'User not found' });
+    }
+
+    const currentBalance = Number(user.credits ?? 0);
+    if (credits !== undefined) {
+      user.credits = Math.max(0, Number(credits));
+    } else if (amount !== undefined) {
+      user.credits = type === 'add' ? Math.max(0, currentBalance + Number(amount)) : Math.max(0, Number(amount));
+    }
+
+    await dbProvider.updateUser(user);
+
+    try {
+      await dbProvider.recordCreditTransaction({
+        id: `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        user_id: user.id,
+        amount: user.credits - currentBalance,
+        activity: 'ADMIN_ADJUSTMENT',
+        details: reason,
+        balance_after: user.credits,
+        status: 'Success',
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
+
     return res.json({
       code: 200,
       data: { id: user.id, credits: user.credits },
@@ -98,9 +253,7 @@ adminRouter.delete('/users/:id', async (req: Request, res: Response) => {
   try {
     const userId = req.params.id;
     const dbProvider = await getDatabaseProvider();
-    if (typeof (dbProvider as any).deleteUser === 'function') {
-      await (dbProvider as any).deleteUser(userId);
-    }
+    await dbProvider.deleteUser(userId);
     return res.json({
       code: 200,
       data: { id: userId },
@@ -191,7 +344,7 @@ adminRouter.get('/studio-config', async (req: Request, res: Response) => {
   try {
     const dbProvider = await getDatabaseProvider();
     const flowAccountsFromDb = await dbProvider.getFlowAccounts();
-    const savedConfig = await dbProvider.getSystemSetting('studio_config');
+    const savedConfig = await dbProvider.getSystemSetting<StudioSystemConfig>('studio_config');
 
     const envFallbackConfig = {
       s3: {
@@ -393,7 +546,7 @@ adminRouter.patch('/studio-config', async (req: Request, res: Response) => {
     const dbProvider = await getDatabaseProvider();
 
     // Read current and merge with mask protection
-    const current = (await dbProvider.getSystemSetting('studio_config')) || {};
+    const current = (await dbProvider.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
     const envFallback = {
       s3: {
         bucketName: EnvConfig.s3.bucket || '',
@@ -424,7 +577,7 @@ adminRouter.patch('/studio-config', async (req: Request, res: Response) => {
     const merged = { ...current, ...cleanedUpdates };
 
     // Persist unmasked configuration to database
-    await dbProvider.saveSystemSetting('studio_config', merged);
+    await dbProvider.saveSystemSetting<StudioSystemConfig>('studio_config', merged);
 
     // Invalidate cached storage adapter singleton to apply newly selected provider immediately
     StorageFactory.clearAdapters();
@@ -445,18 +598,24 @@ adminRouter.get('/team-members', async (req: Request, res: Response) => {
   try {
     const dbProvider = await getDatabaseProvider();
     let members: any[] = [];
-    if (typeof (dbProvider as any).getUsers === 'function') {
-      const users = await (dbProvider as any).getUsers();
-      members = users.map((u: any) => ({
-        id: u.id,
-        name: u.name || u.email.split('@')[0],
-        email: u.email,
-        role: u.role || (u.tier === 'ENTERPRISE' ? 'Owner' : 'Editor'),
-        avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u.email)}`,
-        sharedProjectsCount: u.tier === 'PRO' ? 8 : 12,
-        joinedAt: u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : '2026-01-10',
-      }));
+    const users = await dbProvider.getUsers();
+    if (!users || users.users.length == 0) {
+      return res.json({
+        code: 200,
+        data: [],
+        message: 'Team members retrieved from database',
+        error: null,
+      });
     }
+    members = users.users.map((u: any) => ({
+      id: u.id,
+      name: u.name || u.email.split('@')[0],
+      email: u.email,
+      role: u.role || (u.tier === 'ENTERPRISE' ? 'Owner' : 'Editor'),
+      avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u.email)}`,
+      sharedProjectsCount: u.tier === 'PRO' ? 8 : 12,
+      joinedAt: u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : '2026-01-10',
+    }));
 
     return res.json({
       code: 200,
@@ -498,7 +657,7 @@ adminRouter.delete('/team-members/:id', (req: Request, res: Response) => {
 });
 
 // ─── Platform Integrations & SSO Configuration ──────────────────────────────
-export const defaultPlatformConfig = {
+export const defaultPlatformConfig : PlatformSettings = {
   publishing: {
     youtube: {
       enabled: false,
@@ -541,19 +700,25 @@ export const defaultPlatformConfig = {
       clientSecret: EnvConfig.oauth.tiktok.clientSecret,
       redirectUrl: EnvConfig.oauth.tiktok.oauthRedirectUri,
     },
+    github: {
+      enabled: false,
+      clientId: EnvConfig.oauth.github.clientId,
+      clientSecret: EnvConfig.oauth.github.clientSecret,
+      redirectUrl: EnvConfig.oauth.github.redirectUri,
+    }
   },
 };
 
-export async function getActivePlatformConfig() {
+export async function getActivePlatformConfig() : Promise<PlatformSettings>{
   try {
     const db = await getDatabaseProvider();
-    if (typeof (db as any).getSystemSetting === 'function') {
-      const saved = await (db as any).getSystemSetting('platform_admin_config');
-      if (saved) {
-        return typeof saved === 'string' ? JSON.parse(saved) : saved;
-      }
+    const saved = await db.getSystemSetting<PlatformSettings>('platform_admin_config');
+    if (saved) {
+      return typeof saved === 'string' ? JSON.parse(saved) : (saved as PlatformSettings);
     }
-  } catch {}
+  } catch (e: any) {
+    console.error('Error getting platform config:', e.message);
+  }
   return defaultPlatformConfig;
 }
 
@@ -572,11 +737,7 @@ adminRouter.patch('/platforms', async (req: Request, res: Response) => {
   try {
     const db = await getDatabaseProvider();
     const updated = req.body;
-    if (typeof (db as any).setSystemSetting === 'function') {
-      await (db as any).setSystemSetting('platform_admin_config', JSON.stringify(updated));
-    } else if (typeof (db as any).saveSystemSetting === 'function') {
-      await (db as any).saveSystemSetting('platform_admin_config', updated);
-    }
+    await db.saveSystemSetting<PlatformSettings>('platform_admin_config', updated);
     return res.json({ code: 200, data: updated, message: 'Platform and SSO configuration saved successfully', error: null });
   } catch (err: any) {
     return res.status(500).json({ code: 500, message: err.message, error: 'SAVE_CONFIG_ERROR' });

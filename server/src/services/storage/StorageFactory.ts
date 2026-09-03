@@ -202,6 +202,18 @@ export class StorageFactory {
       try {
         const local = await this.getAdapter('local');
         if (await local.exists?.(key)) {
+          // Asynchronously sync local file to active cloud adapter
+          (async () => {
+            try {
+              const fileBuf = await this.getFileBuffer(key);
+              if (fileBuf?.buffer && !(adapter instanceof LocalStorageAdapter)) {
+                await adapter.uploadFile(key, fileBuf.buffer, fileBuf.mimeType || 'application/octet-stream');
+                console.log(`[StorageFactory] Auto-synced missing cloud file from local disk: ${key}`);
+              }
+            } catch (syncErr: any) {
+              console.warn(`[StorageFactory] Auto-sync to cloud failed for ${key}: ${syncErr.message}`);
+            }
+          })();
           return (local as any).getFileStream(key, options);
         }
       } catch {}
@@ -221,6 +233,44 @@ export class StorageFactory {
       } catch {}
     }
     return (adapter as any).getFileStream(key, options);
+  }
+
+  /**
+   * Bulk sync all local storage files to the active cloud storage adapter.
+   */
+  public static async syncAllLocalToCloud(): Promise<{ total: number; synced: number; skipped: number; errors: number }> {
+    const local = await this.getAdapter('local');
+    const cloud = await this.getActiveAdapter();
+
+    if (cloud instanceof LocalStorageAdapter) {
+      return { total: 0, synced: 0, skipped: 0, errors: 0 };
+    }
+
+    const localFiles = await local.listFiles?.() || [];
+    let synced = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const file of localFiles) {
+      try {
+        const cloudExists = await cloud.exists?.(file.key);
+        if (cloudExists) {
+          skipped++;
+          continue;
+        }
+
+        const buf = await this.getFileBuffer(file.key);
+        if (buf?.buffer) {
+          await cloud.uploadFile(file.key, buf.buffer, buf.mimeType || 'application/octet-stream');
+          synced++;
+        }
+      } catch (err: any) {
+        console.warn(`[StorageFactory] Failed to sync ${file.key} to cloud: ${err.message}`);
+        errors++;
+      }
+    }
+
+    return { total: localFiles.length, synced, skipped, errors };
   }
 
   /**

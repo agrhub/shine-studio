@@ -7,7 +7,7 @@ import { TimelineService } from '@/services/TimelineService.js';
 import { generateDialogueVoiceSynthesis } from '@/routes/voices.js';
 import { generateCaptionsInternal } from '@/routes/captions.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
-import { translateDialogueList, buildWordLevelCaptionsFromDialogue, cleanDialogueLine } from '@/utils/captionAlignment.js';
+import { CaptionService } from '@/services/CaptionService.js';
 import { withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
 
 export class RenderToolExecutors {
@@ -111,7 +111,7 @@ export class RenderToolExecutors {
             if (!Array.isArray(sc.translations[dLang].dialogue) || sc.translations[dLang].dialogue.length === 0) {
               try {
                 Logger.info(`[RenderTools] Translating Scene #${sc.index || 1} dialogue to ${dLang}...`);
-                const translated = await translateDialogueList(rawDiag, dLang);
+                const translated = await CaptionService.translateDialogueList(rawDiag, dLang);
                 sc.translations[dLang].dialogue = translated;
                 episodeUpdated = true;
               } catch (trErr: any) {
@@ -173,7 +173,7 @@ export class RenderToolExecutors {
             if (!Array.isArray(sc.translations[cLang].dialogue) || sc.translations[cLang].dialogue.length === 0) {
               try {
                 Logger.info(`[RenderTools] Translating Scene #${sc.index || 1} captions to ${cLang}...`);
-                const translated = await translateDialogueList(rawDiag, cLang);
+                const translated = await CaptionService.translateDialogueList(rawDiag, cLang);
                 sc.translations[cLang].dialogue = translated;
                 episodeUpdated = true;
               } catch (trErr: any) {
@@ -190,7 +190,7 @@ export class RenderToolExecutors {
             const sceneDur = Number(sc.duration_seconds) || 6;
             const voiceStartSec = ((isPrimary ? sc.voice_start_us : sc.translations?.[cLang]?.voice_start_us) || 500_000) / 1_000_000;
 
-            const { captions_data, words, voice_start_us, voice_duration_us } = buildWordLevelCaptionsFromDialogue(
+            const { captions_data, words, voice_start_us, voice_duration_us } = CaptionService.buildWordLevelCaptionsFromDialogue(
               targetDialogue,
               sceneDur,
               voiceStartSec
@@ -244,10 +244,10 @@ export class RenderToolExecutors {
       Logger.info(`[RenderTools] Starting Headless CompositorWorker export for Episode #${episode.episode_number || 1} "${episode.title}" (Dubbing: [${dubbingLangs.join(', ')}], Captions: [${captionLangs.length ? captionLangs.join(', ') : 'None (No Subtitles)'}])...`);
 
       const job = compositorWorker.createJob({
-        seriesId: params.seriesId,
-        episodeId: params.episodeId,
-        dubbingLanguages: dubbingLangs,
-        captionLanguages: captionLangs,
+        series_id: params.seriesId,
+        episode_id: params.episodeId,
+        dubbing_languages: dubbingLangs,
+        caption_languages: captionLangs,
       });
 
       const finalJob: RenderJobState = await new Promise((resolve, reject) => {

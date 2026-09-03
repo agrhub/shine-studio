@@ -5,7 +5,7 @@ import { Logger } from '@/utils/logger.js';
 import { characterService } from '@/services/CharacterService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
-import type { CharacterSeriesEntity } from '@/types.js';
+import type { CharacterSeriesEntity, CharacterWardrobeVariant, AssetJobItem, EpisodeEntity } from '@/types.js';
 
 export class CharacterToolExecutors {
   /**
@@ -19,6 +19,7 @@ export class CharacterToolExecutors {
     aspectRatio?: string;
     style?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -44,13 +45,27 @@ export class CharacterToolExecutors {
         if (found.length > 0) targets = found;
       }
 
-      const results: any[] = [];
-      const updatedChars = [...allChars];
+      const results: Array<{ name: string; status: string; avatar?: string }> = [];
+      const updatedChars: CharacterSeriesEntity[] = [...allChars];
 
       for (const char of targets) {
-        if (!params.forceRegenerate && (char.avatar || (char as any).image_url)) {
-          Logger.info(`[CharacterTools] Character "${char.name}" already has avatar: ${char.avatar}. Skipping.`);
-          results.push({ name: char.name, status: 'already_exists', avatar: char.avatar });
+        const existingAvatar = char.avatar;
+        if (!params.forceRegenerate && existingAvatar) {
+          Logger.info(`[CharacterTools] Character "${char.name}" already has avatar: ${existingAvatar}. Skipping.`);
+          results.push({ name: char.name, status: 'already_exists', avatar: existingAvatar });
+          await params.onItemProgress?.({
+            asset: {
+              id: char.id,
+              name: `Portrait: ${char.name}`,
+              type: 'character',
+              status: 'completed',
+              url: existingAvatar,
+              thumbnail: existingAvatar,
+            },
+            current: results.length,
+            total: targets.length,
+            description: `Character Portrait: ${char.name} (Ready)`,
+          });
           continue;
         }
 
@@ -75,6 +90,20 @@ export class CharacterToolExecutors {
         }
 
         results.push({ name: char.name, status: 'generated', avatar: result.avatar_url });
+
+        await params.onItemProgress?.({
+          asset: {
+            id: char.id,
+            name: `Portrait: ${char.name}`,
+            type: 'character',
+            status: 'completed',
+            url: result.avatar_url,
+            thumbnail: result.avatar_url,
+          },
+          current: results.length,
+          total: targets.length,
+          description: `Generated Portrait: ${char.name}`,
+        });
       }
 
       await db.updateSeries(params.seriesId, { characters: updatedChars });
@@ -100,6 +129,7 @@ export class CharacterToolExecutors {
     episodeId: string;
     characterName?: string;
     forceRegenerate?: boolean;
+    onItemProgress?: (item: { asset: AssetJobItem; current: number; total: number; description: string }) => Promise<void> | void;
   }): Promise<ToolExecutionResult> {
     try {
       if (!params.userId) return { success: false, message: `No user selected. Please select a user first.` };
@@ -109,7 +139,7 @@ export class CharacterToolExecutors {
       const series = await db.getSeriesById(params.seriesId);
       if (!series) return { success: false, message: `Series ${params.seriesId} not found` };
 
-      let episode: any = null;
+      let episode: EpisodeEntity | null = null;
       if (params.episodeId) {
         episode = await db.getEpisodeById(params.episodeId);
       }
@@ -127,31 +157,44 @@ export class CharacterToolExecutors {
         if (found.length > 0) targets = found;
       }
 
-      const results: any[] = [];
-      const updatedChars: any[] = [...allChars];
+      const results: Array<{ character: string; variant: string; status: string; image_url?: string }> = [];
+      const updatedChars: CharacterSeriesEntity[] = [...allChars];
 
       for (const char of targets) {
-        const variants = (char as any).wardrobe_variants || [];
-        if (!variants.length) {
-          variants.push(
-            { variant_id: `wardrobe_${char.id}_signature`, name: 'Signature Look', category: 'Formal', clothing_and_accessories: char.clothing_and_accessories || 'Classic signature look' },
-            { variant_id: `wardrobe_${char.id}_casual`, name: 'Casual Look', category: 'Casual', clothing_and_accessories: 'Relaxed civilian attire' }
-          );
-        }
+        const variants: CharacterWardrobeVariant[] = char.wardrobe_variants && char.wardrobe_variants.length > 0
+          ? [...char.wardrobe_variants]
+          : [
+              { variant_id: `wardrobe_${char.id}_signature`, name: 'Signature Look', category: 'Formal', clothing_and_accessories: char.clothing_and_accessories || 'Classic signature look' },
+              { variant_id: `wardrobe_${char.id}_casual`, name: 'Casual Look', category: 'Casual', clothing_and_accessories: 'Relaxed civilian attire' }
+            ];
 
         for (const variant of variants) {
+          const varId = variant.variant_id || (variant as Partial<CharacterWardrobeVariant> & { id?: string }).id || `var_${char.id}`;
           if (!params.forceRegenerate && variant.image_url) {
             results.push({ character: char.name, variant: variant.name, status: 'already_exists', image_url: variant.image_url });
+            await params.onItemProgress?.({
+              asset: {
+                id: `${char.id}_${varId}`,
+                name: `Wardrobe: ${char.name} (${variant.name})`,
+                type: 'wardrobe',
+                status: 'completed',
+                url: variant.image_url,
+                thumbnail: variant.image_url,
+              },
+              current: results.length,
+              total: targets.length * 2,
+              description: `Wardrobe: ${char.name} - ${variant.name} (Ready)`,
+            });
             continue;
           }
 
           const { result } = await executeWithRetry(`Generate Wardrobe Variant "${variant.name}" for "${char.name}"`, async () => {
             return await characterService.generateWardrobeLookbook({
               character_id: char.id,
-              variant_id: variant.variant_id || variant.id,
+              variant_id: varId,
               variant_name: variant.name,
               char_name: char.name,
-              clothing_desc: variant.clothing_and_accessories || variant.description || 'Signature character wardrobe outfit',
+              clothing_desc: variant.clothing_and_accessories || (variant as any).description || 'Signature character wardrobe outfit',
               char_traits: char.visual_traits || char.physical_characteristics || char.traits,
               age: char.age,
               gender: char.gender,
@@ -165,6 +208,20 @@ export class CharacterToolExecutors {
 
           variant.image_url = result.image_url;
           results.push({ character: char.name, variant: variant.name, status: 'generated', image_url: result.image_url });
+
+          await params.onItemProgress?.({
+            asset: {
+              id: `${char.id}_${varId}`,
+              name: `Wardrobe: ${char.name} (${variant.name})`,
+              type: 'wardrobe',
+              status: 'completed',
+              url: result.image_url,
+              thumbnail: result.image_url,
+            },
+            current: results.length,
+            total: targets.length * 2,
+            description: `Generated Wardrobe: ${char.name} (${variant.name})`,
+          });
         }
 
         const idx = updatedChars.findIndex((c) => c.id === char.id);

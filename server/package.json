@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "build": "node -e \"require('fs-extra').removeSync('dist')\" && npx esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm \"--banner:js=import { createRequire as __esbuild_createRequire } from 'module'; import { fileURLToPath as __esbuild_fileURLToPath } from 'url'; import { dirname as __esbuild_dirname } from 'path'; const require = __esbuild_createRequire(import.meta.url); const __filename = __esbuild_fileURLToPath(import.meta.url); const __dirname = __esbuild_dirname(__filename);\" --outfile=dist/index.js --external:playwright --external:playwright-core --external:fluent-ffmpeg --external:ffmpeg-static --external:chromium-bidi* --external:fsevents && node -e \"require('fs-extra').copySync('src/skills', 'dist/skills'); require('fs-extra').copySync('src/prompts', 'dist/prompts')\"",
+    "build": "tsc --noEmit && node -e \"require('fs-extra').removeSync('dist')\" && npx esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm \"--banner:js=import { createRequire as __esbuild_createRequire } from 'module'; import { fileURLToPath as __esbuild_fileURLToPath } from 'url'; import { dirname as __esbuild_dirname } from 'path'; const require = __esbuild_createRequire(import.meta.url); const __filename = __esbuild_fileURLToPath(import.meta.url); const __dirname = __esbuild_dirname(__filename);\" --outfile=dist/index.js --external:playwright --external:playwright-core --external:fluent-ffmpeg --external:ffmpeg-static --external:chromium-bidi* --external:fsevents && node -e \"require('fs-extra').copySync('src/skills', 'dist/skills'); require('fs-extra').copySync('src/prompts', 'dist/prompts')\"",
     "postinstall": "node -e \"const fs=require('fs');if(fs.existsSync('../scripts/patch-renderer.js'))require('child_process').execSync('node ../scripts/patch-renderer.js',{stdio:'inherit'});else if(fs.existsSync('scripts/patch-renderer.js'))require('child_process').execSync('node scripts/patch-renderer.js',{stdio:'inherit'});\""
   },
   "dependencies": {
@@ -50,7 +51,8 @@
     "stripe": "^22.5.0",
     "uuid": "^14.0.1",
     "ws": "^8.21.3",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "axios": "^1.20.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

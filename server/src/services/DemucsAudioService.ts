@@ -2,11 +2,7 @@ import axios from 'axios';
 import { StorageFactory } from './storage/StorageFactory.js';
 import { Logger } from '../utils/logger.js';
 
-export interface StemSeparationResult {
-  bgmUrl: string;
-  vocalsUrl?: string;
-  source: 'demucs-cloud-run';
-}
+import { StemSeparationResult } from '../types.js';
 
 export class DemucsAudioService {
   /**

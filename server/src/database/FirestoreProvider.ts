@@ -2,6 +2,8 @@ import { Firestore } from '@google-cloud/firestore';
 import { nanoid } from 'nanoid';
 import {
   IDatabaseProvider,
+} from './IDatabaseProvider.js';
+import {
   UserEntity,
   SeriesEntity,
   EpisodeEntity,
@@ -15,7 +17,9 @@ import {
   TimelineSnapshotVersion,
   TimelineSnapshotHistoryItem,
   RestoreTimelineResult,
-} from './IDatabaseProvider.js';
+  ChatMessageEntity,
+  SocialAccountEntity,
+} from '~/types.js';
 import { Logger } from '../utils/logger.js';
 import { normalizePureTimeline } from '../utils/timeline.js';
 
@@ -39,6 +43,38 @@ function sanitizeForFirestore<T>(obj: T): T {
 
 export class FirestoreProvider implements IDatabaseProvider {
   private db!: Firestore;
+  private readCache = new Map<string, { data: any; expiresAt: number }>();
+
+  private getCached<T>(key: string): T | null {
+    const entry = this.readCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.readCache.delete(key);
+      return null;
+    }
+    return entry.data as T;
+  }
+
+  private setCache(key: string, data: any, ttlMs = 10000): void {
+    if (data === null || data === undefined) return;
+    this.readCache.set(key, {
+      data,
+      expiresAt: Date.now() + ttlMs,
+    });
+    // Cap cache size
+    if (this.readCache.size > 2000) {
+      const oldestKey = this.readCache.keys().next().value;
+      if (oldestKey) this.readCache.delete(oldestKey);
+    }
+  }
+
+  private invalidateCachePrefix(prefix: string): void {
+    for (const key of this.readCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.readCache.delete(key);
+      }
+    }
+  }
 
   public async initialize(): Promise<void> {
     const projectId = process.env.FIRESTORE_PROJECT_ID || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
@@ -53,7 +89,7 @@ export class FirestoreProvider implements IDatabaseProvider {
     if (keyFilename) firestoreOptions.keyFilename = keyFilename;
 
     this.db = new Firestore(firestoreOptions);
-    Logger.info(`[FirestoreProvider] Initialized Firestore connection (Project: ${projectId || 'ADC/default'}, DB: ${databaseId})`);
+    Logger.info(`[FirestoreProvider] Initialized Firestore connection (Project: ${projectId || 'ADC/default'}, DB: ${databaseId}) with In-Memory Acceleration Cache`);
   }
 
   // ==================== Users ====================
@@ -68,6 +104,7 @@ export class FirestoreProvider implements IDatabaseProvider {
       created_at: user.created_at || new Date().toISOString(),
     };
     await this.db.collection('users').doc(id).set(created, { merge: true });
+    this.readCache.delete(`user:${id}`);
     return created;
   }
 
@@ -84,9 +121,15 @@ export class FirestoreProvider implements IDatabaseProvider {
   }
 
   public async getUserById(id: string): Promise<UserEntity | null> {
+    const cacheKey = `user:${id}`;
+    const cached = this.getCached<UserEntity>(cacheKey);
+    if (cached) return cached;
+
     const doc = await this.db.collection('users').doc(id).get();
     if (!doc.exists) return null;
-    return doc.data() as UserEntity;
+    const user = doc.data() as UserEntity;
+    this.setCache(cacheKey, user, 30000);
+    return user;
   }
 
   public async countUsers(): Promise<number> {
@@ -94,8 +137,72 @@ export class FirestoreProvider implements IDatabaseProvider {
     return snapshot.data().count;
   }
 
+  public async getUsers(filter?: {
+    search?: string;
+    tier?: string;
+    role?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ users: UserEntity[]; total: number }> {
+    const usersRef = this.db.collection('users');
+    const snapshot = await usersRef.get();
+    let list: UserEntity[] = [];
+
+    snapshot.forEach(doc => {
+      const data = doc.data() as UserEntity;
+      list.push(data);
+    });
+
+    // Apply filtering
+    if (filter?.search) {
+      const q = filter.search.toLowerCase().trim();
+      list = list.filter(u =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.id && u.id.toLowerCase().includes(q))
+      );
+    }
+    if (filter?.tier) {
+      const t = filter.tier.toLowerCase().trim();
+      list = list.filter(u => (u.tier || 'FREE').toLowerCase() === t);
+    }
+    if (filter?.role) {
+      const r = filter.role.toLowerCase().trim();
+      list = list.filter(u => (u.role || 'user').toLowerCase() === r);
+    }
+    if (filter?.status) {
+      const s = filter.status.toLowerCase().trim();
+      list = list.filter(u => {
+        const userStatus = (u.status || (u.is_active === false ? 'locked' : 'active')).toLowerCase();
+        return userStatus === s;
+      });
+    }
+
+    // Sort descending by created_at
+    list.sort((a, b) => {
+      const dateA = new Date(a.created_at || 0).getTime();
+      const dateB = new Date(b.created_at || 0).getTime();
+      return dateB - dateA;
+    });
+
+    const total = list.length;
+    const offset = filter?.offset || 0;
+    const limit = filter?.limit || 20;
+    const paginated = list.slice(offset, offset + limit);
+
+    return { users: paginated, total };
+  }
+
+  public async deleteUser(userId: string): Promise<boolean> {
+    await this.db.collection('users').doc(userId).delete();
+    this.readCache.delete(`user:${userId}`);
+    return true;
+  }
+
   public async updateUser(user: UserEntity): Promise<UserEntity> {
     await this.db.collection('users').doc(user.id).set(user, { merge: true });
+    this.readCache.delete(`user:${user.id}`);
     const updated = await this.getUserById(user.id);
     return updated || user;
   }
@@ -106,7 +213,97 @@ export class FirestoreProvider implements IDatabaseProvider {
     if (prefs.theme) updates.theme = prefs.theme;
     if (prefs.language) updates.language = prefs.language;
     await docRef.set(updates, { merge: true });
+    this.readCache.delete(`user:${userId}`);
     return this.getUserById(userId);
+  }
+
+  // ==================== Chat History & Session Messages ====================
+  public async saveChatMessage(message: ChatMessageEntity): Promise<ChatMessageEntity> {
+    const msgId = message.id || `msg_${Date.now()}_${nanoid(6)}`;
+    const entity: ChatMessageEntity = {
+      ...message,
+      id: msgId,
+      created_at: message.created_at || new Date().toISOString(),
+      timestamp: message.timestamp || Date.now(),
+    };
+    const clean = sanitizeForFirestore(entity);
+    await this.db.collection('chat_messages').doc(msgId).set(clean);
+    return entity;
+  }
+
+  public async saveChatMessages(messages: ChatMessageEntity[]): Promise<void> {
+    if (!messages || messages.length === 0) return;
+    const batch = this.db.batch();
+    for (const message of messages) {
+      const msgId = message.id || `msg_${Date.now()}_${nanoid(6)}`;
+      const entity: ChatMessageEntity = {
+        ...message,
+        id: msgId,
+        created_at: message.created_at || new Date().toISOString(),
+        timestamp: message.timestamp || Date.now(),
+      };
+      const clean = sanitizeForFirestore(entity);
+      batch.set(this.db.collection('chat_messages').doc(msgId), clean);
+    }
+    await batch.commit();
+  }
+
+  public async getChatMessages(filter: {
+    userId: string;
+    sessionId?: string;
+    seriesId?: string;
+    episodeId?: string;
+    scope?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ messages: ChatMessageEntity[]; total: number }> {
+    let query: any = this.db.collection('chat_messages').where('user_id', '==', filter.userId);
+
+    if (filter.sessionId) {
+      query = query.where('session_id', '==', filter.sessionId);
+    }
+    if (filter.seriesId) {
+      query = query.where('series_id', '==', filter.seriesId);
+    }
+    if (filter.episodeId) {
+      query = query.where('episode_id', '==', filter.episodeId);
+    }
+    if (filter.scope) {
+      query = query.where('scope', '==', filter.scope);
+    }
+
+    const snapshot = await query.get();
+    const allMessages: ChatMessageEntity[] = snapshot.docs.map((d: any) => d.data() as ChatMessageEntity);
+
+    // Sort chronologically
+    allMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    const total = allMessages.length;
+    const limit = filter.limit && filter.limit > 0 ? filter.limit : 50;
+    const offset = filter.offset || 0;
+
+    let paginated: ChatMessageEntity[];
+    if (offset > 0) {
+      paginated = allMessages.slice(offset, offset + limit);
+    } else {
+      // Top latest history slice
+      paginated = allMessages.slice(Math.max(0, total - limit));
+    }
+
+    return { messages: paginated, total };
+  }
+
+  public async deleteChatSession(userId: string, sessionId: string): Promise<boolean> {
+    const snapshot = await this.db.collection('chat_messages')
+      .where('user_id', '==', userId)
+      .where('session_id', '==', sessionId)
+      .get();
+
+    if (snapshot.empty) return true;
+    const batch = this.db.batch();
+    snapshot.docs.forEach((doc: any) => batch.delete(doc.ref));
+    await batch.commit();
+    return true;
   }
 
   // ==================== Credits & Deductions ====================
@@ -196,6 +393,10 @@ export class FirestoreProvider implements IDatabaseProvider {
     if (!series.title) {
       throw new Error('title is required to create a series');
     }
+    // Prevent phantom global series from ever being created in DB
+    if (series.id === 'global' || series.id?.startsWith('wiz_') || series.id?.startsWith('temp_')) {
+      throw new Error('Cannot persist temporary or global session as database series');
+    }
     const id = series.id || `ser_${nanoid(10)}`;
     const now = new Date().toISOString();
     const created: SeriesEntity = {
@@ -206,10 +407,15 @@ export class FirestoreProvider implements IDatabaseProvider {
       updated_at: now,
     };
     await this.db.collection('series').doc(id).set(sanitizeForFirestore(created));
+    this.invalidateCachePrefix('series:');
     return created;
   }
 
   public async getSeriesList(userId?: string, search?: string, status?: string): Promise<SeriesEntity[]> {
+    const cacheKey = `series_list:${userId || 'all'}:${search || ''}:${status || ''}`;
+    const cached = this.getCached<SeriesEntity[]>(cacheKey);
+    if (cached) return cached;
+
     let query: FirebaseFirestore.Query = this.db.collection('series');
     if (userId) {
       query = query.where('user_id', '==', userId);
@@ -221,6 +427,9 @@ export class FirestoreProvider implements IDatabaseProvider {
     const snapshot = await query.get();
     let list = snapshot.docs.map(doc => doc.data() as SeriesEntity);
 
+    // Filter out phantom global or temp documents if previously persisted
+    list = list.filter(s => s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
+
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(s =>
@@ -230,34 +439,88 @@ export class FirestoreProvider implements IDatabaseProvider {
       );
     }
 
-    return list.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
+    const sorted = list.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
+    this.setCache(cacheKey, sorted, 15000);
+    return sorted;
   }
 
   public async getSeriesById(id: string): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
+    const cacheKey = `series:${id}`;
+    const cached = this.getCached<SeriesEntity>(cacheKey);
+    if (cached) return cached;
+
     const doc = await this.db.collection('series').doc(id).get();
     if (!doc.exists) return null;
-    return doc.data() as SeriesEntity;
+    const series = doc.data() as SeriesEntity;
+    this.setCache(cacheKey, series, 15000);
+    return series;
   }
 
   public async updateSeries(id: string, updates: Partial<SeriesEntity>): Promise<SeriesEntity | null> {
+    if (!id || id === 'global' || id.startsWith('wiz_') || id.startsWith('temp_')) return null;
     const now = new Date().toISOString();
     await this.db.collection('series').doc(id).set(sanitizeForFirestore({ ...updates, updated_at: now }), { merge: true });
+    this.invalidateCachePrefix('series:');
+    this.invalidateCachePrefix('series_list:');
     return this.getSeriesById(id);
   }
 
   public async deleteSeries(id: string): Promise<boolean> {
-    await this.db.collection('series').doc(id).delete();
-
-    // Cascade delete episodes
-    const epSnap = await this.db.collection('episodes').where('series_id', '==', id).get();
     const batch = this.db.batch();
+    batch.delete(this.db.collection('series').doc(id));
+
+    // Find all episodes belonging to this series
+    const epSnap = await this.db.collection('episodes').where('series_id', '==', id).get();
+    const episodeIds = epSnap.docs.map(doc => doc.id);
     epSnap.docs.forEach(doc => {
       batch.delete(doc.ref);
       batch.delete(this.db.collection('timelines').doc(doc.id));
     });
-    await batch.commit();
 
+    // Delete timeline versions of all episodes in series
+    for (const epId of episodeIds) {
+      const vers = await this.db.collection('timeline_versions').where('episode_id', '==', epId).get();
+      vers.docs.forEach(doc => batch.delete(doc.ref));
+    }
+
+    // Delete chat messages associated with this series
+    const msgs = await this.db.collection('chat_messages').where('series_id', '==', id).get();
+    msgs.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Delete assets associated with this series
+    const assets = await this.db.collection('assets').where('series_id', '==', id).get();
+    assets.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Delete pipeline background jobs associated with this series
+    const jobs = await this.db.collection('pipeline_jobs').where('series_id', '==', id).get();
+    jobs.docs.forEach(doc => batch.delete(doc.ref));
+
+    await batch.commit();
     return true;
+  }
+
+  public async syncSeriesEpisodeCounters(seriesId: string): Promise<void> {
+    if (!seriesId || seriesId === 'global' || seriesId.startsWith('wiz_') || seriesId.startsWith('temp_')) return;
+    try {
+      const epSnap = await this.db.collection('episodes').where('series_id', '==', seriesId).get();
+      const episodes = epSnap.docs.map(d => d.data() as EpisodeEntity);
+      const episode_count = episodes.length;
+      const published_episode_count = episodes.filter(e => e.status === 'PUBLISHED').length;
+
+      await this.db.collection('series').doc(seriesId).set(
+        sanitizeForFirestore({
+          episode_count,
+          published_episode_count,
+          updated_at: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+      this.invalidateCachePrefix('series:');
+      this.invalidateCachePrefix('series_list:');
+    } catch (err: any) {
+      Logger.warn(`[FirestoreProvider] Failed to sync series episode counters for ${seriesId}: ${err?.message}`);
+    }
   }
 
   // ==================== Episodes ====================
@@ -275,6 +538,7 @@ export class FirestoreProvider implements IDatabaseProvider {
       updated_at: now,
     };
     await this.db.collection('episodes').doc(id).set(sanitizeForFirestore(created));
+    await this.syncSeriesEpisodeCounters(episode.series_id);
     return created;
   }
 
@@ -293,7 +557,42 @@ export class FirestoreProvider implements IDatabaseProvider {
   public async updateEpisode(id: string, updates: Partial<EpisodeEntity>): Promise<EpisodeEntity | null> {
     const now = new Date().toISOString();
     await this.db.collection('episodes').doc(id).set(sanitizeForFirestore({ ...updates, updated_at: now }), { merge: true });
-    return this.getEpisodeById(id);
+    const updated = await this.getEpisodeById(id);
+    if (updated?.series_id && (updates.status !== undefined || updates.published_urls !== undefined || updates.published_platforms !== undefined)) {
+      await this.syncSeriesEpisodeCounters(updated.series_id);
+    }
+    return updated;
+  }
+
+  public async deleteEpisode(id: string): Promise<boolean> {
+    const ep = await this.getEpisodeById(id);
+    const seriesId = ep?.series_id;
+
+    const batch = this.db.batch();
+    batch.delete(this.db.collection('episodes').doc(id));
+    batch.delete(this.db.collection('timelines').doc(id));
+
+    // Cascade delete timeline versions for this episode
+    const vers = await this.db.collection('timeline_versions').where('episode_id', '==', id).get();
+    vers.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Cascade delete chat messages for this episode
+    const msgs = await this.db.collection('chat_messages').where('episode_id', '==', id).get();
+    msgs.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Cascade delete pipeline jobs for this episode
+    const jobs = await this.db.collection('pipeline_jobs').where('episode_id', '==', id).get();
+    jobs.docs.forEach(doc => batch.delete(doc.ref));
+
+    // Cascade delete assets for this episode
+    const assets = await this.db.collection('assets').where('episode_id', '==', id).get();
+    assets.docs.forEach(doc => batch.delete(doc.ref));
+
+    await batch.commit();
+    if (seriesId) {
+      await this.syncSeriesEpisodeCounters(seriesId);
+    }
+    return true;
   }
 
   // ==================== Timeline & Versions ====================
@@ -320,9 +619,8 @@ export class FirestoreProvider implements IDatabaseProvider {
       created_at: now,
     };
 
-    const batch = this.db.batch();
-    batch.set(this.db.collection('timeline_versions').doc(version_id), sanitizeForFirestore(versionDoc));
-    batch.set(this.db.collection('timelines').doc(episode_id), sanitizeForFirestore({
+    // Save latest timeline and version document in independent writes to avoid bundling huge payloads into a single transaction/batch
+    await this.db.collection('timelines').doc(episode_id).set(sanitizeForFirestore({
       episode_id,
       version_id,
       version_number,
@@ -330,7 +628,22 @@ export class FirestoreProvider implements IDatabaseProvider {
       updated_at: now,
     }));
 
-    await batch.commit();
+    await this.db.collection('timeline_versions').doc(version_id).set(sanitizeForFirestore(versionDoc));
+
+    // Cap timeline history to maximum 20 versions (delete older versions beyond top 19 existing in background)
+    try {
+      const allDocs = historySnap.docs.map(d => ({ ref: d.ref, data: d.data() }));
+      allDocs.sort((a, b) => new Date(b.data.created_at || 0).getTime() - new Date(a.data.created_at || 0).getTime());
+      if (allDocs.length >= 20) {
+        const toDelete = allDocs.slice(19);
+        for (const item of toDelete) {
+          await item.ref.delete().catch(() => {});
+        }
+      }
+    } catch (cleanErr) {
+      Logger.warn(`[FirestoreProvider] Failed to clean up old timeline versions: ${cleanErr}`);
+    }
+
     return { version_id, version_number, updated_at: now };
   }
 
@@ -491,6 +804,8 @@ export class FirestoreProvider implements IDatabaseProvider {
   public async getAssets(filter?: {
     user_id?: string;
     series_id?: string;
+    episode_id?: string;
+    scene_id?: string;
     type?: string;
     character_id?: string;
     search?: string;
@@ -498,6 +813,8 @@ export class FirestoreProvider implements IDatabaseProvider {
     let query: FirebaseFirestore.Query = this.db.collection('assets');
     if (filter?.user_id) query = query.where('user_id', '==', filter.user_id);
     if (filter?.series_id) query = query.where('series_id', '==', filter.series_id);
+    if (filter?.episode_id) query = query.where('episode_id', '==', filter.episode_id);
+    if (filter?.scene_id) query = query.where('scene_id', '==', filter.scene_id);
     if (filter?.type) query = query.where('type', '==', filter.type);
     if (filter?.character_id) query = query.where('character_id', '==', filter.character_id);
 
@@ -513,6 +830,12 @@ export class FirestoreProvider implements IDatabaseProvider {
     }
 
     return list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  }
+
+  public async getAssetById(id: string): Promise<AssetEntity | null> {
+    const doc = await this.db.collection('assets').doc(id).get();
+    if (!doc.exists) return null;
+    return doc.data() as AssetEntity;
   }
 
   public async deleteAsset(id: string): Promise<boolean> {
@@ -667,5 +990,102 @@ export class FirestoreProvider implements IDatabaseProvider {
   public async findActivePipelineJob(series_id: string, episode_id: string, type?: string): Promise<any | null> {
     const jobs = await this.getPipelineJobs({ series_id, episode_id });
     return jobs.find(j => (j.status === 'running' || j.status === 'queued') && (!type || j.type === type)) || null;
+  }
+
+  // ─── Viral Trends Storage & Persistence ───────────────────────────────────
+
+  public async getViralTrends(country: string, language: string): Promise<{ items: any[]; updated_at: Date } | null> {
+    try {
+      const cache_key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+      const snap = await this.db.collection('viral_trends').doc(cache_key).get();
+      if (!snap.exists) return null;
+      const data = snap.data() as any;
+      return {
+        items: data?.items || [],
+        updated_at: data?.updated_at ? new Date(data.updated_at) : new Date(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  public async saveViralTrends(country: string, language: string, items: any[]): Promise<void> {
+    try {
+      const cache_key = `${country.toUpperCase()}_${language.toLowerCase()}`;
+      await this.db.collection('viral_trends').doc(cache_key).set({
+        cache_key,
+        country: country.toUpperCase(),
+        language: language.toLowerCase(),
+        items: items || [],
+        updated_at: new Date().toISOString(),
+      }, { merge: true });
+    } catch {
+      // Non-blocking
+    }
+  }
+
+  public async getAllCachedViralTrends(): Promise<Array<{ cache_key: string; country: string; language: string; items: any[]; updated_at: Date }>> {
+    try {
+      const snap = await this.db.collection('viral_trends').get();
+      return snap.docs.map(doc => {
+        const d = doc.data() as any;
+        return {
+          cache_key: doc.id,
+          country: d.country,
+          language: d.language,
+          items: d.items || [],
+          updated_at: d.updated_at ? new Date(d.updated_at) : new Date(),
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── Social Connected Accounts ───────────────────────────────────────────
+  public async updateSocialAccount(account: Partial<SocialAccountEntity>): Promise<SocialAccountEntity> {
+    const user_id = account.user_id || '';
+    const platform = account.platform || '';
+    const channel_id = account.channel_id || '';
+    const docId = `${user_id}_${platform}_${channel_id}`;
+    const ref = this.db.collection('social_accounts').doc(docId);
+    const existingSnap = await ref.get();
+    const existing = existingSnap.exists ? existingSnap.data() : {};
+
+    const updated: any = {
+      ...existing,
+      ...sanitizeForFirestore(account),
+      updated_at: new Date().toISOString(),
+    };
+    if (!existingSnap.exists) {
+      updated.created_at = new Date().toISOString();
+    }
+    await ref.set(updated, { merge: true });
+    return updated as SocialAccountEntity;
+  }
+
+  public async listSocialAccounts(user_id: string): Promise<SocialAccountEntity[]> {
+    try {
+      const snap = await this.db.collection('social_accounts').where('user_id', '==', user_id).get();
+      return snap.docs.map(d => d.data() as SocialAccountEntity).filter(a => a.is_active !== false);
+    } catch {
+      return [];
+    }
+  }
+
+  public async deleteSocialAccount(user_id: string, platform: string, channel_id?: string): Promise<boolean> {
+    try {
+      let query = this.db.collection('social_accounts').where('user_id', '==', user_id).where('platform', '==', platform);
+      if (channel_id) {
+        query = query.where('channel_id', '==', channel_id);
+      }
+      const snap = await query.get();
+      const batch = this.db.batch();
+      snap.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
