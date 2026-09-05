@@ -31,7 +31,6 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useSeriesStore } from '@/stores/useSeriesStore';
 import CountryFlag from '@/components/common/CountryFlag.vue';
 import {
-  getMainLanguageForCountry,
   getLanguageByCode,
 } from '@/constants/geminiLanguages';
 import { core } from '@/utils/project';
@@ -59,11 +58,7 @@ const duration = computed(() => playbackState.value.duration);
 const activePreviewCaptionLang = computed(() => seriesStore.activePreviewCaptionLang);
 const activePreviewVoiceLang = computed(() => seriesStore.activePreviewVoiceLang);
 const mainLang = computed(() => {
-  const langCode = seriesStore.currentSeries?.language;
-  if (langCode) {
-    return getLanguageByCode(langCode);
-  }
-  return getMainLanguageForCountry(seriesStore.currentSeries?.country);
+  return getLanguageByCode(seriesStore.currentSeries?.language || 'en-US');
 });
 
 const availableCaptionLanguages = computed(() => {

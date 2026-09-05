@@ -24,6 +24,8 @@ import CharacterDetailModal from '@/components/modals/CharacterDetailModal.vue';
 // Tab sub-components
 import PipelineTab from './workspace/PipelineTab.vue';
 import ScriptTab from './workspace/ScriptTab.vue';
+import AssetTab from './workspace/AssetTab.vue';
+import StoryboardTab from './workspace/StoryboardTab.vue';
 import AudioTab from './workspace/AudioTab.vue';
 import CaptionsTab from './workspace/CaptionsTab.vue';
 import Chatbot from './workspace/Chatbot.vue';
@@ -84,12 +86,12 @@ watch(() => seriesStore.activeLanguageCode, (activeLang) => {
 });
 
 // Right sidebar tab state
-const rightTab = ref<'pipeline' | 'script' | 'audio' | 'captions'>('pipeline');
+const rightTab = ref<'pipeline' | 'script' | 'assets' | 'storyboard' | 'audio' | 'captions'>('script');
 const isAiSidebarOpen = ref(true);
 const isLeftSidebarCollapsed = ref(false);
 const isTabSidebarCollapsed = ref(true);
 
-function toggleTabSidebar(tabId: 'pipeline' | 'script' | 'audio' | 'captions') {
+function toggleTabSidebar(tabId: 'pipeline' | 'script' | 'assets' | 'storyboard' | 'audio' | 'captions') {
   if (!isTabSidebarCollapsed.value && rightTab.value === tabId) {
     isTabSidebarCollapsed.value = true;
   } else {
@@ -1304,6 +1306,13 @@ onUnmounted(() => {
                   <ScriptTab
                     v-else-if="rightTab === 'script'"
                     @open-master-script="openMasterScript"
+                    @extracted="rightTab = 'assets'"
+                  />
+                  <AssetTab
+                    v-else-if="rightTab === 'assets'"
+                  />
+                  <StoryboardTab
+                    v-else-if="rightTab === 'storyboard'"
                   />
                   <AudioTab
                     v-else-if="rightTab === 'audio'"
@@ -1334,7 +1343,9 @@ onUnmounted(() => {
                   <el-button
                     v-for="tab in [
                       { id: 'pipeline', label: t('workspace.tabPipeline', 'Pipeline'), icon: 'Files' },
-                      { id: 'script', label: t('workspace.tabScript', 'Script'), icon: 'Document' },
+                      { id: 'script', label: t('workspace.tabScript', 'Screenplay'), icon: 'Document' },
+                      { id: 'assets', label: t('workspace.tabAssets', 'Assets'), icon: 'Box' },
+                      { id: 'storyboard', label: t('workspace.tabStoryBoard', 'Storyboard'), icon: 'Picture' },
                       { id: 'audio', label: t('workspace.tabAudio', 'Audio'), icon: 'Microphone' },
                       { id: 'captions', label: t('workspace.tabCaptions', 'Captions'), icon: 'ChatSquare' }
                     ]"
@@ -1354,6 +1365,12 @@ onUnmounted(() => {
                   <el-button
                     circle plain size="large"
                     icon="Menu"
+                    @click="isTabSidebarCollapsed = !isTabSidebarCollapsed"
+                    :title="t('workspace.expandTabs', 'Expand Tabs')"
+                  />
+                  <el-button
+                    circle plain size="large"
+                    icon="Share" class="!ml-0"
                     @click="isTabSidebarCollapsed = !isTabSidebarCollapsed"
                     :title="t('workspace.expandTabs', 'Expand Tabs')"
                   />

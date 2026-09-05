@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useVisualStyleStore } from '@/stores/useVisualStyleStore';
 import { GENRE_OPTIONS } from '@/constants/genres';
 import { GEMINI_SPEECH_LANGUAGES, getLanguageByCode } from '@/constants/geminiLanguages';
 import CountryFlag from '@/components/common/CountryFlag.vue';
+import { WORLD_COUNTRIES, findCountry } from '@/constants/countries';
 import { WizardFormData } from './types';
-import { Check, UploadFilled } from '@element-plus/icons-vue';
+import { Check, UploadFilled, Film, FullScreen, Files, Timer, ChatDotRound, EditPen, Location, Document } from '@element-plus/icons-vue';
 
 const props = defineProps<{
   formData: WizardFormData;
@@ -22,6 +23,18 @@ const selectedLanguageObj = computed(() => getLanguageByCode(props.formData.lang
 const flagCode = computed(() => getLanguageByCode(props.formData.language));
 function onLanguageSelectChange(langCode: string) {
   props.formData.language = langCode;
+}
+
+const allCountries = WORLD_COUNTRIES;
+const selectedCountryObj = computed(() => findCountry(props.formData.countryCode || props.formData.country));
+
+function onCountrySelectChange(countryName: string) {
+  const c = findCountry(countryName);
+  props.formData.country = c.name;
+  props.formData.countryCode = c.code;
+  if (!props.formData.language || props.formData.language === 'en-US') {
+    props.formData.language = c.primaryLang;
+  }
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -84,6 +97,7 @@ function tCat(cat: string): string {
 // ─── Genres List ──────────────────────────────────────────────────────────────
 const genresList = computed(() => {
   return GENRE_OPTIONS.map((g) => ({
+    id: g.id,
     name: g.name,
     label: t(g.labelKey) || g.name,
     emoji: g.emoji,
@@ -120,12 +134,12 @@ const genresList = computed(() => {
       <div class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4">
         <div
           v-for="g in genresList"
-          :key="g.name"
+          :key="g.id"
           class="group cursor-pointer rounded-2xl border-2 transition-all overflow-hidden flex flex-col justify-between hover:shadow-lg relative"
-          :style="formData.genre === g.name
+          :style="formData.genre === g.id
             ? 'border-color: var(--el-color-primary); background-color: var(--el-color-primary-light-9);'
             : 'border-color: var(--el-border-color); background-color: var(--el-bg-color-overlay);'"
-          @click="formData.genre = g.name"
+          @click="formData.genre = g.id"
         >
           <!-- Thumbnail Header -->
           <div class="h-28 w-full relative overflow-hidden bg-surface-container shrink-0">
@@ -147,7 +161,7 @@ const genresList = computed(() => {
 
             <!-- Selected Checkmark -->
             <div
-              v-if="formData.genre === g.name"
+              v-if="formData.genre === g.id || formData.genre === g.name"
               class="absolute top-2.5 right-2.5 w-6 h-6 rounded-full flex items-center justify-center bg-primary text-white shadow-md"
             >
               <el-icon :size="12"><Check /></el-icon>
@@ -213,7 +227,7 @@ const genresList = computed(() => {
       </div>
 
       <!-- Visual Styles Grid (5 cols on large screens, scrollable with max height) -->
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 max-h-[520px] overflow-y-auto custom-scrollbar pr-1">
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
         <div
           v-for="s in filteredVisualStyles"
           :key="s.id"
@@ -269,106 +283,181 @@ const genresList = computed(() => {
       </div>
     </div>
 
-    <!-- Section 3: Format & Timing (Aspect Ratio, Episodes, Duration) -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-[var(--el-border-color)]">
-      <!-- Aspect Ratio -->
-      <div class="space-y-3">
-        <h3 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
-          <el-icon class="text-xs"><FullScreen /></el-icon>
-          {{ t('wizard.aspectRatio') }}
-        </h3>
-        <p class="text-[11px] text-[var(--el-text-color-secondary)]">{{ t('wizard.framingSubtitle') }}</p>
-        <div class="grid grid-cols-2 gap-2">
-          <el-button
-            v-for="r in ratioOptions"
-            :key="r"
-            round
-            size="small"
-            class="!ml-0"
-            :type="formData.ratio === r ? 'primary' : ''"
-            :plain="formData.ratio !== r"
-            @click="formData.ratio = r"
-          >
-            {{ r }} <span class="text-[10px] opacity-75 ml-1">{{ r === '9:16' ? '(TikTok)' : r === '16:9' ? '(YT/TV)' : '' }}</span>
-          </el-button>
-        </div>
-      </div>
-
-      <!-- Target Episodes -->
-      <div class="space-y-3">
-        <h3 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
-          <el-icon class="text-xs"><Files /></el-icon>
-          {{ t('wizard.episodesLabel', { count: formData.targetEpisodes }) }}
-        </h3>
-        <p class="text-[11px] text-[var(--el-text-color-secondary)]">{{ t('wizard.totalChaptersSubtitle') }}</p>
-        <el-slider v-model="formData.targetEpisodes" :min="10" :max="100" :step="2" />
-        <div class="flex justify-between text-[10px] font-semibold" style="color: var(--el-text-color-placeholder);">
-          <span>{{ t('wizard.episodesShortArc') }}</span><span>{{ t('wizard.episodesEpic') }}</span>
-        </div>
-      </div>
-
-      <!-- Episode Duration -->
-      <div class="space-y-3">
-        <h3 class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
-          <el-icon class="text-xs"><Timer /></el-icon>
-          {{ t('wizard.durationPerEpHeading') }}: <span style="color: var(--el-color-primary);">{{ formatDuration(formData.episodeDurationSeconds) }}</span>
-        </h3>
-        <p class="text-[11px] text-[var(--el-text-color-secondary)]">{{ t('wizard.targetPaceSubtitle') }}</p>
-        <el-slider
-          v-model="formData.episodeDurationSeconds"
-          :min="30"
-          :max="600"
-          :step="15"
-          :format-tooltip="formatDuration"
-        />
-        <div class="flex justify-between text-[10px] font-semibold" style="color: var(--el-text-color-placeholder);">
-          <span>{{ t('wizard.durationFlash') }}</span><span>{{ t('wizard.durationMiniSeries') }}</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Country & Story Description -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <label class="text-[11px] font-black uppercase tracking-wider block" style="color: var(--el-text-color-secondary);">
-            <el-icon class="text-primary mr-1"><ChatDotRound /></el-icon>
-            {{ t('wizard.language') }}
+    <!-- Section 3: Format & Story Identity (2-Column Layout) -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-6 border-t border-[var(--el-border-color)]">
+      <!-- Cột bên trái: Title, Country, Story Description -->
+      <div class="space-y-5">
+        <!-- Series Title -->
+        <div class="space-y-2">
+          <label class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
+            <el-icon class="text-primary"><EditPen /></el-icon>
+            {{ t('wizard.seriesTitle') }}
           </label>
+          <el-input
+            v-model="formData.title"
+            :placeholder="t('wizard.seriesTitlePlaceholder')"
+            size="large"
+            clearable
+          />
         </div>
-        <el-select
-          v-model="formData.language"
-          class="w-full"
-          size="large"
-          filterable
-          @change="onLanguageSelectChange"
-        >
-          <template #prefix>
-            <CountryFlag :code="flagCode?.countryCode" :flag="flagCode?.flag" size="small" class="mr-1.5 shrink-0" />
-          </template>
-          <el-option
-            v-for="l in allLanguages"
-            :key="l.code"
-            :label="`${l.language} - ${l.nativeName}`"
-            :value="l.code"
+
+        <!-- Target Country -->
+        <div class="space-y-2">
+          <label class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
+            <el-icon class="text-primary"><Location /></el-icon>
+            {{ t('wizard.targetCountry') }}
+          </label>
+          <el-select
+            v-model="formData.country"
+            class="w-full"
+            size="large"
+            filterable
+            @change="onCountrySelectChange"
           >
-            <div class="flex items-center justify-between w-full">
-              <span class="flex items-center gap-2">
-                <CountryFlag :code="l.countryCode" :flag="l.flag" size="small" />
-                <span class="font-medium text-xs">{{ l.language }}</span>
-                <span class="text-[11px] text-gray-400">({{ l.nativeName }})</span>
-              </span>
-              <span class="text-xs font-mono font-bold" style="color: var(--el-color-primary);">{{ l.code }}</span>
-            </div>
-          </el-option>
-        </el-select>
-        <p class="text-[10px] text-[var(--el-text-color-secondary)] mt-1 flex items-center justify-between">
-          <span>{{ t('wizard.aiNarrationScript') }}: <strong class="text-primary">{{ selectedLanguageObj?.nativeName || 'English' }}</strong></span>
-        </p>
+            <template #prefix>
+              <CountryFlag :code="selectedCountryObj.code" :flag="selectedCountryObj.flag" size="small" class="mr-1.5 shrink-0" />
+            </template>
+            <el-option
+              v-for="c in allCountries"
+              :key="c.code"
+              :label="`${c.name} (${c.nativeName})`"
+              :value="c.name"
+            >
+              <div class="flex items-center justify-between w-full">
+                <span class="flex items-center gap-2">
+                  <CountryFlag :code="c.code" :flag="c.flag" size="small" />
+                  <span class="font-medium text-xs">{{ c.name }}</span>
+                  <span class="text-[11px] text-gray-400">({{ c.nativeName }})</span>
+                </span>
+                <span class="text-[10px] text-gray-500 font-mono font-bold">{{ c.code.toUpperCase() }}</span>
+              </div>
+            </el-option>
+          </el-select>
+          <p class="text-[10px] text-[var(--el-text-color-secondary)]">
+            {{ t('wizard.langAndMarket') }}: <strong class="text-primary">{{ selectedCountryObj.nativeName }} ({{ selectedCountryObj.name }})</strong>
+          </p>
+        </div>
+
+        <!-- Story Description -->
+        <div class="space-y-2">
+          <label class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
+            <el-icon class="text-primary"><Document /></el-icon>
+            {{ t('wizard.storyDescription') }}
+          </label>
+          <el-input
+            v-model="formData.synopsis"
+            type="textarea"
+            :rows="4"
+            :placeholder="t('wizard.storyDescPlaceholder')"
+            resize="none"
+          />
+        </div>
       </div>
-      <div class="space-y-2">
-        <label class="text-[11px] font-black uppercase tracking-wider block" style="color: var(--el-text-color-secondary);">{{ t('wizard.storyDescription') }}</label>
-        <el-input v-model="formData.synopsis" type="textarea" :rows="3" :placeholder="t('wizard.storyDescPlaceholder')" />
+
+      <!-- Cột bên phải: Language, Aspect Ratio, Episodes, Duration -->
+      <div class="space-y-5">
+        <!-- Language -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
+              <el-icon class="text-primary"><ChatDotRound /></el-icon>
+              {{ t('wizard.language') }}
+            </label>
+          </div>
+          <el-select
+            v-model="formData.language"
+            class="w-full"
+            size="large"
+            filterable
+            @change="onLanguageSelectChange"
+          >
+            <template #prefix>
+              <CountryFlag :code="flagCode?.countryCode" :flag="flagCode?.flag" size="small" class="mr-1.5 shrink-0" />
+            </template>
+            <el-option
+              v-for="l in allLanguages"
+              :key="l.code"
+              :label="`${l.language} - ${l.nativeName}`"
+              :value="l.code"
+            >
+              <div class="flex items-center justify-between w-full">
+                <span class="flex items-center gap-2">
+                  <CountryFlag :code="l.countryCode" :flag="l.flag" size="small" />
+                  <span class="font-medium text-xs">{{ l.language }}</span>
+                  <span class="text-[11px] text-gray-400">({{ l.nativeName }})</span>
+                </span>
+                <span class="text-xs font-mono font-bold" style="color: var(--el-color-primary);">{{ l.code }}</span>
+              </div>
+            </el-option>
+          </el-select>
+          <p class="text-[10px] text-[var(--el-text-color-secondary)] mt-1 flex items-center justify-between">
+            <span>{{ t('wizard.aiNarrationScript') }}: <strong class="text-primary">{{ selectedLanguageObj?.nativeName || 'English' }}</strong></span>
+          </p>
+        </div>
+
+        <!-- Aspect Ratio -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-secondary);">
+              <el-icon class="text-primary"><FullScreen /></el-icon>
+              {{ t('wizard.aspectRatio') }}
+            </label>
+            <span class="text-[10px] text-[var(--el-text-color-secondary)]">{{ t('wizard.framingSubtitle') }}</span>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <el-button
+              v-for="r in ratioOptions"
+              :key="r"
+              round
+              size="small"
+              class="!ml-0"
+              :type="formData.ratio === r ? 'primary' : ''"
+              :plain="formData.ratio !== r"
+              @click="formData.ratio = r"
+            >
+              {{ r }} <span class="text-[10px] opacity-75 ml-1">{{ r === '9:16' ? '(TikTok)' : r === '16:9' ? '(YT/TV)' : '' }}</span>
+            </el-button>
+          </div>
+        </div>
+
+        <!-- Target Episodes & Episode Duration (Side by side in right column) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+          <!-- Target Episodes -->
+          <div class="space-y-2 p-3.5 rounded-xl bg-[var(--el-fill-color-light)] border border-[var(--el-border-color-lighter)]">
+            <div class="flex items-center justify-between">
+              <h3 class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-primary);">
+                <el-icon class="text-primary"><Files /></el-icon>
+                {{ t('wizard.episodesLabel', { count: formData.targetEpisodes }) }}
+              </h3>
+            </div>
+            <p class="text-[10px] text-[var(--el-text-color-secondary)]">{{ t('wizard.totalChaptersSubtitle') }}</p>
+            <el-slider v-model="formData.targetEpisodes" :min="10" :max="100" :step="2" />
+            <div class="flex justify-between text-[9px] font-semibold" style="color: var(--el-text-color-placeholder);">
+              <span>{{ t('wizard.episodesShortArc') }}</span><span>{{ t('wizard.episodesEpic') }}</span>
+            </div>
+          </div>
+
+          <!-- Episode Duration -->
+          <div class="space-y-2 p-3.5 rounded-xl bg-[var(--el-fill-color-light)] border border-[var(--el-border-color-lighter)]">
+            <div class="flex items-center justify-between">
+              <h3 class="text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-primary);">
+                <el-icon class="text-primary"><Timer /></el-icon>
+                {{ t('wizard.durationPerEpHeading') }}: <span style="color: var(--el-color-primary);">{{ formatDuration(formData.episodeDurationSeconds) }}</span>
+              </h3>
+            </div>
+            <p class="text-[10px] text-[var(--el-text-color-secondary)]">{{ t('wizard.targetPaceSubtitle') }}</p>
+            <el-slider
+              v-model="formData.episodeDurationSeconds"
+              :min="30"
+              :max="600"
+              :step="15"
+              :format-tooltip="formatDuration"
+            />
+            <div class="flex justify-between text-[9px] font-semibold" style="color: var(--el-text-color-placeholder);">
+              <span>{{ t('wizard.durationFlash') }}</span><span>{{ t('wizard.durationMiniSeries') }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

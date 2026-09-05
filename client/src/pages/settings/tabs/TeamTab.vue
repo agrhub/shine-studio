@@ -75,7 +75,7 @@ onMounted(() => {
         { id: '1', name: 'Tan Do (You)', email: 'dmtan90@gmail.com', role: 'Owner', avatar: '/images/avatars/avatar-default.jpg' },
         { id: '2', name: 'Creative Assistant', email: 'ai-editor@shine.studio', role: 'Editor', avatar: '/images/avatars/avatar-assistant.jpg' },
       ]" style="width: 100%">
-        <el-table-column label="Member" min-width="240">
+        <el-table-column :label="t('common.member')" min-width="240">
           <template #default="{ row }">
             <div class="flex items-center gap-3">
               <img :src="row.avatar" class="w-8 h-8 rounded-full object-cover" />
@@ -86,17 +86,17 @@ onMounted(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="role" label="Role" width="140">
+        <el-table-column prop="role" :label="t('common.role')" width="140">
           <template #default="{ row }">
             <el-tag size="small" :type="row.role === 'Owner' ? 'primary' : 'info'" round effect="plain">
               {{ row.role }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="120" align="right">
+        <el-table-column :label="t('common.actions')" width="120" align="right">
           <template #default="{ row }">
             <el-button v-if="row.role !== 'Owner'" type="danger" link size="small" @click="removeTeamMember(row.id)">
-              Remove
+              {{ t('common.remove') }}
             </el-button>
           </template>
         </el-table-column>
@@ -104,25 +104,25 @@ onMounted(() => {
     </div>
 
     <!-- Invite Member Modal -->
-    <el-dialog v-model="isInviteModalOpen" title="Invite Studio Member" width="460px" destroy-on-close align-center class="rounded-2xl">
+    <el-dialog v-model="isInviteModalOpen" :title="t('settings.inviteStudioMember')" width="460px" destroy-on-close align-center class="rounded-2xl">
       <div class="space-y-4 py-2">
         <div>
-          <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">Email Address</label>
+          <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('common.emailAddress') }}</label>
           <el-input v-model="newMemberEmail" placeholder="crew@studio.ai" size="small"/>
         </div>
         <div>
-          <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">Workspace Role</label>
+          <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('settings.workspaceRole') }}</label>
           <el-select v-model="newMemberRole" class="w-full" size="small">
-            <el-option label="Editor (Can edit scripts & generate videos)" value="Editor" />
-            <el-option label="Viewer (Read-only access)" value="Viewer" />
-            <el-option label="Admin (Full studio management)" value="Admin" />
+            <el-option :label="t('settings.roleEditorDesc')" value="Editor" />
+            <el-option :label="t('settings.roleViewerDesc')" value="Viewer" />
+            <el-option :label="t('settings.roleAdminDesc')" value="Admin" />
           </el-select>
         </div>
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <el-button round size="small" @click="isInviteModalOpen = false">Cancel</el-button>
-          <el-button type="primary" round size="small" @click="inviteTeamMember">Send Invitation</el-button>
+          <el-button round size="small" @click="isInviteModalOpen = false">{{ t('common.cancel') }}</el-button>
+          <el-button type="primary" round size="small" @click="inviteTeamMember">{{ t('settings.sendInvitation') }}</el-button>
         </div>
       </template>
     </el-dialog>

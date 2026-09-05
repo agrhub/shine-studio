@@ -424,14 +424,14 @@ onUnmounted(() => {
         <span class="text-xs text-[var(--el-text-color-secondary)]">{{ t('observability.endpointLabel') }} {{ config.grafana?.url || 'https://bronzeholly2284.grafana.net' }}</span>
       </div>
       <el-table :data="systemMetrics" style="width: 100%" class="rounded-xl overflow-hidden">
-        <el-table-column prop="metricName" label="Metric Name" min-width="260" />
-        <el-table-column prop="currentValue" label="Current Telemetry Value" width="200">
+        <el-table-column prop="metricName" :label="t('observability.metricName')" min-width="260" />
+        <el-table-column prop="currentValue" :label="t('observability.currentTelemetryValue')" width="200">
           <template #default="{ row }">
             <span class="font-mono font-bold text-primary">{{ row.currentValue }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="targetSla" label="SLA Benchmark" width="160" />
-        <el-table-column prop="status" label="Status" width="140">
+        <el-table-column prop="targetSla" :label="t('observability.slaBenchmark')" width="160" />
+        <el-table-column prop="status" :label="t('common.status')" width="140">
           <template #default="{ row }">
             <el-tag :type="row.status === 'healthy' ? 'success' : 'danger'" size="small" round>
               {{ row.status.toUpperCase() }}

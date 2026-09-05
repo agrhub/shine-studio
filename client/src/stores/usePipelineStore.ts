@@ -927,28 +927,32 @@ export const usePipelineStore = defineStore('pipeline', () => {
           let cues: CaptionCue[] = [];
 
           if (sourceCues.length === 1) {
+            const startMs = sourceCues[0].start_ms ?? 0;
+            const endMs = sourceCues[0].end_ms ?? ((scene.duration_seconds || 6) * 1000);
             cues = [{
               id: `cue_${scene.index}_${langCode}_0`,
               text: translated,
-              start_ms: sourceCues[0].start_ms,
-              end_ms: sourceCues[0].end_ms,
-              from_us: sourceCues[0].start_ms * 1000,
-              to_us: sourceCues[0].end_ms * 1000,
-              duration_ms: sourceCues[0].end_ms - sourceCues[0].start_ms,
+              start_ms: startMs,
+              end_ms: endMs,
+              from_us: startMs * 1000,
+              to_us: endMs * 1000,
+              duration_ms: endMs - startMs,
             }];
           } else if (sourceCues.length > 1) {
             const words = translated.split(' ');
             const wordsPerCue = Math.max(1, Math.ceil(words.length / sourceCues.length));
             cues = sourceCues.map((srcCue, idx) => {
               const chunk = words.slice(idx * wordsPerCue, (idx + 1) * wordsPerCue).join(' ');
+              const startMs = srcCue.start_ms ?? 0;
+              const endMs = srcCue.end_ms ?? ((scene.duration_seconds || 6) * 1000);
               return {
                 id: `cue_${scene.index}_${langCode}_${idx}`,
                 text: chunk || srcCue.text,
-                start_ms: srcCue.start_ms,
-                end_ms: srcCue.end_ms,
-                from_us: srcCue.start_ms * 1000,
-                to_us: srcCue.end_ms * 1000,
-                duration_ms: srcCue.end_ms - srcCue.start_ms,
+                start_ms: startMs,
+                end_ms: endMs,
+                from_us: startMs * 1000,
+                to_us: endMs * 1000,
+                duration_ms: endMs - startMs,
               };
             });
           } else {
@@ -1497,29 +1501,46 @@ export const usePipelineStore = defineStore('pipeline', () => {
         { immediate: true }
       );
 
+      let jobSyncDebounceTimeout: any = null;
+      const triggerFinishedJobSync = (job: any) => {
+        const currentSid = seriesStore.currentSeries?.id;
+        const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
+        const jobSid = job?.series_id || job?.seriesId;
+        const jobEid = job?.episode_id || job?.episodeId;
+
+        // Only reload workspace data if the completed job belongs to current series/episode
+        if (currentSid && (!jobSid || jobSid === currentSid || jobSid === 'all')) {
+          if (jobSyncDebounceTimeout) clearTimeout(jobSyncDebounceTimeout);
+          jobSyncDebounceTimeout = setTimeout(() => {
+            seriesStore.loadWorkspaceData(currentSid).then(() => {
+              if (currentEid && (!jobEid || jobEid === currentEid)) {
+                seriesStore.loadEpisodeScript(currentSid, currentEid);
+              }
+              if (seriesStore.activeEpisode) {
+                syncStepStatusesWithEpisode(seriesStore.activeEpisode, seriesStore.charactersList);
+              }
+              window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+            });
+          }, 300);
+        }
+      };
+
       ws.onPipelineJobUpdated((updatedJob: any) => {
         if (!updatedJob?.id) return;
-        console.log('[usePipelineStore] Realtime update for job:', updatedJob.id, updatedJob.status, `${updatedJob.progress}%`);
         const idx = activeJobs.value.findIndex(j => j.id === updatedJob.id);
+        const previousStatus = idx >= 0 ? activeJobs.value[idx].status : null;
+
         if (idx >= 0) {
           activeJobs.value[idx] = { ...activeJobs.value[idx], ...updatedJob };
           activeJobs.value = [...activeJobs.value];
         } else {
           activeJobs.value = [updatedJob, ...activeJobs.value];
         }
-        const currentSid = seriesStore.currentSeries?.id;
-        const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
-        if (currentSid) {
-          // Sync workspace and episode script so new assets from each finished step show up immediately
-          seriesStore.loadWorkspaceData(currentSid).then(() => {
-            if (currentEid) {
-              seriesStore.loadEpisodeScript(currentSid, currentEid);
-            }
-            if (seriesStore.activeEpisode) {
-              syncStepStatusesWithEpisode(seriesStore.activeEpisode, seriesStore.charactersList);
-            }
-            window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
-          });
+
+        // Only trigger data reload if job actually transitioned to completed status.
+        // During running/progress updates, NEVER reload workspace, episode script, or timeline!
+        if (updatedJob.status === 'completed' && previousStatus !== 'completed') {
+          triggerFinishedJobSync(updatedJob);
         }
       });
 
@@ -1528,21 +1549,12 @@ export const usePipelineStore = defineStore('pipeline', () => {
         console.log('[usePipelineStore] Realtime completed for job:', completedJob.id);
         const idx = activeJobs.value.findIndex(j => j.id === completedJob.id);
         if (idx >= 0) {
-          activeJobs.value[idx] = { ...activeJobs.value[idx], ...completedJob };
+          activeJobs.value[idx] = { ...activeJobs.value[idx], ...completedJob, status: 'completed', progress: 100 };
           activeJobs.value = [...activeJobs.value];
         } else {
-          activeJobs.value = [completedJob, ...activeJobs.value];
+          activeJobs.value = [{ ...completedJob, status: 'completed', progress: 100 }, ...activeJobs.value];
         }
-        const currentSid = seriesStore.currentSeries?.id;
-        const currentEid = seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId;
-        if (currentSid) {
-          seriesStore.loadWorkspaceData(currentSid).then(() => {
-            if (currentEid) {
-              seriesStore.loadEpisodeScript(currentSid, currentEid);
-            }
-            window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
-          });
-        }
+        triggerFinishedJobSync(completedJob);
       });
 
       ws.onEpisodeUpdated((latestEp: any) => {

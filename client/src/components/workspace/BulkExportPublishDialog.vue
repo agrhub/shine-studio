@@ -1017,14 +1017,14 @@ watch(isOpen, (open: boolean) => {
             <el-icon :size="24"><VideoPlay /></el-icon>
           </div>
           <div class="space-y-1">
-            <h4 class="text-sm font-semibold text-foreground">Chưa có tập phim nào có video hoàn thiện</h4>
+            <h4 class="text-sm font-semibold text-foreground">{{ t('distribution.noRenderedVideos', 'No completed video episodes yet') }}</h4>
             <p class="text-xs text-muted-foreground max-w-md">
-              Hãy render video trong Timeline hoặc nhấn "Upload Local Video" để đưa tệp video đã dựng lên phiên bản xuất bản.
+              {{ t('distribution.noRenderedVideosHelp', 'Please render video in the Timeline or click "Upload Local Video" to add your edited video for publication.') }}
             </p>
           </div>
           <el-button type="primary" round size="small" @click="isUploadModalOpen = true">
             <el-icon class="mr-1"><UploadFilled /></el-icon>
-            Upload Local Video
+            {{ t('distribution.uploadLocalVideo', 'Upload Local Video') }}
           </el-button>
         </div>
       </div>
@@ -1480,8 +1480,8 @@ watch(isOpen, (open: boolean) => {
       />
       <div v-else class="text-center p-6 text-white/80 space-y-2">
         <el-icon :size="42" class="text-amber-400"><VideoPlay /></el-icon>
-        <p class="text-xs font-semibold text-white">Chưa có tệp Video Render</p>
-        <p class="text-[11px] text-white/60">Tập phim này chưa có video render hoàn chỉnh. Vui lòng mở Timeline Editor và bấm Export/Render để xuất video MP4.</p>
+        <p class="text-xs font-semibold text-white">{{ t('distribution.noRenderedVideoFile', 'No Rendered Video File') }}</p>
+        <p class="text-[11px] text-white/60">{{ t('distribution.noRenderedVideoFileHelp', 'This episode does not have a completed video render. Please open Timeline Editor and click Export/Render to produce the MP4 video.') }}</p>
       </div>
     </div>
     <template #footer>

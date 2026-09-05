@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { toast } from 'vue-sonner';
 import http from '@/utils/http';
@@ -33,6 +33,59 @@ const renderJobs = ref<any[]>([]);
 const isTestingBatchRender = ref(false);
 const autoRefresh = ref(true);
 const batchRenderProgress = ref<{ jobId: string; episodeId: string; status: string; progressPercent: number; outputUrl?: string } | null>(null);
+
+// Worker node filter & pagination: Default to 'online' so user only sees active workers!
+const workerFilterMode = ref<'online' | 'all'>('online');
+const isPruningWorkers = ref(false);
+const workerCurrentPage = ref(1);
+const workerPageSize = ref(10);
+
+const onlineWorkers = computed(() => {
+  return workerNodes.value.filter((w) => (w.status || '').toUpperCase() !== 'OFFLINE');
+});
+
+const offlineWorkers = computed(() => {
+  return workerNodes.value.filter((w) => (w.status || '').toUpperCase() === 'OFFLINE');
+});
+
+const displayedWorkerNodes = computed(() => {
+  if (workerFilterMode.value === 'online') {
+    return onlineWorkers.value;
+  }
+  return workerNodes.value;
+});
+
+const paginatedWorkerNodes = computed(() => {
+  const start = (workerCurrentPage.value - 1) * workerPageSize.value;
+  return displayedWorkerNodes.value.slice(start, start + workerPageSize.value);
+});
+
+watch(workerFilterMode, () => {
+  workerCurrentPage.value = 1;
+});
+
+// Render Jobs pagination
+const jobsCurrentPage = ref(1);
+const jobsPageSize = ref(10);
+
+const paginatedRenderJobs = computed(() => {
+  const start = (jobsCurrentPage.value - 1) * jobsPageSize.value;
+  return renderJobs.value.slice(start, start + jobsPageSize.value);
+});
+
+async function handlePruneOfflineWorkers() {
+  isPruningWorkers.value = true;
+  try {
+    const res: any = await http.delete('/admin/workers/offline');
+    toast.success(res?.message || 'Đã dọn dẹp các worker offline');
+    await loadWorkerNodes();
+    await loadClusterMetrics();
+  } catch (err: any) {
+    toast.error(err?.response?.data?.message || err?.message || 'Lỗi dọn dẹp worker');
+  } finally {
+    isPruningWorkers.value = false;
+  }
+}
 
 let pollTimer: any = null;
 
@@ -75,7 +128,7 @@ async function loadWorkerNodes() {
 
 async function loadRenderJobs() {
   try {
-    const res: any = await http.get('/admin/render-jobs?limit=25');
+    const res: any = await http.get('/admin/render-jobs?limit=100');
     if (Array.isArray(res?.data)) {
       renderJobs.value = res.data;
     }
@@ -130,12 +183,15 @@ async function handleTestBatchRender() {
 }
 
 function formatRelativeTime(isoStr?: string): string {
-  if (!isoStr) return 'Just now';
-  const ms = Date.now() - new Date(isoStr).getTime();
+  if (!isoStr) return 'Never';
+  const t = new Date(isoStr).getTime();
+  if (isNaN(t) || t <= 0) return 'Never';
+  const ms = Date.now() - t;
   if (ms < 5000) return 'Just now';
   if (ms < 60000) return `${Math.floor(ms / 1000)}s ago`;
   if (ms < 3600000) return `${Math.floor(ms / 60000)}m ago`;
-  return `${Math.floor(ms / 3600000)}h ago`;
+  if (ms < 86400000) return `${Math.floor(ms / 3600000)}h ago`;
+  return `${Math.floor(ms / 86400000)}d ago`;
 }
 
 function getWorkerTagType(status: string) {
@@ -257,55 +313,113 @@ onUnmounted(() => {
 
     <!-- Live Registered Worker Microservices Table -->
     <div class="p-6 bg-[var(--el-card-bg-color)] border border-[var(--el-border-color)] rounded-2xl shadow-soft space-y-4">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-2">
-          <div class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+          <div class="w-2.5 h-2.5 rounded-full" :class="onlineWorkers.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></div>
           <h3 class="text-sm font-semibold text-[var(--el-text-color-primary)]">{{ t('observability.connectedWorkerServices') }}</h3>
+          <el-tag size="small" type="success" effect="light" round class="ml-1 font-mono font-medium">
+            {{ onlineWorkers.length }} Online
+          </el-tag>
         </div>
-        <span class="text-xs text-[var(--el-text-color-secondary)]">{{ t('observability.nodesRegistered', { count: workerNodes.length }) }}</span>
+
+        <div class="flex items-center gap-2.5">
+          <!-- Filter: Online Only vs All -->
+          <el-radio-group v-model="workerFilterMode" size="small">
+            <el-radio-button label="online">
+              <span class="flex items-center gap-1.5 px-1">
+                <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                <span>Online ({{ onlineWorkers.length }})</span>
+              </span>
+            </el-radio-button>
+            <el-radio-button label="all">
+              <span class="px-1">Tất cả ({{ workerNodes.length }})</span>
+            </el-radio-button>
+          </el-radio-group>
+
+          <!-- Prune Offline Workers Button -->
+          <el-button
+            v-if="offlineWorkers.length > 0"
+            size="small"
+            type="danger"
+            plain
+            round
+            :loading="isPruningWorkers"
+            @click="handlePruneOfflineWorkers"
+            title="Dọn dẹp các container Cloud Run cũ đã tắt"
+          >
+            <el-icon class="mr-1"><Delete /></el-icon>
+            Xóa Offline ({{ offlineWorkers.length }})
+          </el-button>
+        </div>
       </div>
 
-      <el-table :data="workerNodes" style="width: 100%" class="rounded-xl overflow-hidden" empty-text="No worker heartbeats received yet. Workers report via Pub/Sub every 30s.">
-        <el-table-column prop="workerName" label="Worker Node / Revision" min-width="200">
+      <el-table
+        :data="paginatedWorkerNodes"
+        style="width: 100%"
+        class="rounded-xl overflow-hidden"
+        :empty-text="workerFilterMode === 'online' ? 'Không có worker nào đang Online' : t('settings.noWorkerHeartbeats')"
+      >
+        <el-table-column prop="workerName" :label="t('settings.workerNodeRevision')" min-width="200">
           <template #default="{ row }">
-            <div class="font-medium text-xs text-[var(--el-text-color-primary)]">{{ row.workerName || row.workerId }}</div>
-            <div class="text-[11px] text-[var(--el-text-color-secondary)] font-mono">{{ row.workerId }}</div>
+            <div class="font-medium text-xs text-[var(--el-text-color-primary)]">
+              {{ row.workerName || row.worker_name || row.workerId || row.worker_id }}
+            </div>
+            <div class="text-[11px] text-[var(--el-text-color-secondary)] font-mono">
+              {{ row.workerId || row.worker_id }}
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="serviceName" label="Microservice" width="180">
+        <el-table-column prop="serviceName" :label="t('settings.microservice')" width="180">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.serviceName || 'shine-render-worker' }}</el-tag>
+            <el-tag size="small" effect="plain">{{ row.serviceName || row.service_name || 'shine-render-worker' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="region" label="GCP Region" width="120">
+        <el-table-column prop="region" :label="t('settings.gcpRegion')" width="120">
           <template #default="{ row }">
             <span class="text-xs font-mono">{{ row.region || 'us-central1' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Resource Utilization" width="180">
+        <el-table-column :label="t('settings.resourceUtilization')" width="180">
           <template #default="{ row }">
             <div class="space-y-1">
               <div class="flex justify-between text-[11px] text-[var(--el-text-color-secondary)]">
-                <span>CPU: {{ row.cpuUsagePct || 0 }}%</span>
-                <span>RAM: {{ row.memoryUsageMb || 0 }} MB</span>
+                <span>CPU: {{ row.cpuUsagePct ?? row.cpu_usage_pct ?? 0 }}%</span>
+                <span>RAM: {{ row.memoryUsageMb ?? row.memory_usage_mb ?? 0 }} MB</span>
               </div>
-              <el-progress :percentage="Math.min(100, row.cpuUsagePct || 10)" :stroke-width="4" :show-text="false" />
+              <el-progress :percentage="Math.min(100, row.cpuUsagePct ?? row.cpu_usage_pct ?? 0)" :stroke-width="4" :show-text="false" />
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="Status" width="110">
+        <el-table-column prop="status" :label="t('common.status')" width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="getWorkerTagType(row.status)" round effect="plain">
               {{ row.status || 'ONLINE' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Last Heartbeat" width="130">
+        <el-table-column :label="t('settings.lastHeartbeat')" width="130">
           <template #default="{ row }">
-            <span class="text-xs text-[var(--el-text-color-secondary)]">{{ formatRelativeTime(row.lastHeartbeat) }}</span>
+            <span class="text-xs text-[var(--el-text-color-secondary)]">
+              {{ formatRelativeTime(row.lastHeartbeat || row.last_heartbeat || row.timestamp) }}
+            </span>
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- Pagination for Workers -->
+      <div v-if="displayedWorkerNodes.length > workerPageSize" class="flex items-center justify-between pt-3 border-t border-[var(--el-border-color)]">
+        <span class="text-xs text-[var(--el-text-color-secondary)]">
+          {{ (workerCurrentPage - 1) * workerPageSize + 1 }} - {{ Math.min(workerCurrentPage * workerPageSize, displayedWorkerNodes.length) }} / {{ displayedWorkerNodes.length }} workers
+        </span>
+        <el-pagination
+          v-model:current-page="workerCurrentPage"
+          v-model:page-size="workerPageSize"
+          :page-sizes="[5, 10, 20, 50]"
+          layout="sizes, prev, pager, next"
+          :total="displayedWorkerNodes.length"
+          size="small"
+        />
+      </div>
     </div>
 
     <!-- Google Cloud Run & Pub/Sub Serverless Workers Configuration -->
@@ -355,33 +469,33 @@ onUnmounted(() => {
         <span class="text-xs text-[var(--el-text-color-secondary)]">{{ renderJobs.length }} Total Job(s)</span>
       </div>
 
-      <el-table :data="renderJobs" style="width: 100%" class="rounded-xl overflow-hidden" empty-text="No render jobs dispatched yet. Submit a render or batch render to see live progress.">
-        <el-table-column prop="jobId" label="Job ID" width="140">
+      <el-table :data="paginatedRenderJobs" style="width: 100%" class="rounded-xl overflow-hidden" :empty-text="t('settings.noRenderJobsDispatched')">
+        <el-table-column prop="jobId" :label="t('settings.jobId')" width="140">
           <template #default="{ row }">
             <span class="font-mono text-xs">{{ row.jobId }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="seriesTitle" label="Series / Episode" min-width="180">
+        <el-table-column prop="seriesTitle" :label="t('settings.seriesEpisode')" min-width="180">
           <template #default="{ row }">
             <span class="text-xs font-medium text-[var(--el-text-color-primary)]">{{ row.seriesTitle || row.episodeId || 'Series Export' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="workerName" label="Assigned Worker Node" width="200">
+        <el-table-column prop="workerName" :label="t('settings.assignedWorkerNode')" width="200">
           <template #default="{ row }">
             <span class="text-xs font-mono text-[var(--el-text-color-secondary)]">{{ row.workerName || row.workerId || 'Auto (Pub/Sub)' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="progress" label="Progress" width="160">
+        <el-table-column prop="progress" :label="t('common.progress')" width="160">
           <template #default="{ row }">
             <el-progress :percentage="row.progress || 0" :stroke-width="6" />
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="Status" width="120">
+        <el-table-column prop="status" :label="t('common.status')" width="120">
           <template #default="{ row }">
             <el-tag size="small" :type="getJobTagType(row.status)" round effect="plain">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Output / Download" width="160">
+        <el-table-column :label="t('settings.outputDownload')" width="160">
           <template #default="{ row }">
             <a
               v-if="row.downloadUrl || row.outputUrl"
@@ -389,12 +503,27 @@ onUnmounted(() => {
               target="_blank"
               class="text-xs text-blue-500 hover:underline inline-flex items-center gap-1"
             >
-              <el-icon><Download /></el-icon> Download MP4
+              <el-icon><Download /></el-icon> {{ t('common.downloadMp4') }}
             </a>
             <span v-else class="text-xs text-[var(--el-text-color-secondary)]">—</span>
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- Pagination for Render Jobs -->
+      <div v-if="renderJobs.length > jobsPageSize" class="flex items-center justify-between pt-3 border-t border-[var(--el-border-color)]">
+        <span class="text-xs text-[var(--el-text-color-secondary)]">
+          {{ (jobsCurrentPage - 1) * jobsPageSize + 1 }} - {{ Math.min(jobsCurrentPage * jobsPageSize, renderJobs.length) }} / {{ renderJobs.length }} jobs
+        </span>
+        <el-pagination
+          v-model:current-page="jobsCurrentPage"
+          v-model:page-size="jobsPageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="sizes, prev, pager, next"
+          :total="renderJobs.length"
+          size="small"
+        />
+      </div>
     </div>
   </div>
 </template>

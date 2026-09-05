@@ -151,6 +151,7 @@ async function executeAgenticStream(
         synopsis: formData.value.synopsis || formData.value.selectedTrend?.description || '',
         ratio: formData.value.ratio,
         currentPlan: masterPlan.value,
+        appLanguage: locale.value,
       },
     },
     {

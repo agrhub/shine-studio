@@ -78,6 +78,12 @@ const displayedSuggestions = computed(() => {
   }
   return fallbackQuickSuggestions;
 });
+
+function cleanActTitle(name?: string, actNum?: number | string): string {
+  if (!name) return `Act ${actNum || ''}`;
+  return name.replace(/^Act\s*\d+\s*[:\-–]\s*/i, '').trim();
+}
+
 </script>
 
 <template>
@@ -462,115 +468,186 @@ const displayedSuggestions = computed(() => {
             <!-- ─── SUB-TAB 3: Three Acts & Paywall Structure ─── -->
             <div v-else-if="activeStudioTab === 'structure'" class="space-y-4">
               <!-- Three Acts Section -->
-              <div v-if="masterPlan.three_acts && masterPlan.three_acts.length > 0" class="space-y-2.5">
-                <div class="flex items-center gap-2">
-                  <span class="p-1 rounded text-white text-xs flex items-center justify-center" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
-                    <el-icon><Files /></el-icon>
+              <div v-if="masterPlan.three_acts && masterPlan.three_acts.length > 0" class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-lg text-white text-xs flex items-center justify-center shadow-xs" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                      <el-icon><Files /></el-icon>
+                    </span>
+                    <h4 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
+                      {{ t('wizard.threeActStructure') }}
+                    </h4>
+                  </div>
+                  <span class="text-[11px] font-medium" style="color: var(--el-text-color-secondary);">
+                    3 Major Narrative Movements
                   </span>
-                  <h4 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
-                    {{ t('wizard.threeActStructure') }}
-                  </h4>
                 </div>
 
                 <div class="grid grid-cols-1 gap-3">
                   <div
                     v-for="act in masterPlan.three_acts"
                     :key="act.act_number"
-                    class="p-4 rounded-xl border space-y-2 transition-all hover:border-[var(--el-color-primary-light-5)]"
+                    class="p-4 rounded-xl border space-y-3 transition-all hover:border-[var(--el-color-primary-light-5)] shadow-xs"
                     style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
                   >
-                    <div class="flex items-center justify-between text-xs font-bold" style="color: var(--el-text-color-primary);">
-                      <div class="flex items-center gap-2">
-                        <span class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[11px] font-black" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
-                          {{ act.act_number }}
-                        </span>
-                        <span class="font-black text-sm">{{ act.name }}</span>
+                    <!-- Act Header Bar -->
+                    <div class="flex items-center justify-between gap-2.5">
+                      <div class="flex items-center gap-2.5 min-w-0">
+                        <div
+                          class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0 shadow-sm"
+                          style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);"
+                        >
+                          #{{ act.act_number }}
+                        </div>
+                        <div class="min-w-0 flex items-center gap-2">
+                          <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded font-mono" style="background-color: var(--el-fill-color); color: var(--el-color-primary);">
+                            Act {{ act.act_number }}
+                          </span>
+                          <span class="text-xs font-bold truncate" style="color: var(--el-text-color-primary);">
+                            {{ cleanActTitle(act.name, act.act_number) }}
+                          </span>
+                        </div>
                       </div>
-                      <span class="text-[10px] font-mono px-2.5 py-1 rounded-lg font-bold" style="background-color: var(--el-color-primary-light-9); color: var(--el-color-primary);">
-                        {{ act.episode_range }}
+
+                      <!-- Episode Range Tag -->
+                      <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0" style="background-color: var(--el-fill-color); color: var(--el-text-color-secondary);">
+                        🎞️ {{ act.episode_range }}
                       </span>
                     </div>
 
-                    <div class="text-[11px] leading-relaxed pl-8" style="color: var(--el-text-color-secondary);">
+                    <!-- Narrative Function -->
+                    <p class="text-[11px] leading-relaxed pl-1" style="color: var(--el-text-color-secondary);">
                       {{ act.function }}
+                    </p>
+
+                    <!-- Core Dramatic Question Box -->
+                    <div
+                      v-if="act.core_question"
+                      class="p-2.5 rounded-lg border text-[11px] leading-relaxed"
+                      style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);"
+                    >
+                      <span class="font-bold text-[10px] uppercase tracking-wider" style="color: var(--el-color-primary);">
+                        ❓ {{ t('wizard.actCoreQuestion') }}:
+                      </span>
+                      <p class="mt-0.5 text-xs font-medium" style="color: var(--el-text-color-primary);">
+                        {{ act.core_question }}
+                      </p>
                     </div>
 
-                    <div v-if="act.core_question" class="text-[11px] leading-relaxed pl-8" style="color: var(--el-text-color-regular);">
-                      <span class="font-bold text-sky-400">❓ {{ t('wizard.actCoreQuestion') }}</span> {{ act.core_question }}
-                    </div>
-
-                    <div v-if="act.act_climax" class="pt-1 pl-8">
-                      <el-tag size="small" type="warning" effect="plain" round class="!text-[10px] font-bold p-1.5 whitespace-normal h-auto w-full justify-start">
-                        ⚡ {{ act.act_climax }}
-                      </el-tag>
+                    <!-- Act Climax & Turning Point -->
+                    <div
+                      v-if="act.act_climax"
+                      class="p-2.5 rounded-lg border flex items-start gap-2"
+                      style="background: linear-gradient(135deg, var(--el-color-warning-light-9), var(--el-fill-color-light)); border-color: var(--el-color-warning-light-7);"
+                    >
+                      <el-icon class="text-amber-500 shrink-0 mt-0.5"><Lightning /></el-icon>
+                      <div class="text-[11px] leading-relaxed" style="color: var(--el-text-color-primary);">
+                        <span class="font-bold text-amber-500 uppercase tracking-wider text-[10px] mr-1">{{ t('wizard.actClimax') || 'Act Climax:' }}</span>
+                        <span class="font-semibold">{{ act.act_climax }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
               <!-- Major Reversals Section -->
-              <div v-if="masterPlan.major_reversals && masterPlan.major_reversals.length > 0" class="space-y-2.5 pt-2">
-                <div class="flex items-center gap-2">
-                  <span class="p-1 rounded text-white text-xs flex items-center justify-center bg-amber-500">
-                    <el-icon><TrendCharts /></el-icon>
+              <div v-if="masterPlan.major_reversals && masterPlan.major_reversals.length > 0" class="space-y-3 pt-2 border-t border-[var(--el-border-color-lighter)]">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-lg text-white text-xs flex items-center justify-center shadow-xs" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                      <el-icon><TrendCharts /></el-icon>
+                    </span>
+                    <h4 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
+                      {{ t('wizard.majorReversals') }}
+                    </h4>
+                  </div>
+                  <span class="text-[11px] font-medium" style="color: var(--el-text-color-secondary);">
+                    High-Catharsis Story Twists
                   </span>
-                  <h4 class="text-xs font-black uppercase tracking-wider text-amber-500">
-                    {{ t('wizard.majorReversals') }}
-                  </h4>
                 </div>
 
-                <div class="grid grid-cols-1 gap-2.5">
+                <div class="grid grid-cols-1 gap-3">
                   <div
                     v-for="rev in masterPlan.major_reversals"
                     :key="rev.reversal_index"
-                    class="p-3.5 rounded-xl border space-y-1.5"
+                    class="p-4 rounded-xl border space-y-2.5 transition-all hover:border-[var(--el-color-primary-light-5)] shadow-xs"
                     style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
                   >
-                    <div class="flex items-center justify-between text-xs font-bold">
-                      <span class="text-amber-500 font-black">{{ t('wizard.reversalBadge', { index: rev.reversal_index, ep: rev.episode_number }) }}</span>
-                      <span class="text-[10px] font-mono px-2 py-0.5 rounded-md" style="background-color: var(--el-color-warning-light-9); color: var(--el-color-warning);">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-2">
+                        <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0 shadow-sm" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                          #{{ rev.reversal_index }}
+                        </div>
+                        <span class="text-xs font-bold" style="color: var(--el-text-color-primary);">
+                          {{ t('wizard.reversalBadge', { index: rev.reversal_index, ep: rev.episode_number }) }}
+                        </span>
+                      </div>
+                      <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0" style="background-color: var(--el-fill-color); color: var(--el-text-color-secondary);">
                         {{ rev.setup_hook }}
                       </span>
                     </div>
-                    <div class="text-[11px] leading-relaxed font-medium" style="color: var(--el-text-color-primary);">{{ rev.reversal_event }}</div>
-                    <div class="text-[11px] font-semibold pt-0.5" style="color: var(--el-color-primary);">
-                      💥 {{ t('wizard.audienceImpact') }} {{ rev.audience_impact }}
+
+                    <div class="text-xs leading-relaxed font-semibold pl-1" style="color: var(--el-text-color-primary);">
+                      {{ rev.reversal_event }}
+                    </div>
+
+                    <div class="p-2.5 rounded-lg border flex items-start gap-2" style="background-color: var(--el-fill-color); border-color: var(--el-border-color-lighter); color: var(--el-text-color-regular);">
+                      <span class="text-sm shrink-0">💥</span>
+                      <div class="text-[11px] leading-relaxed">
+                        <strong style="color: var(--el-color-primary);">{{ t('wizard.audienceImpact') }}:</strong> {{ rev.audience_impact }}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
               <!-- Paywall & Ad Retention Hooks -->
-              <div v-if="masterPlan.paywall_hooks && masterPlan.paywall_hooks.length > 0" class="space-y-2.5 pt-2">
-                <div class="flex items-center gap-2">
-                  <span class="p-1 rounded text-white text-xs flex items-center justify-center bg-rose-500">
-                    <el-icon><Key /></el-icon>
+              <div v-if="masterPlan.paywall_hooks && masterPlan.paywall_hooks.length > 0" class="space-y-3 pt-2 border-t border-[var(--el-border-color-lighter)]">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-lg text-white text-xs flex items-center justify-center shadow-xs" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                      <el-icon><Key /></el-icon>
+                    </span>
+                    <h4 class="text-xs font-black uppercase tracking-wider" style="color: var(--el-color-primary);">
+                      {{ t('wizard.paywallHooks') }}
+                    </h4>
+                  </div>
+                  <span class="text-[11px] font-medium" style="color: var(--el-text-color-secondary);">
+                    Conversion & Monetization Milestones
                   </span>
-                  <h4 class="text-xs font-black uppercase tracking-wider text-rose-500">
-                    {{ t('wizard.paywallHooks') }}
-                  </h4>
                 </div>
 
-                <div class="grid grid-cols-1 gap-2.5">
+                <div class="grid grid-cols-1 gap-3">
                   <div
                     v-for="hook in masterPlan.paywall_hooks"
                     :key="hook.percentage"
-                    class="p-3.5 rounded-xl border text-[11px] space-y-2"
+                    class="p-4 rounded-xl border space-y-2.5 transition-all hover:border-[var(--el-color-primary-light-5)] shadow-xs"
                     style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);"
                   >
-                    <div class="flex items-center justify-between font-bold">
-                      <span style="color: var(--el-color-danger);" class="font-black text-xs">
-                        {{ t('wizard.paywallHookBadge', { percentage: hook.percentage, ep: hook.episode_number }) }}
-                      </span>
-                      <span class="text-[10px] font-mono px-2 py-0.5 rounded" style="background-color: var(--el-fill-color-darker); color: var(--el-text-color-placeholder);">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-2">
+                        <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0 shadow-sm" style="background: linear-gradient(135deg, var(--el-color-primary), #0ea5e9);">
+                          {{ hook.percentage }}
+                        </div>
+                        <span class="text-xs font-bold" style="color: var(--el-text-color-primary);">
+                          {{ t('wizard.paywallHookBadge', { percentage: hook.percentage, ep: hook.episode_number }) }}
+                        </span>
+                      </div>
+                      <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0 uppercase tracking-wider" style="background-color: var(--el-fill-color); color: var(--el-text-color-secondary);">
                         {{ hook.type }}
                       </span>
                     </div>
-                    <p class="leading-relaxed" style="color: var(--el-text-color-regular);">{{ hook.hook_description }}</p>
-                    <div v-if="hook.ad_hook_30s_prompt" class="pt-0.5">
-                      <el-tag size="small" type="danger" effect="plain" round class="p-2 !text-[10px] whitespace-normal h-auto w-full justify-start font-mono leading-relaxed">
-                        📢 {{ t('wizard.adHookCallout') }} {{ hook.ad_hook_30s_prompt }}
-                      </el-tag>
+
+                    <p class="text-xs leading-relaxed pl-1" style="color: var(--el-text-color-primary);">
+                      {{ hook.hook_description }}
+                    </p>
+
+                    <div v-if="hook.ad_hook_30s_prompt" class="p-2.5 rounded-lg border flex items-start gap-2" style="background: linear-gradient(135deg, var(--el-color-danger-light-9), var(--el-fill-color-light)); border-color: var(--el-color-danger-light-7);">
+                      <span class="text-sm shrink-0">📢</span>
+                      <div class="text-[11px] leading-relaxed" style="color: var(--el-text-color-primary);">
+                        <span class="font-bold text-[10px] uppercase tracking-wider block" style="color: var(--el-color-danger);">{{ t('wizard.adHookCallout') }}</span>
+                        <p class="mt-0.5">{{ hook.ad_hook_30s_prompt }}</p>
+                      </div>
                     </div>
                   </div>
                 </div>

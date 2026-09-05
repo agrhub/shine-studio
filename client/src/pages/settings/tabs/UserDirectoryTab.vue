@@ -556,7 +556,7 @@ onMounted(() => {
 
         <div>
           <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('adminUsers.reason') }}</label>
-          <el-input v-model="topupReason" placeholder="Admin reward / Support resolution..." size="small" />
+          <el-input v-model="topupReason" :placeholder="t('adminUsers.topupReasonPlaceholder')" size="small" />
         </div>
       </div>
       <template #footer>

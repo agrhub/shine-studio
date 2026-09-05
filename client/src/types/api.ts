@@ -1,4 +1,4 @@
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   code: number;
   data: T;
   message: string;
@@ -16,12 +16,87 @@ export interface ViralTopic {
   description: string;
 }
 
+export interface AssetVersion {
+  id: string;
+  image_url: string;
+  url?: string;
+  video_url?: string;
+  audio_url?: string;
+  voiceover_url?: string;
+  bgm_url?: string;
+  prompt?: string;
+  negative_prompt?: string;
+  created_at?: string;
+  is_selected?: boolean;
+  aspect_ratio?: string;
+  model?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type CustomizableAssetType =
+  | 'character'
+  | 'wardrobe'
+  | 'location'
+  | 'prop'
+  | 'scene_frame'
+  | 'scene_video'
+  | 'voiceover'
+  | 'bgm'
+  | 'episode_bgm';
+
+export type CustomizableAsset =
+  | Character
+  | CharacterWardrobeVariant
+  | LocationAsset
+  | PropAsset
+  | Scene
+  | Episode;
+
+export interface CustomizeAssetParams {
+  series_id: string;
+  episode_id?: string;
+  asset_type: CustomizableAssetType;
+  asset_id: string;
+  variant_id?: string;
+  custom_prompt: string;
+  use_reference_image?: boolean;
+  reference_image_url?: string;
+  aspect_ratio?: string;
+  user_id?: string;
+}
+
+export interface CustomizeAssetResult {
+  image_url: string;
+  prompt: string;
+  version: AssetVersion;
+  asset: CustomizableAsset;
+}
+
+export interface SelectAssetVersionParams {
+  series_id: string;
+  episode_id?: string;
+  asset_type: CustomizableAssetType;
+  asset_id: string;
+  variant_id?: string;
+  version_id: string;
+}
+
+export interface SelectAssetVersionResult {
+  success: boolean;
+  active_image_url: string;
+  asset: CustomizableAsset;
+}
+
 export interface CharacterWardrobeVariant {
   variant_id: string;
+  id?: string; // alias for variant_id for compatibility
   name: string;
   clothing_and_accessories: string;
   image_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   associated_scenes?: number[];
+  category?: string;
 }
 
 /**
@@ -45,6 +120,8 @@ export interface Character {
   speech_style?: string;
   avatar?: string | null;//Portrail image of the character 9:16
   image_url?: string;//A character sheet with a head and shoulders shot showing the characters face on the left and a full body shot of the character on the right wearing the same clothing and accessories against a seamless white background.
+  prompt?: string;
+  versions?: AssetVersion[];
   lora_model?: string;
   description?: string;
   frame_description?: string;//A character sheet with a head and shoulders shot showing the characters face on the left and a full body shot of the character on the right wearing the same clothing and accessories against a seamless white background.
@@ -54,20 +131,29 @@ export interface Character {
 
 export interface LocationAsset {
   id: string;
+  series_id?: string;
   name: string;
   physical_characteristics: string;
-  time_of_day: string;
+  time_of_day?: string;
   image_url?: string;
-  status: 'draft' | 'ready';
+  prompt?: string;
+  versions?: AssetVersion[];
+  frame_description?: string;
+  status?: 'draft' | 'ready';
   created_at?: string;
 }
 
 export interface PropAsset {
   id: string;
+  series_id?: string;
   name: string;
   physical_characteristics: string;
   image_url?: string;
-  status: 'draft' | 'ready';
+  prompt?: string;
+  versions?: AssetVersion[];
+  frame_description?: string;
+  owner?: string;
+  status?: 'draft' | 'ready';
   created_at?: string;
 }
 
@@ -76,6 +162,8 @@ export interface ShotFrame {
   index: number;
   title: string;
   frame_visual: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   frame_audio?: string;
   frame_motion?: string;
   dialogue?: {
@@ -100,11 +188,30 @@ export interface SceneLine {
   pacing: string;
 }
 
+export interface CaptionWord {
+  word?: string;
+  start?: number;
+  end?: number;
+  punctuated_word?: string;
+  confidence?: number;
+  score?: number;
+  from?: number;
+  to?: number;
+  text?: string;
+  isKeyWord?: boolean;
+}
+
 export interface CaptionsData {
-  [key: string]: any;
-  start_ms: number; 
-  end_ms: number; 
+  id?: string;
+  character?: string;
+  start_ms?: number; 
+  end_ms?: number; 
   text: string;
+  duration_ms?: number;
+  duration_us?: number;
+  from_us?: number;
+  to_us?: number;
+  words?: CaptionWord[];
 }
 
 export interface ReferenceAssets {
@@ -141,8 +248,15 @@ export interface Scene {
   description?: string;
   action?: string;
   lines?: SceneLine[];
+  image_url?: string;
   storyboard_frame_url?: string;
   storyboard_end_frame_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
+  end_frame_versions?: AssetVersion[];
+  video_versions?: AssetVersion[];
+  voice_versions?: AssetVersion[];
+  bgm_versions?: AssetVersion[];
   video_url?: string;
   voiceover_url?: string;
   bgm_url?: string;
@@ -165,10 +279,11 @@ export interface Scene {
   sfx_cues?: string[];
   reference_assets?: ReferenceAssets;
   visual_prompt?: string;
+  frame_visual?: string; // alias for frame_description or visual_prompt
   voice_duration_us?: number;
   voice_start_us?: number;
   captions_data?: CaptionsData[];
-  words?: any[];
+  words?: CaptionWord[];
   translations?: Record<string, SceneTranslation>;
 }
 
@@ -217,13 +332,13 @@ export interface Scene {
 // }
 
 export interface SceneTranslation {
-  dialogue?: string;
-  translated_dialogue?: string;
+  dialogue: SceneDialogue[];
   voiceover_url?: string;
   voice_duration_us?: number;
   voice_duration_ms?: number;
-  captions_data?: any[];
-  words?: any[];
+  voice_start_us?: number;
+  captions_data: CaptionsData[];
+  words: CaptionWord[];
 }
 
 // export interface Episode {
@@ -251,7 +366,7 @@ export interface CaptionCue {
   to_us?: number;
   duration_us?: number;
   duration_ms?: number;
-  words?: Array<{ text: string; from: number; to: number; isKeyWord?: boolean }>;
+  words?: CaptionWord[];
   timing?: {
     display: { from: number, to: number },
     trim: { from: number, to: number },
@@ -365,6 +480,8 @@ export interface Episode {
   props?: PropAsset[] | string[];
   video_url?: string;
   video_urls?: Record<string, string>;
+  bgm_url?: string;
+  bgm_versions?: AssetVersion[];
   render_versions?: RenderVersionEntity[];
   published_urls?: Record<string, string>;
   published_platforms?: EpisodePublishedPlatform[];
@@ -400,10 +517,10 @@ export interface Series {
   ratio?: string;
   cover_image?: string;
   viral_hook?: string;
-  master_plan?: any;
+  master_plan?: MasterPlanOutput | Record<string, unknown>;
   characters?: Character[];
-  locations?: any[];
-  props?: any[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
   episode_count: number;
   published_episode_count?: number;
   episodes_count?: number;
@@ -827,9 +944,165 @@ export interface PipelineJobEntity {
   completed_at?: string;
 }
 
+// ─── OMNI FLASH VIDEO MODEL INTERFACES ──────────────────────────────────────
+export interface GeminiOmniVideoPreferences {
+  aspectRatio?: '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
+  durationSeconds?: number; //<= 10s
+  resolution?: '360p' | '480p' | '720p' | '1080p';
+  generateAudio?: boolean;
+  personGeneration?: 'dont_allow' | 'allow_adult';
+}
 
+export interface GeminiOmniVideoOptions {
+  modelId?: string;
+  startFrame?: string;
+  endFrame?: string;
+  referenceImages?: string[];
+  preferences?: GeminiOmniVideoPreferences;
+  async?: boolean;
+}
 
+export interface GeminiOmniVideoResult {
+  url?: string;
+  mimeType?: string;
+  jobId?: string;
+  status?: string;
+}
 
+export interface FlowOmniVideoOptions {
+  aspectRatio?: 'VIDEO_ASPECT_RATIO_PORTRAIT' | 'VIDEO_ASPECT_RATIO_LANDSCAPE' | '9:16' | '16:9' | '1:1';
+  durationSeconds?: 5 | 10;
+  referenceImages: string[];
+  userPaygateTier?: string;
+  resolution?: string;
+  async?: boolean;
+}
 
+export interface FlowOmniVideoResult {
+  jobId?: string;
+  status?: string;
+  url?: string;
+}
 
+export interface StoryCore {
+  core_attraction: string;
+  psychological_pleasure: string;
+  gold_finger_rule: string;
+}
+
+export interface ActStructure {
+  act_number: number;
+  name: string;
+  episode_range: string;
+  function: string;
+  core_question: string;
+  act_climax: string;
+}
+
+export interface MajorReversal {
+  reversal_index: number;
+  episode_number: number;
+  setup_hook: string;
+  reversal_event: string;
+  audience_impact: string;
+}
+
+export interface PaywallHook {
+  percentage: string;
+  episode_number: number;
+  type: 'First Climax' | 'Life-Death Crisis' | 'Mid-Season Twist' | 'Late Reversal' | 'Grand Finale';
+  hook_description: string;
+  ad_hook_30s_prompt: string;
+}
+
+export interface EpisodeSkeleton {
+  episode_number: number;
+  title: string;
+  synopsis: string;
+  scene_core: string;
+  conflict_escalation: string;
+  cliffhanger_hook: string;
+  phase: string;
+  scene_count: number;
+  duration_seconds?: number;
+}
+
+export interface MasterPlanOutput {
+  series_id: string;
+  seriesId?: string;
+  title: string;
+  genre: string;
+  visual_style: string;
+  visualStyle?: string;
+  visual_style_prompt: string;
+  visualStylePrompt?: string;
+  country: string;
+  ratio: "9:16" | "16:9" | "4:3" | "1:1" | string;
+  total_episodes: number;
+  totalEpisodes?: number;
+  total_duration_seconds?: number;
+  totalDurationSeconds?: number;
+  episode_duration?: number;
+  language: string;
+  setting_context?: {
+    era: string;
+    location: string;
+    cultural_atmosphere: string;
+  };
+  story_core: StoryCore;
+  synopsis: string;
+  hidden_line: string;
+  target_audience: string;
+  viral_hook: string;
+  estimated_retention: string;
+  characters: Character[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
+  three_acts: ActStructure[];
+  major_reversals: MajorReversal[];
+  paywall_hooks: PaywallHook[];
+  episodes: EpisodeSkeleton[];
+}
+
+export interface GenerateSceneVideoResult {
+  assetId: string;
+  url: string;
+  s3Key: string;
+  bgmUrl: string;
+  voiceoverUrl: string;
+  voiceId?: string;
+  voiceStartUs: number;
+  voiceDurationUs: number;
+  captionsData: CaptionsData[];
+  videoPrompt: string;
+  duration: number;
+  motion: string;
+  cameraMovement: string;
+  sizeBytes: number;
+  provider?: string;
+  synthId?: Record<string, unknown>;
+  synthIdHeaders?: Record<string, string>;
+  status: string;
+  version?: AssetVersion;
+}
+
+export interface DialogueVoiceSynthesisResult {
+  s3_key: string;
+  url: string;
+  audio_url: string;
+  size_bytes: number;
+  mime_type: string;
+  voice_id: string;
+  voice_name: string;
+  language: string;
+  text: string;
+  cues: CaptionsData[];
+  start_us: number;
+  end_us: number;
+  start_ms: number;
+  end_ms: number;
+  duration_us: number;
+  duration_ms: number;
+  words?: CaptionWord[];
+}
 

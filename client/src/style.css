@@ -339,13 +339,13 @@ body.dark,
 }
 
 
-.el-tag {
+.el-tag.multiple-line {
   height: auto;
   padding: 5px;
   white-space: normal !important;
 }
 
-.el-tag > .el-tag__content {
+.el-tag.multiple-line > .el-tag__content {
   white-space: normal !important;
 }
 

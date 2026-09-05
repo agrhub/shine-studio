@@ -419,7 +419,7 @@ onUnmounted(() => {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('settings.fullName') }}</label>
-          <el-input v-model="fullName" placeholder="Your Name" size="small" />
+          <el-input v-model="fullName" :placeholder="t('common.yourName')" size="small" />
         </div>
         <div>
           <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('settings.emailAddress') }}</label>
@@ -493,7 +493,7 @@ onUnmounted(() => {
                   type="danger"
                   text
                   circle
-                  title="Disconnect Channel"
+                  :title="t('settings.disconnectChannel')"
                   icon="Link"
                   @click="handleDisconnectChannel(ch.id)"
                 >
@@ -530,11 +530,11 @@ onUnmounted(() => {
           </div>
           <div>
             <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('settings.newPassword') }}</label>
-            <el-input v-model="newPassword" type="password" show-password placeholder="New password" size="small" />
+            <el-input v-model="newPassword" type="password" show-password :placeholder="t('settings.newPassword')" size="small" />
           </div>
           <div>
             <label class="text-xs font-semibold text-[var(--el-text-color-secondary)] block mb-1.5">{{ t('settings.confirmPassword') }}</label>
-            <el-input v-model="confirmPassword" type="password" show-password placeholder="Confirm password" size="small" />
+            <el-input v-model="confirmPassword" type="password" show-password :placeholder="t('settings.confirmPassword')" size="small" />
           </div>
         </div>
         <div class="flex justify-end">

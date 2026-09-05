@@ -307,7 +307,7 @@ onMounted(() => {
               <input
                 v-model="platformConfig.sso.google.clientId"
                 type="text"
-                placeholder="Google OAuth Client ID"
+                :placeholder="t('settings.googleClientIdPlaceholder')"
                 class="w-full bg-[var(--el-bg-color-page)] border border-[var(--el-border-color)] rounded-xl px-3 py-2 text-xs text-[var(--el-text-color-primary)] focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -348,7 +348,7 @@ onMounted(() => {
               <input
                 v-model="platformConfig.sso.github.clientId"
                 type="text"
-                placeholder="GitHub OAuth Client ID"
+                :placeholder="t('settings.githubClientIdPlaceholder')"
                 class="w-full bg-[var(--el-bg-color-page)] border border-[var(--el-border-color)] rounded-xl px-3 py-2 text-xs text-[var(--el-text-color-primary)] focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -389,7 +389,7 @@ onMounted(() => {
               <input
                 v-model="platformConfig.sso.facebook.appId"
                 type="text"
-                placeholder="Facebook App ID"
+                :placeholder="t('settings.facebookAppIdPlaceholder')"
                 class="w-full bg-[var(--el-bg-color-page)] border border-[var(--el-border-color)] rounded-xl px-3 py-2 text-xs text-[var(--el-text-color-primary)] focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>

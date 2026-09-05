@@ -6,6 +6,7 @@ import { useSeriesStore } from '@/stores/useSeriesStore';
 import { usePipelineStore } from '@/stores/usePipelineStore';
 import { toast } from 'vue-sonner';
 import http from '@/utils/http';
+import { Bot } from 'lucide-vue-next';
 import ChatContentRenderer from './ChatContentRenderer.vue';
 import UserMessageRenderer from './UserMessageRenderer.vue';
 import AssetLivePreviewGrid from './AssetLivePreviewGrid.vue';
@@ -626,7 +627,7 @@ defineExpose({
     <div class="p-3.5 rounded-2xl border flex items-center justify-between shadow-soft" style="background: linear-gradient(135deg, rgba(62, 207, 142, 0.1) 0%, rgba(14, 165, 233, 0.08) 100%); border-color: var(--el-border-color);">
       <div class="flex items-center gap-2.5">
         <div class="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-tr from-emerald-500 to-sky-500 text-white shadow-md">
-          <el-icon :size="16"><Cpu /></el-icon>
+          <el-icon :size="16"><Bot /></el-icon>
         </div>
         <div>
           <div class="text-xs font-black uppercase tracking-wider flex items-center gap-1.5" style="color: var(--el-text-color-primary);">

@@ -7,7 +7,6 @@ import { toast } from 'vue-sonner';
 import CountryFlag from '@/components/common/CountryFlag.vue';
 import {
   GEMINI_SPEECH_LANGUAGES,
-  getMainLanguageForCountry,
   getLanguageByCode,
   type GeminiSpeechLanguage
 } from '@/constants/geminiLanguages';
@@ -98,7 +97,7 @@ const b5Step = computed(() => pipelineStore.pipelineSteps.find(s => s.id === 'b5
 
 // Main language matching series target market
 const mainTargetLang = computed<GeminiSpeechLanguage>(() => {
-  return getMainLanguageForCountry(seriesStore.currentSeries?.country);
+  return getLanguageByCode(seriesStore.currentSeries?.language || 'en-US');
 });
 
 // Selected active language track

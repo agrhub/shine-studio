@@ -7,7 +7,6 @@ import { toast } from 'vue-sonner';
 import CountryFlag from '@/components/common/CountryFlag.vue';
 import {
   GEMINI_SPEECH_LANGUAGES,
-  getMainLanguageForCountry,
   getLanguageByCode,
   type GeminiSpeechLanguage
 } from '@/constants/geminiLanguages';
@@ -49,7 +48,7 @@ const isTranslating = ref(false);
 
 // Main target language for series
 const mainTargetLang = computed<GeminiSpeechLanguage>(() => {
-  return getMainLanguageForCountry(seriesStore.currentSeries?.country);
+  return getLanguageByCode(seriesStore.currentSeries?.language || 'en-US');
 });
 
 // Language track state
@@ -922,28 +921,28 @@ function handleRemoveLanguage(lang: TabPaneName) {
                     size="small"
                     :type="selectedVerticalAlign === 'top' ? 'primary' : 'info'"
                     :plain="selectedVerticalAlign !== 'top'"
-                    class="flex-1 !px-1"
+                    class="flex-1 !px-1 !ml-0"
                     @click="setVerticalSlot('top')"
                   >
-                    ⬆ Top (15%)
+                    ⬆ Top
                   </el-button>
                   <el-button
                     size="small"
                     :type="selectedVerticalAlign === 'center' ? 'primary' : 'info'"
                     :plain="selectedVerticalAlign !== 'center'"
-                    class="flex-1 !px-1"
+                    class="flex-1 !px-1 !ml-0"
                     @click="setVerticalSlot('center')"
                   >
-                    ↔ Center (50%)
+                    ↔ Center
                   </el-button>
                   <el-button
                     size="small"
                     :type="selectedVerticalAlign === 'bottom' ? 'primary' : 'info'"
                     :plain="selectedVerticalAlign !== 'bottom'"
-                    class="flex-1 !px-1"
+                    class="flex-1 !px-1 !ml-0"
                     @click="setVerticalSlot('bottom')"
                   >
-                    ⬇ Bottom (80%)
+                    ⬇ Bottom
                   </el-button>
                 </div>
                 <el-slider v-model="captionVerticalPos" :min="10" :max="95" size="small" @input="handleVerticalSliderChange" />

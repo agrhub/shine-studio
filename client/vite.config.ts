@@ -32,7 +32,7 @@ export default defineConfig({
     VueRouter({
       extensions: ['.vue', '.md'],
       exclude: ['**/components/**'],
-      dts: 'src/typed-router.d.ts',
+      dts: process.env.NODE_ENV === 'production' ? false : 'src/typed-router.d.ts',
     }),
 
     Components({
@@ -45,7 +45,7 @@ export default defineConfig({
           importStyle: 'sass',
         }),
       ],
-      dts: 'src/components.d.ts',
+      dts: process.env.NODE_ENV === 'production' ? false : 'src/components.d.ts',
     }),
   ] as any[],
 
