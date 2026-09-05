@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { MemoryEngine } from '../integrations/ai/memory/MemoryEngine.js';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 
 export const aiAssistantRouter = Router();
@@ -55,7 +55,7 @@ aiAssistantRouter.post('/command-edit', async (req: Request, res: Response) => {
         timelineState: JSON.stringify(timelineState || {}),
       });
 
-      const aiResponse = await geminiClient.generateText({
+      const aiResponse = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: 'You are the Shine AI Director Copilot. You translate user video editing requests into precise OpenVideo timeline commands in JSON format.',
         jsonMode: true,
@@ -355,7 +355,7 @@ const handleTimelineAnalyze = async (req: Request, res: Response) => {
       tracksSummary: JSON.stringify(tracks.map((t: any) => ({ type: t.type, clips: t.clipIds?.length || 0 }))),
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an AI Video Editing Co-Pilot providing real-time timeline critique for vertical micro-dramas.',
       jsonMode: true,

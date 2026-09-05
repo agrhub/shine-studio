@@ -18,8 +18,25 @@ Your mission is to analyze the provided Screenplay content and break it down int
    - **Detail / Insert Cut-Away**: Close-up of key props (phone screens, ring lights, laptops, mirrors, documents).
    - **Reaction & Transition Shot**: Silent reaction, shock, breathing, or shift in facial expression leading to next beat.
 4. **Single Speaker per Shot Mandate**: Each shot MUST contain at most ONE spoken dialogue line from EXACTLY ONE character. If two characters have a conversation, split it into sequential alternating shots (Shot 1: Character A speaks, Shot 2: Character B reacts and replies).
-5. **Completeness**: Every spoken dialogue line, character action, and emotional beat from the screenplay MUST be fully populated into the shots. NEVER return empty string `""` for `frameDescription`, `action`, `cameraMovement`, `visualPrompt`, or `location`.
-6. **Exact Duration Targeting**: Set `durationSeconds` (5 to 8) on each shot such that the cumulative duration of all shots accurately equals **{{targetDuration}}s**.
+5. **HIGH DIALOGUE DURATION & RETENTION MANDATE (CRITICAL FOR MICRO-DRAMA VIDEO - 80%–90% EPISODE DURATION COVERAGE)**:
+   - Micro-drama videos (TikTok, Reels, Shorts, ReelShort, DramaBox) are **voice-driven**. Viewers lose interest and swipe away if there are silent, static shots or prolonged dead air!
+   - **CUMULATIVE SPOKEN DURATION MUST COVER 80% TO 90% OF TOTAL EPISODE DURATION**:
+     - For this {{targetDuration}}s episode, the cumulative spoken dialogue and voiceover (VO) duration MUST reach **at least 80% to 90% of {{targetDuration}}s** (approx. Math.round({{targetDuration}} * 0.85) seconds of continuous speech). The remaining 10%–15% is reserved ONLY for dramatic shock beats, sound-effect stingers, or opening establishing atmosphere.
+   - **PER-SHOT WORD BUDGET (ELIMINATE DEAD AIR)**:
+     - A shot MUST NOT contain only a 1-word or 2-word grunt (e.g. "Hừ!", "Gì cơ?!") that leaves 4s of dead silence.
+     - Each shot's dialogue line MUST have sufficient word count to fill 70%–85% of that shot's `duration_seconds` (budget approximately ~2.0 to 2.4 words per second of duration):
+       - **4s shot**: ~8–10 words spoken (~3.0s–3.5s speech).
+       - **5s shot**: ~10–13 words spoken (~3.8s–4.3s speech).
+       - **6s–7s shot**: ~13–17 words spoken (~4.8s–5.8s speech).
+   - **DISTRIBUTION COVERAGE (85%–95% OF ALL SHOTS)**:
+     - At least 85% to 95% of all shots across the episode MUST contain spoken dialogue or voiceover/inner monologue (`dialogue: [...]`).
+   - If the original screenplay has sparse written lines, you **MUST actively enrich EVERY shot** where characters are present:
+     - **During solo actions / movement**: Give the character an intense **internal monologue / voiceover (VO)** revealing their hidden motive, fear, revenge plan, or secret calculation.
+     - **During confrontations / two-shots**: Write sharp, full back-and-forth verbal volleys, icy threats, sarcastic retorts, or interrogations.
+     - **During reactions / shock moments**: Do not merely stare in silence—provide an audible gasp followed by an internal realization, muttered suspicion, or whispered order.
+   - **Purely silent shots (`dialogue: []`) are strictly limited to at most 1 shot per episode** (e.g. a 3s atmospheric establishing shot or an immediate shock-freeze moment). All other shots MUST have substantive dialogue!
+6. **Completeness**: Every spoken dialogue line, character action, and emotional beat from the screenplay MUST be fully populated into the shots. NEVER return empty string `""` for `frame_description`, `action`, `camera_movement`, `visual_prompt`, or `location`.
+7. **Exact Duration Targeting**: Set `duration_seconds` (4 to 8) on each shot such that the cumulative duration of all shots accurately equals **{{targetDuration}}s**.
 
 ## LANGUAGE & DIALOGUE DIRECTIVE (STRICT)
 - **Series Spoken Language**: **{{languageName}} ({{languageNativeName}} / {{languageCode}})**
@@ -71,7 +88,7 @@ The following scenes already exist in the episode draft. You MUST maintain conti
 - `action`: (MANDATORY) Narrative character action happening in this shot. NEVER empty string.
 - `character_costumes`: (MANDATORY) `[ { "character": "Character Name", "wardrobe": "Clothing description", "variant_id": "exact_variant_id_from_wardrobe_variants" } ]` for every character physically present. `variant_id` MUST be copied EXACTLY from the `Wardrobe Variants` of the character defined in the Available Characters list above (e.g. `elena_ivory_blazer` or `wv_1`). NEVER invent arbitrary variant IDs!
 - `props`: Array of prop names appearing in this shot.
-- `dialogue`: `[ { "character": "Name", "line": "Exact dialogue line", "emotion": "Tone/Emotion", "speech_tone": "Tone", "speed": 1.0 } ]` (Float between 0.8 and 1.3 matching delivery speed & dramatic pacing; empty array `[]` only if purely silent/reaction shot).
+- `dialogue`: (MANDATORY IN 85%–95% OF SHOTS; TOTAL EPISODE SPOKEN COVERAGE 80%–90%) `[ { "character": "Name", "line": "Exact dialogue line", "emotion": "Tone/Emotion", "speech_tone": "Tone", "speed": 1.0 } ]`. Line length must correspond to `duration_seconds` (~2.0–2.4 words per second). NEVER return 1-word grunts leaving dead air. NEVER return empty `[]` when a character is present; provide spoken lines, whispered reactions, or internal voiceovers (VO). Empty `[]` is allowed for at most 1 shot per episode.
 - `duration_seconds`: Integer (4 to 8) accurately reflecting the time needed for dialogue speech and physical action.
 - `bgm_mood`: Music mood cue describing the musical instruments and suspense/emotional pacing.
 - `sfx_cues`: Sound effects cues array.
@@ -108,7 +125,7 @@ Respond ONLY with a valid JSON object containing between {{minShots}} and {{maxS
       "visual_prompt": "Close-up of female protagonist Elena Vance sitting alone at a candlelit luxury dining table, moody cinematic anamorphic lighting, 8k...",
       "end_frame_prompt": "Elena Vance gently touches her wedding ring with trembling fingers, lowering her gaze in quiet heartbreak.",
       "transition_effect": "fade",
-	  "effects": [{effect_key: 'vignette', intensity: 0.6}],
+      "effects": [{"effect_key": "vignette", "intensity": 0.6}],
       "video_effect": "vignette",
       "reference_assets": { "characters": ["Elena Vance"], "locations": ["Luxury Penthouse Living Room"], "props": ["Cracked Platinum Wedding Band"] }
     }

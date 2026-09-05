@@ -15,6 +15,6 @@ TRANSLATION REQUIREMENTS:
 2. "description": Translate into a gripping 2-sentence hook in {{languageName}}.
 3. "trope": Translate the core trope formula into {{languageName}}.
 4. "competitor_hook": Translate the 3-second opening hook into {{languageName}}.
-5. "category" / "genre": Translate into natural drama category terminology in {{languageName}}.
-6. Keep "id", "hashtag_velocity", "engagement_score", "country", "target_episodes", "duration_seconds" intact.
+5. "category": Translate into natural drama category terminology in {{languageName}}.
+6. Keep "id", "genre", "hashtag_velocity", "engagement_score", "country", "target_episodes", "duration_seconds" intact. "genre" MUST remain one of: "suspense", "revenge", "romance", "satire", "fantasy", "scifi".
 7. Output strictly a valid JSON array of objects conforming to the Trend Radar Output Schema. Do NOT wrap in markdown code blocks or add explanatory text.

@@ -1,14 +1,14 @@
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { EpisodeSkeleton, MasterPlanOutput, RefinePlanInput, RefinePlanOutput } from '@/types.js';
 import { storySkeletonAgent } from './StorySkeletonAgent.js';
 import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
-import { getLanguageForCountry } from '../utils/LanguageMapping.js';
+import { getLanguageInfo, assertValidBCP47 } from '../utils/LanguageMapping.js';
 
 export class MasterPlanRefineAgent {
   async execute(input: RefinePlanInput): Promise<RefinePlanOutput> {
-    const { currentPlan, userInstruction } = input;
+    const { currentPlan: currentPlan, userInstruction: userInstruction } = input;
     if (!currentPlan || !userInstruction) {
       throw new Error('currentPlan and userInstruction are required parameters.');
     }
@@ -19,7 +19,9 @@ export class MasterPlanRefineAgent {
     }
 
     const country = currentPlan.country || 'United States';
-    const langInfo = currentPlan.language ? getLanguageForCountry(currentPlan.language) : getLanguageForCountry(country);
+    const languageCode = currentPlan.language || 'en-US';
+    assertValidBCP47(languageCode);
+    const langInfo = getLanguageInfo(languageCode);
 
     Logger.info(`[MasterPlanRefineAgent] Refining master plan for setting "${country}" in script language "${langInfo.name}": "${userInstruction}"`);
 
@@ -32,7 +34,7 @@ export class MasterPlanRefineAgent {
       currentPlanJson: JSON.stringify(currentPlan, null, 2),
     });
 
-    const rawText = await geminiClient.generateText({
+    const rawText = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: `${refineSkill}\n\nCRITICAL LANGUAGE DIRECTIVE: ${langInfo.promptInstruction}`,
       jsonMode: true,
@@ -50,19 +52,19 @@ export class MasterPlanRefineAgent {
     }
 
     const updatedPlan: MasterPlanOutput = parsed.updatedPlan || parsed.updated_plan || parsed;
-    const targetEpisodes = Number(updatedPlan.total_episodes) || Number(currentPlan.total_episodes || currentPlan.totalEpisodes) || 24;
-    const durationSecs = Number(updatedPlan.total_duration_seconds) || Number(currentPlan.total_duration_seconds || currentPlan.totalDurationSeconds) || 90;
+    const targetEpisodes = Number(updatedPlan.total_episodes) || Number(currentPlan.total_episodes) || 24;
+    const durationSecs = Number(updatedPlan.total_duration_seconds) || Number(currentPlan.total_duration_seconds) || 60;
     
     updatedPlan.total_episodes = targetEpisodes;
     updatedPlan.total_duration_seconds = durationSecs;
     updatedPlan.country = country;
-    updatedPlan.language = langInfo.name;
-    updatedPlan.visual_style = currentPlan.visual_style || currentPlan.visualStyle || updatedPlan.visual_style || 'realistic';
-    updatedPlan.visual_style_prompt = currentPlan.visual_style_prompt || currentPlan.visualStylePrompt || updatedPlan.visual_style_prompt || '';
+    updatedPlan.language = languageCode;
+    updatedPlan.visual_style = currentPlan.visual_style || updatedPlan.visual_style || 'realistic';
+    updatedPlan.visual_style_prompt = currentPlan.visual_style_prompt || updatedPlan.visual_style_prompt || '';
     updatedPlan.ratio = currentPlan.ratio || updatedPlan.ratio || '9:16';
 
     if (!updatedPlan.series_id) {
-      updatedPlan.series_id = currentPlan.series_id || currentPlan.seriesId || `series_${Date.now()}`;
+      updatedPlan.series_id = currentPlan.series_id || `series_${Date.now()}`;
     }
 
     // Step 2: Automatic Chunk Mode Expansion for Large Episode Counts
@@ -88,7 +90,7 @@ export class MasterPlanRefineAgent {
     const durationDisplay = `${durationSecs}s (${Math.floor(durationSecs / 60)}m ${durationSecs % 60 ? `${durationSecs % 60}s` : ''}`.trim() + ')';
 
     return {
-      updatedPlan,
+      updatedPlan: updatedPlan,
       explanation: parsed.explanation || `Master plan successfully refined to ${targetEpisodes} episodes (${durationDisplay}/ep).`,
     };
   }

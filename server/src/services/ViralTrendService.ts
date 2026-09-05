@@ -1,6 +1,6 @@
 import { Logger } from '../utils/logger.js';
 import { trendRadarAgent } from '../agents/TrendRadarAgent.js';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { TrendTopicOutput, ViralTrendItem, ViralTrendPaginationResult, LANGUAGE_NAMES } from '@/types.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { PromptLoader } from '@/utils/PromptLoader.js';
@@ -259,7 +259,7 @@ export class ViralTrendService {
     const trendSkill = loadSkill('trend_radar');
 
     try {
-      const rawText = await geminiClient.generateText({
+      const rawText = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: trendSkill,
         jsonMode: true,
@@ -513,11 +513,11 @@ export class ViralTrendService {
       items,
       total,
       page,
-      pageSize,
-      totalPages,
+      pageSize: pageSize,
+      totalPages: totalPages,
       country: countryCode,
       updatedAt: (this.lastUpdated.get(cacheKey) || new Date()).toISOString(),
-      fromCache,
+      fromCache: fromCache,
     };
   }
 

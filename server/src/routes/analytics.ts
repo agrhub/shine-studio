@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { getDatabaseProvider } from '../database/index.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { getUserId } from '@/utils/auth.js';
@@ -313,7 +313,7 @@ analyticsPaywallRouter.get('/paywall-recommendation', async (req: Request, res: 
       retentionSummary: 'Ep 1-3 average 85% retention, sharp cliffhanger at Ep 3 climax',
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an AI Paywall & Monetization Optimization Engine for Micro-Drama platforms.',
       jsonMode: true,

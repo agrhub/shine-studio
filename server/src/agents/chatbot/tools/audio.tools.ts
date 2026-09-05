@@ -1,7 +1,7 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
 import { getDatabaseProvider } from '@/database/index.js';
-import type { SceneEntity, SceneDialogue, AssetJobItem } from '@/types.js';
+import type { SceneEntity, SceneDialogue, AssetJobItem, AssetVersion, DialogueVoiceSynthesisResult } from '@/types.js';
 import { Logger } from '@/utils/logger.js';
 import { generateDialogueVoiceSynthesis } from '@/routes/voices.js';
 import { CaptionService } from '@/services/CaptionService.js';
@@ -107,6 +107,24 @@ export class AudioToolExecutors {
             });
           });
 
+          const curVoiceVersions: AssetVersion[] = Array.isArray(updatedScenes[idx].voice_versions) ? [...(updatedScenes[idx].voice_versions as AssetVersion[])] : [];
+          if (curVoiceVersions.length === 0 && updatedScenes[idx].voiceover_url && updatedScenes[idx].voiceover_url !== result?.audio_url) {
+            curVoiceVersions.push({
+              id: `v1_voice_${scIndex}`,
+              image_url: updatedScenes[idx].voiceover_url,
+              created_at: new Date().toISOString(),
+              is_selected: false,
+            });
+          }
+          const newVoiceVer: AssetVersion = {
+            id: `ver_voice_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            image_url: '',
+            voiceover_url: result?.audio_url || '',
+            created_at: new Date().toISOString(),
+            is_selected: true,
+            model: params.voiceId,
+          };
+          updatedScenes[idx].voice_versions = [newVoiceVer, ...curVoiceVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
           updatedScenes[idx].voiceover_url = result?.audio_url;
           updatedScenes[idx].voice_duration_us = result?.duration_us || ((result?.duration_ms || 3000) * 1000);
           updatedScenes[idx].voice_start_us = result?.start_us || 500_000;
@@ -114,8 +132,8 @@ export class AudioToolExecutors {
           if (result?.cues?.length) {
             updatedScenes[idx].captions_data = result.cues;
           }
-          if ((result as any)?.words?.length) {
-            updatedScenes[idx].words = (result as any).words;
+          if ((result as DialogueVoiceSynthesisResult | undefined)?.words?.length) {
+            updatedScenes[idx].words = (result as DialogueVoiceSynthesisResult).words;
           }
 
           results.push({
@@ -222,6 +240,12 @@ export class AudioToolExecutors {
         scenes: updatedScenes,
         dubbing_languages: Array.from(currentDubLangs),
       });
+      try {
+        const { TimelineService } = await import('@/services/TimelineService.js');
+        await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
+      } catch (tlErr: any) {
+        Logger.warn(`[AudioTools.generateSceneVoiceover] Timeline sync notice: ${tlErr.message}`);
+      }
 
       const generatedCount = results.filter((r) => r.status.includes('generated')).length;
       return {
@@ -291,8 +315,30 @@ export class AudioToolExecutors {
       if (bgmUrl) {
         const scIdx = scenes.findIndex(s => s.id === targetScene.id || s.index === targetScene.index);
         if (scIdx >= 0) {
+          const curBgmVersions: AssetVersion[] = Array.isArray(scenes[scIdx].bgm_versions) ? [...(scenes[scIdx].bgm_versions as AssetVersion[])] : [];
+          if (curBgmVersions.length === 0 && scenes[scIdx].bgm_url && scenes[scIdx].bgm_url !== bgmUrl) {
+            curBgmVersions.push({
+              id: `v1_bgm_${targetScene.index || scIdx + 1}`,
+              image_url: scenes[scIdx].bgm_url,
+              created_at: new Date().toISOString(),
+              is_selected: false,
+            });
+          }
+          const newBgmVer: AssetVersion = {
+            id: `ver_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            image_url: bgmUrl,
+            created_at: new Date().toISOString(),
+            is_selected: true,
+          };
+          scenes[scIdx].bgm_versions = [newBgmVer, ...curBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
           scenes[scIdx].bgm_url = bgmUrl;
           await db.updateEpisode(params.episodeId, { scenes });
+          try {
+            const { TimelineService } = await import('@/services/TimelineService.js');
+            await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
+          } catch (tlErr: any) {
+            Logger.warn(`[AudioTools.generateSceneBgm] Timeline sync notice: ${tlErr.message}`);
+          }
         }
       }
 

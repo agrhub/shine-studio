@@ -146,11 +146,14 @@ export class ScreenplayToolExecutors {
         });
       });
 
-      // Generate screenplay markdown if not provided
-      const screenplay = params.screenplay || scriptAgent.assembleMarkdownScreenplay(
-        normalizedScenes as any,
-        episode.title
-      );
+      // Generate screenplay markdown if not provided or if raw JSON was provided
+      const isRawJson = (str?: string) => {
+        const trimmed = (str || '').trim();
+        return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+      };
+      const screenplay = (!params.screenplay || isRawJson(params.screenplay))
+        ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, episode.title)
+        : params.screenplay;
 
       await db.updateEpisode(params.episodeId, {
         scenes: normalizedScenes,

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 
 export const viralCoverRouter = Router();
@@ -14,7 +14,7 @@ viralCoverRouter.post('/viral-cover/generate', async (req: Request, res: Respons
       episodeId,
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are a Viral TikTok/Shorts Thumbnail & Title Optimization Engine predicting click-through rates.',
       jsonMode: true,

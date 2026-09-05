@@ -3,7 +3,6 @@ import { CaptionSettings, TimelineCaptionWord, CaptionSettings as _CS, EpisodeEn
 import { Logger } from '../utils/logger.js';
 import { normalizeSceneEntity } from '../utils/sceneNormalizer.js';
 import { OPENVIDEO_EFFECTS } from '../constants/effects.js';
-import { getLanguageForCountry } from '../utils/LanguageMapping.js';
 import { CaptionService } from './CaptionService.js';
 
 export class TimelineService {
@@ -244,6 +243,37 @@ export class TimelineService {
 
     const totalDurationUs = Math.max(targetDurationUs, currentTimelineUs);
 
+    // Fallback: If episode has bgm_url and no per-scene BGM was added, add a global episode BGM clip
+    if (episode.bgm_url && bgmClipIds.length === 0) {
+      const epBgmClipId = `clip_bgm_${episodeId}_main`;
+      clips[epBgmClipId] = {
+        id: epBgmClipId,
+        trackId: 'track_bgm',
+        type: 'Audio',
+        name: 'Episode BGM',
+        src: episode.bgm_url,
+        timing: {
+          display: { from: 0, to: totalDurationUs },
+          trim: { from: 0, to: totalDurationUs },
+          duration: totalDurationUs,
+          playbackRate: 1,
+        },
+        volume: 0.35,
+        style: {},
+        locked: false,
+        transform: {
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          angle: 0,
+          zIndex: 0,
+          opacity: 1,
+        },
+      };
+      bgmClipIds.push(epBgmClipId);
+    }
+
     const projectData: IProject = {
       settings: {
         width,
@@ -260,8 +290,8 @@ export class TimelineService {
       clips,
     };
 
-    // Synchronize language tracks (voiceover & subtitles) for primary and configured languages
-    const primaryLang = series?.language || episode.dubbing_languages?.[0] || episode.caption_languages?.[0] || (series?.country ? getLanguageForCountry(series.country)?.code : 'en-US') || 'en-US';
+    // Synchronize language tracks (voiceover & subtitles) directly for series.language
+    const primaryLang = (series?.language || 'en-US').trim();
     this.syncLanguageTracksIntoTimeline(projectData, episode, primaryLang);
 
     return projectData;
@@ -278,56 +308,59 @@ export class TimelineService {
     if (!timeline.tracks) timeline.tracks = [];
     if (!timeline.clips) timeline.clips = {};
 
+    const BCP47_REGEX = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i;
+    const cleanPrimary = BCP47_REGEX.test(primaryLang) ? primaryLang : 'en-US';
     const episodeId = episode.id;
     const rawScenes = this.extractScenes(episode);
     const canvasWidth = timeline.settings?.width || 1080;
     const canvasHeight = timeline.settings?.height || 1920;
 
-    // Collect all configured language codes (always include primaryLang)
+    // Collect all configured language codes (always include cleanPrimary)
     const langSet = new Set<string>();
-    if (primaryLang) langSet.add(primaryLang);
+    langSet.add(cleanPrimary);
 
-    // Only add additional sub-languages if they have actual translations in scenes
+    // Only add additional sub-languages if they are valid BCP-47 codes and have actual translations in scenes
     const sceneTranslationLangs = new Set<string>();
     rawScenes.forEach((sc: any) => {
       if (sc.translations && typeof sc.translations === 'object') {
         Object.keys(sc.translations).forEach(k => {
-          if (k && k !== primaryLang) {
-            sceneTranslationLangs.add(k);
-            langSet.add(k);
+          if (k && k !== cleanPrimary && BCP47_REGEX.test(k.trim())) {
+            sceneTranslationLangs.add(k.trim());
+            langSet.add(k.trim());
           }
         });
       }
     });
 
     (episode.dubbing_languages || []).forEach(l => {
-      if (l && (l === primaryLang || sceneTranslationLangs.has(l))) {
-        langSet.add(l);
+      if (l && BCP47_REGEX.test(l.trim()) && (l.trim() === cleanPrimary || sceneTranslationLangs.has(l.trim()))) {
+        langSet.add(l.trim());
       }
     });
     (episode.caption_languages || []).forEach(l => {
-      if (l && (l === primaryLang || sceneTranslationLangs.has(l))) {
-        langSet.add(l);
+      if (l && BCP47_REGEX.test(l.trim()) && (l.trim() === cleanPrimary || sceneTranslationLangs.has(l.trim()))) {
+        langSet.add(l.trim());
       }
     });
 
-    // Prune legacy or unconfigured language tracks to avoid leftover tracks (e.g. unwanted en-US)
+    // Prune tracks that do not match langSet (e.g. invalid tracks like track_caption_United_States)
     timeline.tracks = timeline.tracks.filter(t => {
       if (t.id === 'track_voiceover_main' || t.id === 'track_captions_main') return false;
       if (t.type === 'Audio' && t.id.startsWith('track_voiceover_')) {
         const lCode = t.languageCode || t.id.replace('track_voiceover_', '');
-        return langSet.has(lCode) || langSet.has(lCode.replace(/_/g, '-'));
+        return langSet.has(lCode) && (t.id === `track_voiceover_${lCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
       }
       if (t.type === 'Caption' && t.id.startsWith('track_caption_')) {
         const lCode = t.languageCode || t.id.replace('track_caption_', '');
-        return langSet.has(lCode) || langSet.has(lCode.replace(/_/g, '-'));
+        return langSet.has(lCode) && (t.id === `track_caption_${lCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
       }
       return true;
     });
 
+    const currentTrackIds = new Set(timeline.tracks.map(t => t.id));
     Object.keys(timeline.clips).forEach(cid => {
       const clip = timeline.clips[cid];
-      if (clip && (clip.trackId === 'track_voiceover_main' || clip.trackId === 'track_captions_main')) {
+      if (clip && (!clip.trackId || !currentTrackIds.has(clip.trackId) || clip.trackId === 'track_voiceover_main' || clip.trackId === 'track_captions_main')) {
         delete timeline.clips[cid];
       }
     });
@@ -472,7 +505,8 @@ export class TimelineService {
         const trans = scene.translations?.[langCode];
 
         const voClipId = `clip_vo_${episodeId}_s${scIdx}_${safeLang}`;
-        const voUrl = trans?.voiceover_url || (isPrimary ? scene.voiceover_url : null);
+        const rawVoUrl = trans?.voiceover_url || (isPrimary ? scene.voiceover_url : null);
+        const voUrl = (rawVoUrl && !rawVoUrl.startsWith('/api/assets/file/voice_')) ? rawVoUrl : null;
 
         // --- Voiceover Management ---
         if (voTrack) {
@@ -869,6 +903,37 @@ export class TimelineService {
       currentTimelineUs += sceneDurUs;
     });
 
+    // Fallback: If episode has bgm_url and no per-scene BGM was added, add a global episode BGM clip
+    if (episode.bgm_url && bgmTrack && bgmTrack.clipIds.length === 0) {
+      const epBgmClipId = `clip_bgm_${episodeId}_main`;
+      clips[epBgmClipId] = {
+        id: epBgmClipId,
+        trackId: 'track_bgm',
+        type: 'Audio',
+        name: 'Episode BGM',
+        src: episode.bgm_url,
+        timing: {
+          display: { from: 0, to: currentTimelineUs },
+          trim: { from: 0, to: currentTimelineUs },
+          duration: currentTimelineUs,
+          playbackRate: 1,
+        },
+        volume: 0.35,
+        style: {},
+        locked: false,
+        transform: {
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          angle: 0,
+          zIndex: 0,
+          opacity: 1,
+        },
+      };
+      bgmTrack.clipIds.push(epBgmClipId);
+    }
+
     timeline.tracks = tracks;
     timeline.clips = clips;
     const primaryLang = episode.dubbing_languages?.[0] || episode.caption_languages?.[0] || series?.language || 'en-US';
@@ -887,8 +952,8 @@ export class TimelineService {
     const series = await db.getSeriesById(episode.series_id);
     const latest = await db.getLatestTimeline(episodeId);
 
-    if (latest?.timeline_data?.tracks && latest?.timeline_data?.clips) {
-      const updatedTimeline = this.syncTimelineWithScenes(episode, { ...latest.timeline_data }, series);
+    if (latest?.tracks && latest?.clips) {
+      const updatedTimeline = this.syncTimelineWithScenes(episode, { ...latest }, series);
       try {
         await db.saveTimeline(episodeId, updatedTimeline, { id: 'system', name: 'Studio System' }, 'Synchronized timeline with latest scene media');
       } catch (saveErr) {

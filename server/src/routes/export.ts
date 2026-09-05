@@ -20,14 +20,7 @@ exportRouter.post('/render-job', (req: Request, res: Response) => {
 
     return res.json({
       code: 200,
-      data: {
-        jobId: job.jobId,
-        seriesId: job.seriesId,
-        episodeId: job.episodeId,
-        status: job.status,
-        progress: job.progress,
-        outputUrl: job.outputUrl,
-      },
+      data: job,
       message: 'Render job queued successfully',
       error: null,
     });
@@ -58,14 +51,7 @@ exportRouter.get('/render-job/:jobId/status', (req: Request, res: Response) => {
 
   return res.json({
     code: 200,
-    data: {
-      jobId: job.jobId,
-      status: job.status,
-      progress: job.progress,
-      outputUrl: job.outputUrl,
-      outputsByLang: job.outputsByLang || (job.outputUrl ? { default: job.outputUrl } : {}),
-      error: job.error || null,
-    },
+    data: job,
     message: job.status === 'completed' ? 'Render complete!' : 'Rendering in progress...',
     error: null,
   });
@@ -104,8 +90,8 @@ exportRouter.post('/batch', async (req: Request, res: Response) => {
     for (const epId of episodeIds) {
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const result = await cloudRunService.dispatchRenderJob({
-        jobId,
-        seriesId,
+        jobId: jobId,
+        seriesId: seriesId,
         episodeId: epId,
         timelineData: timelineData?.[epId] || {},
         outputFormat: outputFormat || 'mp4',

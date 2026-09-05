@@ -1,9 +1,9 @@
-import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../integrations/ai/gemini/GeminiClient.js';
+import { GEMINI_SUPPORTED_VOICES } from '../integrations/ai/gemini/GeminiClient.js';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { renderSkill, loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
-import { getLanguageForCountry } from '../utils/LanguageMapping.js';
+import { getLanguageInfo, assertValidBCP47 } from '../utils/LanguageMapping.js';
 import { getVisualStylePrompt } from '../constants/VisualStyles.js';
 import {
   ShotFrame,
@@ -19,7 +19,7 @@ import {
   ScriptItem,
 } from '../types.js';
 import { nanoid } from 'nanoid';
-import { CaptionService } from '~/services/CaptionService.js';
+import { CaptionService } from '../services/CaptionService.js';
 
 export class ScriptAgent {
   // ── 1. DURATION & SCENE/SHOT TIER SCALING ─────────────────────────────────
@@ -698,20 +698,28 @@ export class ScriptAgent {
 
   // ── 5. SCREENPLAY FORMATTING ─────────────────────────────────────────────
 
+  public isRawJson(str?: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    const trimmed = str.trim();
+    return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+  }
+
   public assembleMarkdownScreenplay(shots: ScriptShot[], title?: string): string {
     let currentHeading = '';
     let markdownScreenplay = title ? `# ${title.toUpperCase()}\n\n` : '';
-    markdownScreenplay += shots.map((s) => {
+    markdownScreenplay += (shots || []).map((s) => {
       let prefix = '';
       if (s.heading && s.heading !== currentHeading) {
         currentHeading = s.heading;
         prefix = `### ${s.heading.toUpperCase()}\n\n`;
       }
-      let sText = prefix + s.action;
+      let sText = prefix + (s.action || s.frame_description || '');
       if (s.dialogue && s.dialogue.length > 0) {
         const dlgText = s.dialogue.map((d: any) => {
-          const tone = d.speechTone || d.emotion ? `_(${d.speechTone || d.emotion})_\n` : '';
-          return `**${(d.character || 'CHARACTER').toUpperCase()}**\n${tone}${d.line}`;
+          const tone = d.speechTone || d.speech_tone || d.emotion ? `_(${d.speechTone || d.speech_tone || d.emotion})_\n` : '';
+          const char = (d.character || d.speaker || 'CHARACTER').toUpperCase();
+          const line = d.line || d.text || '';
+          return `**${char}**\n${tone}${line}`;
         }).join('\n\n');
         sText += `\n\n${dlgText}`;
       }
@@ -730,9 +738,10 @@ export class ScriptAgent {
     const visual_style = input.visual_style || 'realistic';
     const visual_style_prompt = input.visual_style_prompt || getVisualStylePrompt(visual_style);
     const country = input.country || 'US';
-    const language = input.language || input.country || 'en-US';
     const ratio = input.ratio || '9:16';
-    const langInfo = getLanguageForCountry(language);
+    const language = input.language || 'en-US';
+    assertValidBCP47(language);
+    const langInfo = getLanguageInfo(language);
 
     const tiers = this.calculateDurationTiers(input.target_duration_seconds);
     const { targetDuration, minShots, maxShots, minScenes, maxScenes } = tiers;
@@ -784,17 +793,22 @@ export class ScriptAgent {
       renderSkill('screenplay_system', skillVars);
 
     try {
-      // 1. Generate full screenplay text using Gemini
-      const rawText = await geminiClient.generateText({
+      // 1. Generate full screenplay text using AIProviderRouter (Antigravity/Gemini load sharing)
+      const rawText = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: buildSystemInstruction(),
         jsonMode: true,
       });
 
+      let cleanText = (rawText || '').trim();
+      if (cleanText.startsWith('```')) {
+        cleanText = cleanText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      }
+
       let generatedScreenplay = '';
       let parsedJson: any = null;
       try {
-        parsedJson = JSON.parse(rawText);
+        parsedJson = JSON.parse(cleanText);
         generatedScreenplay = parsedJson.screenplay || '';
       } catch {
         generatedScreenplay = rawText;
@@ -815,13 +829,24 @@ export class ScriptAgent {
         const locations = this.normalizeLocations(rawLocs, input.locations || []);
         const props = this.normalizeProps(rawProps, input.props || []);
 
-        const shots = this.flattenAndEnrichShots(parsedJson.scenes, {
+        const rawShots = this.flattenAndEnrichShots(parsedJson.scenes, {
           characters,
           locations,
           props,
         });
 
-        const screenplay = parsedJson.screenplay || this.assembleMarkdownScreenplay(shots, epTitle);
+        const shots = await this.enrichShotsWithDramaDialogue(rawShots, {
+          screenplay: parsedJson.screenplay || input.synopsis || epTitle,
+          title: epTitle,
+          characters,
+          langInfo,
+          targetDurationSeconds: targetDuration,
+        });
+
+        let screenplay = parsedJson.screenplay;
+        if (!screenplay || this.isRawJson(screenplay)) {
+          screenplay = this.assembleMarkdownScreenplay(shots, epTitle);
+        }
         const totalDuration = shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
 
         return {
@@ -852,12 +877,17 @@ export class ScriptAgent {
         existingProps: input.props || [],
       });
 
+      let fallbackScreenplay = breakdown.screenplay;
+      if (!fallbackScreenplay || this.isRawJson(fallbackScreenplay)) {
+        fallbackScreenplay = this.assembleMarkdownScreenplay(breakdown.scenes as any, epTitle);
+      }
+
       return {
         episode: epStr,
         episode_number: epNum,
         title: parsedJson?.title || epTitle,
         synopsis: parsedJson?.synopsis || input.synopsis || '',
-        screenplay: breakdown.screenplay,
+        screenplay: fallbackScreenplay,
         scene_core: parsedJson?.scene_core || parsedJson?.sceneCore || input.scene_core,
         conflict_escalation: parsedJson?.conflict_escalation || parsedJson?.conflictEscalation || input.conflict_escalation,
         cliffhanger_hook: parsedJson?.cliffhanger_hook || parsedJson?.cliffhangerHook || input.cliffhanger_hook,
@@ -875,12 +905,14 @@ export class ScriptAgent {
 
   // ── 7. SCREENPLAY EXTRACTION & DESCRIPTION API METHODS ──────────────────
 
-  public async extractAssets(screenplay: string, countryOrLanguage?: string): Promise<{
+  public async extractAssets(screenplay: string, language?: string): Promise<{
     characters: string[];
     locations: string[];
     props: string[];
   }> {
-    const langInfo = getLanguageForCountry(countryOrLanguage);
+    const lang = language || 'en-US';
+    assertValidBCP47(lang);
+    const langInfo = getLanguageInfo(lang);
     const prompt = PromptLoader.render('screenplay/extract_assets', {
       screenplay,
       languageInstruction: langInfo.dialogueInstruction,
@@ -908,9 +940,11 @@ export class ScriptAgent {
   public async describeCharacters(
     screenplay: string,
     characterNames: string[],
-    countryOrLanguage?: string
+    language?: string
   ): Promise<Record<string, { physical_characteristics: string; clothing_and_accessories: string; backstory: string; wardrobe_variants?: any[] }>> {
-    const langInfo = getLanguageForCountry(countryOrLanguage);
+    const lang = language || 'en-US';
+    assertValidBCP47(lang);
+    const langInfo = getLanguageInfo(lang);
     const result: Record<string, { physical_characteristics: string; clothing_and_accessories: string; backstory: string; wardrobe_variants?: any[] }> = {};
 
     await Promise.all(
@@ -967,9 +1001,11 @@ export class ScriptAgent {
   public async describeLocations(
     screenplay: string,
     locationNames: string[],
-    countryOrLanguage?: string
+    language?: string
   ): Promise<Record<string, { physical_characteristics: string; time_of_day: string }>> {
-    const langInfo = getLanguageForCountry(countryOrLanguage);
+    const lang = language || 'en-US';
+    assertValidBCP47(lang);
+    const langInfo = getLanguageInfo(lang);
     const result: Record<string, { physical_characteristics: string; time_of_day: string }> = {};
 
     await Promise.all(
@@ -1010,9 +1046,11 @@ export class ScriptAgent {
   public async describeProps(
     screenplay: string,
     propNames: string[],
-    countryOrLanguage?: string
+    language?: string
   ): Promise<Record<string, { physical_characteristics: string }>> {
-    const langInfo = getLanguageForCountry(countryOrLanguage);
+    const lang = language || 'en-US';
+    assertValidBCP47(lang);
+    const langInfo = getLanguageInfo(lang);
     const result: Record<string, { physical_characteristics: string }> = {};
 
     await Promise.all(
@@ -1048,9 +1086,11 @@ export class ScriptAgent {
     sceneTitle: string,
     sceneContent: string,
     availableAssets: Array<{ id: string; name: string; type: 'character' | 'location' | 'prop' }>,
-    countryOrLanguage?: string
+    language?: string
   ): Promise<ShotFrame[]> {
-    const langInfo = getLanguageForCountry(countryOrLanguage);
+    const lang = language || 'en-US';
+    assertValidBCP47(lang);
+    const langInfo = getLanguageInfo(lang);
     const assetsFormatted = availableAssets
       .map(a => `- ${a.name} (${a.type}) [id:${a.id}]`)
       .join('\n');
@@ -1089,6 +1129,181 @@ export class ScriptAgent {
     }
   }
 
+  /**
+   * Estimates spoken audio duration in seconds from dialogue entries.
+   * Rates: ~2.3 words/sec for Latin/Vietnamese; ~3.8 chars/sec for CJK.
+   */
+  public estimateShotDialogueDuration(dialogue: any[]): number {
+    if (!Array.isArray(dialogue) || dialogue.length === 0) return 0;
+    let durationSec = 0;
+    for (const d of dialogue) {
+      const text = (d.line || d.text || '').trim();
+      if (!text) continue;
+      // CJK characters check: Chinese / Japanese / Korean
+      if (/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(text)) {
+        durationSec += text.replace(/\s+/g, '').length / 3.8;
+      } else {
+        const words = text.split(/\s+/).filter(Boolean).length;
+        durationSec += words / 2.3;
+      }
+    }
+    return durationSec;
+  }
+
+  /**
+   * Enriches shot sequence with authentic micro-drama dialogues and inner voiceovers
+   * to ensure high retention (≥ 80%–90% dialogue duration coverage & ≥ 85% shot density).
+   */
+  public async enrichShotsWithDramaDialogue(
+    shots: ScriptShot[],
+    context: {
+      screenplay: string;
+      title?: string;
+      characters: CharacterSeriesEntity[];
+      langInfo: any;
+      targetDurationSeconds?: number;
+    }
+  ): Promise<ScriptShot[]> {
+    if (!Array.isArray(shots) || shots.length === 0) return shots;
+
+    const totalEpisodeDuration = (context.targetDurationSeconds && context.targetDurationSeconds > 0)
+      ? context.targetDurationSeconds
+      : shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
+
+    const targetSpokenDuration = Math.round(totalEpisodeDuration * 0.85); // 85% target duration
+    const minRequiredShots = Math.max(1, Math.ceil(shots.length * 0.85));
+
+    let currentTotalSpoken = 0;
+    let dialogueCount = 0;
+    for (const s of shots) {
+      const dur = this.estimateShotDialogueDuration(s.dialogue);
+      if (dur > 0) {
+        dialogueCount++;
+        currentTotalSpoken += dur;
+      }
+    }
+
+    const currentCoverageRatio = totalEpisodeDuration > 0 ? (currentTotalSpoken / totalEpisodeDuration) : 0;
+    const currentShotRatio = shots.length > 0 ? (dialogueCount / shots.length) : 0;
+
+    // If already meets both duration coverage (≥ 80%) AND shot density (≥ 85%), return directly
+    if (currentCoverageRatio >= 0.80 && currentShotRatio >= 0.85) {
+      Logger.info(
+        `[ScriptAgent.enrichShotsWithDramaDialogue] Dialogue already meets micro-drama standards: ` +
+        `${Math.round(currentTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round(currentCoverageRatio * 100)}% spoken duration), ` +
+        `${dialogueCount}/${shots.length} shots (${Math.round(currentShotRatio * 100)}% density).`
+      );
+      return shots;
+    }
+
+    Logger.info(
+      `[ScriptAgent.enrichShotsWithDramaDialogue] Current spoken duration is ${Math.round(currentTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round(currentCoverageRatio * 100)}%, target ≥ 80%), ` +
+      `dialogue density is ${dialogueCount}/${shots.length} shots (${Math.round(currentShotRatio * 100)}%, target ≥ 85%). ` +
+      `Enriching with micro-drama dialogues & voiceovers in ${context.langInfo.name}...`
+    );
+
+    const shotsSummary = shots.map((s, idx) => {
+      const shotDur = s.duration_seconds || 5;
+      const spokenDur = this.estimateShotDialogueDuration(s.dialogue);
+      const isSilent = !Array.isArray(s.dialogue) || s.dialogue.length === 0 || spokenDur === 0;
+      const isTooBrief = !isSilent && (spokenDur < shotDur * 0.65);
+      return {
+        index: idx + 1,
+        scene_number: s.scene_number || 1,
+        shot_number: s.shot_number || (idx + 1),
+        shot_duration_seconds: shotDur,
+        status: isSilent ? 'SILENT (MUST INJECT DIALOGUE OR VO)' : (isTooBrief ? 'TOO BRIEF (EXPAND LINE TO FILL SHOT)' : 'ADEQUATE'),
+        characters_present: Array.isArray(s.character_costumes)
+          ? s.character_costumes.map((c: any) => c.character)
+          : (Array.isArray(s.reference_assets?.characters) ? s.reference_assets.characters : []),
+        action: s.action || '',
+        frame_description: s.frame_description || '',
+        current_dialogue: s.dialogue || [],
+      };
+    });
+
+    const enrichPrompt = PromptLoader.render('screenplay/enrich_dialogue', {
+      title: context.title || 'Episode',
+      screenplay: context.screenplay,
+      totalEpisodeDuration,
+      targetSpokenDuration,
+      charactersList: this.formatCharactersContext(context.characters) || 'None specified',
+      languageName: context.langInfo.name,
+      languageNativeName: context.langInfo.nativeName,
+      languageCode: context.langInfo.code,
+      languageInstruction: context.langInfo.dialogueInstruction,
+      shotsJson: JSON.stringify(shotsSummary, null, 2),
+    });
+
+    try {
+      const res = await aiProviderRouter.generateJSON<{ scenes?: any[]; shots?: any[] }>(
+        enrichPrompt,
+        { scenes: [] },
+        {
+          systemInstruction: `You are an expert Micro-Drama Dialogue Doctor. In micro-drama, audio dialogue and voiceover are the primary viewer retention engines. ` +
+            `Ensure cumulative spoken dialogue duration reaches 80% to 90% of total episode duration (${targetSpokenDuration}s / ${totalEpisodeDuration}s), ` +
+            `and at least 85% to 95% of shots contain dialogue/VO in ${context.langInfo.name}. ` +
+            `Return JSON with updated dialogue for each shot.`,
+        }
+      );
+
+      const returnedShots = Array.isArray(res?.shots)
+        ? res.shots
+        : (Array.isArray(res?.scenes)
+            ? res.scenes.flatMap((sc: any) => (Array.isArray(sc.shots) ? sc.shots : [sc]))
+            : []);
+
+      if (returnedShots.length > 0) {
+        const updated = shots.map((originalShot, idx) => {
+          const shotDur = originalShot.duration_seconds || 5;
+          const originalSpoken = this.estimateShotDialogueDuration(originalShot.dialogue);
+          const originalIsAdequate = originalSpoken >= (shotDur * 0.65);
+
+          const matched = returnedShots.find((r: any) =>
+            r.index === (idx + 1) ||
+            (r.shot_number === originalShot.shot_number && r.scene_number === originalShot.scene_number)
+          ) || returnedShots[idx];
+
+          if (matched && Array.isArray(matched.dialogue) && matched.dialogue.length > 0) {
+            const cleanDlg = matched.dialogue.map((d: any) => ({
+              character: d.character || d.speaker || (Array.isArray(originalShot.character_costumes) && originalShot.character_costumes[0]?.character) || 'Speaker',
+              line: d.line || d.text || '',
+              emotion: d.emotion || 'Intense',
+              speech_tone: d.speech_tone || d.speechTone || 'Direct',
+              speed: typeof d.speed === 'number' ? d.speed : 1.0,
+            })).filter((d: any) => Boolean(d.line));
+
+            if (cleanDlg.length > 0) {
+              const newSpoken = this.estimateShotDialogueDuration(cleanDlg);
+              // Use enriched dialogue if original was silent or too brief, or if new dialogue provides better coverage
+              if (!originalIsAdequate || newSpoken > originalSpoken) {
+                return {
+                  ...originalShot,
+                  dialogue: cleanDlg.slice(0, 1),
+                };
+              }
+            }
+          }
+
+          return originalShot;
+        });
+
+        const newCount = updated.filter(s => Array.isArray(s.dialogue) && s.dialogue.length > 0).length;
+        const newTotalSpoken = updated.reduce((sum, s) => sum + this.estimateShotDialogueDuration(s.dialogue), 0);
+        Logger.info(
+          `[ScriptAgent.enrichShotsWithDramaDialogue] Successfully enriched dialogue: ` +
+          `${Math.round(newTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round((newTotalSpoken / totalEpisodeDuration) * 100)}% duration), ` +
+          `${newCount}/${shots.length} shots (${Math.round((newCount / shots.length) * 100)}% density).`
+        );
+        return updated;
+      }
+    } catch (err: any) {
+      Logger.warn(`[ScriptAgent.enrichShotsWithDramaDialogue] Dialogue enrichment failed, keeping original: ${err.message}`);
+    }
+
+    return shots;
+  }
+
   // ── 8. PUBLIC WORKFLOW: ANALYZE AND BREAKDOWN EXISTING SCREENPLAY ─────────
 
   public async analyzeAndBreakdownScreenplay(params: {
@@ -1117,7 +1332,9 @@ export class ScriptAgent {
       existingProps = [],
       existingScenes = [],
     } = params;
-    const langInfo = getLanguageForCountry(language || country || 'en-US');
+    const langCode = language || 'en-US';
+    assertValidBCP47(langCode);
+    const langInfo = getLanguageInfo(langCode);
 
     const tiers = this.calculateDurationTiers(params.targetDurationSeconds);
     const { targetDuration, minShots, maxShots } = tiers;
@@ -1253,10 +1470,23 @@ export class ScriptAgent {
       Logger.error(`[ScriptAgent.analyzeAndBreakdownScreenplay] Breakdown error: ${e.message}`);
     }
 
+    // 6. Dialogue Duration & Density Check for Micro-Drama (Target ≥ 80% duration, ≥ 85% shots)
+    parsedShots = await this.enrichShotsWithDramaDialogue(parsedShots, {
+      screenplay,
+      title: detectedScenesList || 'Screenplay Episode',
+      characters,
+      langInfo,
+      targetDurationSeconds: targetDuration,
+    });
+
     const totalDuration = parsedShots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
 
+    const cleanScreenplay = this.isRawJson(screenplay)
+      ? this.assembleMarkdownScreenplay(parsedShots, detectedScenesList || 'Screenplay Episode')
+      : screenplay;
+
     return {
-      screenplay,
+      screenplay: cleanScreenplay,
       characters,
       locations,
       props,

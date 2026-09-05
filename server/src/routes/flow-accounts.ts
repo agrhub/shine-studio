@@ -1,19 +1,24 @@
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '@/database/index.js';
-import { AIAccountType, AIAccountStatus } from '~/types.js';
+import { AIAccountType, AIAccountStatus, IAIAccount, FlowAccountEntity } from '~/types.js';
 import { flowSyncService } from '../integrations/ai/flow/FlowSyncService.js';
 import { captchaService } from '../integrations/ai/flow/CaptchaService.js';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 // GET /api/admin/flow-accounts - List all google-flow accounts
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const db = await getDatabaseProvider();
-    const accounts = await db.getFlowAccounts();
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts();
     res.json({ success: true, count: accounts.length, accounts });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -68,37 +73,40 @@ function extractFlowCookieToken(rawInput: string): string {
 // POST /api/admin/flow-accounts - Add or update google-flow session token
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, cookie, sessionToken, model = 'Veo-3' } = req.body;
-    const rawToken = cookie || sessionToken;
-    const token = extractFlowCookieToken(rawToken);
+    const { email, cookie } = req.body;
+    const session_token = extractFlowCookieToken(cookie || '');
 
-    if (!email || !token) {
+    if (!email || !session_token) {
       res.status(400).json({ error: 'Email and cookie are required' });
       return;
     }
 
     const db = await getDatabaseProvider();
-    const accounts = await db.getFlowAccounts();
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts();
     const cleanEmail = email.trim();
     const existing = accounts.find(a => a.email?.toLowerCase() === cleanEmail.toLowerCase());
 
-    const newAccount = await db.upsertFlowAccount({
+    const newAccount: FlowAccountEntity = await db.upsertFlowAccount({
       id: existing?.id || `flow_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
       email: cleanEmail,
-      session_token: token,
+      session_token,
       status: AIAccountStatus.ACTIVE,
       credits_remaining: existing?.credits_remaining || 0,
       last_synced_at: new Date().toISOString(),
     });
 
-    // Trigger background sync in non-blocking way
-    flowSyncService.refreshAccountTokens({
-      email,
-      flow_st: token,
+    // Trigger background sync in non-blocking way with strongly typed IAIAccount
+    const accountForSync: IAIAccount = {
+      id: newAccount.id,
+      email: cleanEmail,
+      session_token,
       status: AIAccountStatus.ACTIVE,
       account_type: AIAccountType.GOOGLE_FLOW,
       is_active: true,
-    } as any).catch(() => {});
+    };
+    flowSyncService.refreshAccountTokens(accountForSync).catch((err: unknown) => {
+      console.warn(`[flow-accounts] Background refresh failed for ${cleanEmail}:`, getErrorMessage(err));
+    });
 
     res.status(200).json({
       code: 200,
@@ -108,8 +116,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       message: 'Flow Google Account added successfully',
       error: null,
     });
-  } catch (err: any) {
-    res.status(500).json({ code: 500, error: err.message, message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ code: 500, error: getErrorMessage(err), message: getErrorMessage(err) });
   }
 });
 
@@ -117,17 +125,16 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { email, cookie, sessionToken } = req.body;
-    const rawToken = cookie || sessionToken;
-    const token = extractFlowCookieToken(rawToken);
+    const { email, cookie } = req.body;
+    const session_token = extractFlowCookieToken(cookie || '');
 
-    if (!token) {
-      res.status(400).json({ code: 400, error: 'Valid session token or cookie is required', message: 'Valid session token or cookie is required' });
+    if (!session_token) {
+      res.status(400).json({ code: 400, error: 'Valid cookie is required', message: 'Valid cookie is required' });
       return;
     }
 
     const db = await getDatabaseProvider();
-    const accounts = await db.getFlowAccounts();
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts();
     const existing = accounts.find(a => a.id === id || a.email === email || a.email === id);
     const targetEmail = email || existing?.email;
 
@@ -136,24 +143,27 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const updatedAccount = await db.upsertFlowAccount({
+    const updatedAccount: FlowAccountEntity = await db.upsertFlowAccount({
       id: existing?.id || id,
       email: targetEmail,
-      session_token: token,
+      session_token,
       status: AIAccountStatus.ACTIVE,
       credits_remaining: existing?.credits_remaining || 0,
       last_synced_at: new Date().toISOString(),
     });
 
-    // Trigger immediate background token refresh and credit sync
-    flowSyncService.refreshAccountTokens({
+    // Trigger immediate background token refresh and credit sync with strongly typed IAIAccount
+    const accountForSync: IAIAccount = {
       id: updatedAccount.id,
       email: targetEmail,
-      flowST: token,
+      session_token,
       status: AIAccountStatus.ACTIVE,
-      accountType: AIAccountType.GOOGLE_FLOW,
-      isActive: true,
-    } as any).catch(() => {});
+      account_type: AIAccountType.GOOGLE_FLOW,
+      is_active: true,
+    };
+    flowSyncService.refreshAccountTokens(accountForSync).catch((err: unknown) => {
+      console.warn(`[flow-accounts] Background refresh failed for ${targetEmail}:`, getErrorMessage(err));
+    });
 
     res.json({
       code: 200,
@@ -163,20 +173,70 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
       account: updatedAccount,
       error: null,
     });
-  } catch (err: any) {
-    res.status(500).json({ code: 500, error: err.message, message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ code: 500, error: getErrorMessage(err), message: getErrorMessage(err) });
+  }
+});
+
+// POST /api/admin/flow-accounts/:id/refresh - Manually refresh token & credits for a specific account
+router.post('/:id/refresh', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const db = await getDatabaseProvider();
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts();
+    const target = accounts.find(a => a.id === id || a.email?.toLowerCase() === id.toLowerCase());
+
+    if (!target) {
+      res.status(404).json({ code: 404, success: false, error: 'Account not found', message: 'Account not found' });
+      return;
+    }
+
+    if (!target.session_token) {
+      res.status(400).json({ code: 400, success: false, error: 'Account has no session cookie', message: 'Account has no session cookie' });
+      return;
+    }
+
+    const accountObj: IAIAccount = {
+      id: target.id,
+      email: target.email,
+      session_token: target.session_token,
+      access_token: target.access_token,
+      project_id: target.project_id,
+      status: target.status,
+      credits: target.credits_remaining,
+      account_type: AIAccountType.GOOGLE_FLOW,
+      is_active: true,
+    };
+
+    await flowSyncService.refreshAccountTokens(accountObj);
+
+    // Re-fetch updated record
+    const updatedAccounts: FlowAccountEntity[] = await db.getFlowAccounts();
+    const updated = updatedAccounts.find(a => a.id === target.id || a.email?.toLowerCase() === target.email.toLowerCase()) || target;
+
+    const isSuccess = updated.status === 'ACTIVE' || updated.status === AIAccountStatus.READY;
+    res.json({
+      code: isSuccess ? 200 : 400,
+      success: isSuccess,
+      data: updated,
+      account: updated,
+      message: isSuccess ? 'Flow account token refreshed successfully' : 'Token refresh failed: Session expired',
+      error: isSuccess ? null : 'SESSION_EXPIRED',
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ code: 500, success: false, error: getErrorMessage(err), message: getErrorMessage(err) });
   }
 });
 
 // DELETE /api/admin/flow-accounts/:id - Remove an account
-router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
+router.delete('/:id', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const db = await getDatabaseProvider();
     await db.deleteFlowAccount(id);
     res.json({ code: 200, success: true, message: 'Account deleted', data: { id, deleted: true }, error: null });
-  } catch (err: any) {
-    res.status(500).json({ code: 500, error: err.message, message: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ code: 500, error: getErrorMessage(err), message: getErrorMessage(err) });
   }
 });
 
@@ -185,10 +245,10 @@ router.post('/sync', async (req: Request, res: Response): Promise<void> => {
   try {
     await flowSyncService.syncAllAccounts();
     const db = await getDatabaseProvider();
-    const accounts = await db.getFlowAccounts();
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts();
     res.json({ success: true, message: 'Flow account pool synced successfully', accounts });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -196,7 +256,7 @@ router.post('/sync', async (req: Request, res: Response): Promise<void> => {
 router.get('/status', async (req: Request, res: Response): Promise<void> => {
   try {
     const db = await getDatabaseProvider();
-    const accounts = await db.getFlowAccounts('ACTIVE');
+    const accounts: FlowAccountEntity[] = await db.getFlowAccounts('ACTIVE');
     let testRecaptcha: string | null = null;
     
     // Test recaptcha if there are accounts
@@ -206,7 +266,9 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
             projectId: accounts[0].project_id || 'test',
             action: 'IMAGE_GENERATION'
         });
-      } catch (e) {}
+      } catch (solveErr: unknown) {
+        console.warn('[flow-accounts] Captcha test solve failed:', getErrorMessage(solveErr));
+      }
     }
 
     res.json({
@@ -216,8 +278,8 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
       recaptchaSolverStatus: testRecaptcha ? 'OPERATIONAL' : 'FAILED',
       timestamp: new Date().toISOString(),
     });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 

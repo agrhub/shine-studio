@@ -6,7 +6,7 @@ import { PromptLoader } from '@/utils/PromptLoader.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { CreditService } from '@/services/CreditService.js';
-import type { CharacterSeriesEntity } from '@/types.js';
+import type { CharacterSeriesEntity, AssetVersion } from '@/types.js';
 
 // export interface CharacterPersona {
 //   id: string;
@@ -157,6 +157,26 @@ export class CharacterService {
     const s3 = await StorageFactory.uploadMedia(imgResult.url, 'images', 'png', imgResult.mimeType || 'image/png');
     const avatarUrl = `/api/assets/file/${s3.key}`;
 
+    const newVersion: AssetVersion = {
+      id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      image_url: avatarUrl,
+      prompt: fullPrompt,
+      created_at: new Date().toISOString(),
+      is_selected: true,
+      aspect_ratio: targetAspect,
+    };
+
+    const existingVersions: AssetVersion[] = Array.isArray(dbChar?.versions) ? [...dbChar.versions] : [];
+    if (existingVersions.length === 0 && (dbChar?.avatar || dbChar?.image_url) && dbChar.avatar !== avatarUrl && dbChar.image_url !== avatarUrl) {
+      existingVersions.push({
+        id: `v1_char_${dbChar.id || character_id}`,
+        image_url: dbChar.avatar || dbChar.image_url,
+        created_at: dbChar.created_at || new Date().toISOString(),
+        is_selected: false,
+      });
+    }
+    const charVersions = [newVersion, ...existingVersions.map(v => ({ ...v, is_selected: false }))];
+
     const normalizedChar = EntityNormalizer.normalizeCharacter({
       ...(dbChar || {}),
       id: character_id || dbChar?.id || `char_${Date.now()}`,
@@ -167,6 +187,7 @@ export class CharacterService {
       visual_traits: charTraits,
       avatar: avatarUrl,
       image_url: avatarUrl,
+      versions: charVersions,
     });
 
     if (!normalizedChar) {
@@ -177,7 +198,7 @@ export class CharacterService {
       const chars = Array.isArray(targetSeries.characters) ? [...targetSeries.characters] : [];
       const matchIdx = chars.findIndex((c: any) => c.id === normalizedChar.id || c.name === normalizedChar.name);
       if (matchIdx >= 0) {
-        chars[matchIdx] = { ...chars[matchIdx], ...normalizedChar, avatar: avatarUrl, image_url: avatarUrl };
+        chars[matchIdx] = { ...chars[matchIdx], ...normalizedChar, avatar: avatarUrl, image_url: avatarUrl, versions: charVersions };
       } else {
         chars.push(normalizedChar);
       }
@@ -395,7 +416,7 @@ export class CharacterService {
     visual_style?: string;
     visual_style_prompt?: string;
     user_id?: string;
-  }): Promise<{ image_url: string }> {
+  }): Promise<{ image_url: string; prompt: string; version: AssetVersion }> {
     const { char_name, clothing_desc, char_traits, age, gender, nationality, reference_avatar_url, visual_style, visual_style_prompt, user_id } = params;
     const styleModifier = visual_style_prompt || getVisualStylePrompt(visual_style || 'realistic');
     const ageTag = age ? `${age}-year-old ` : '';
@@ -439,7 +460,16 @@ export class CharacterService {
     const s3 = await StorageFactory.uploadMedia(res.url, 'images', 'png', res.mimeType || 'image/png');
     const finalUrl = `/api/assets/file/${s3.key}`;
 
-    return { image_url: finalUrl };
+    const version: AssetVersion = {
+      id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      image_url: finalUrl,
+      prompt: wardrobePrompt,
+      created_at: new Date().toISOString(),
+      is_selected: true,
+      aspect_ratio: '16:9',
+    };
+
+    return { image_url: finalUrl, prompt: wardrobePrompt, version };
   }
 }
 

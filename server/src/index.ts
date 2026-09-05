@@ -9,6 +9,7 @@ import './config/env.js';
 import authRoutes from './routes/auth.js';
 import seriesRoutes, { episodesRouter } from './routes/series';
 import flowAccountsRoutes from './routes/flow-accounts';
+import { antigravityAccountsRouter } from './routes/antigravity-accounts';
 import contactRoutes from './routes/contact';
 import { aiRouter } from './routes/ai';
 import { characterRouter } from './routes/characters';
@@ -95,9 +96,11 @@ app.use('/api/analytics', requireAuth, analyticsPaywallRouter);
 app.use('/api/assets', assetsRouter);
 app.use('/api/uploads', uploadsRouter);
 app.use('/api/flow-accounts/sync', flowSyncRouter);
+app.use('/api/antigravity-accounts', antigravityAccountsRouter);
 
 // ─── Admin Protected Routes (Requires Admin/Owner Role) ──────────────────────
 app.use('/api/admin/flow-accounts', requireAuth, requireAdmin, flowAccountsRoutes);
+app.use('/api/admin/antigravity-accounts', requireAuth, requireAdmin, antigravityAccountsRouter);
 app.use('/api/admin/cost-guardrails', requireAuth, requireAdmin, costGuardrailsRouter);
 app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 

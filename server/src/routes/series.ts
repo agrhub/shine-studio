@@ -258,8 +258,29 @@ router.put('/:id/episodes/:epId', async (req: Request, res: Response): Promise<v
     if (status !== undefined) updates.status = status;
     if (dubbing_settings !== undefined) updates.dubbing_settings = dubbing_settings;
     if (caption_settings !== undefined) updates.caption_settings = caption_settings;
-    if (caption_languages !== undefined) updates.caption_languages = caption_languages;
-    if (dubbing_languages !== undefined) updates.dubbing_languages = dubbing_languages;
+    const BCP47_REGEX = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i;
+    if (caption_languages !== undefined) {
+      if (!Array.isArray(caption_languages)) {
+        return fail(res, 400, 'caption_languages must be an array of BCP-47 language codes');
+      }
+      for (const lang of caption_languages) {
+        if (typeof lang !== 'string' || !BCP47_REGEX.test(lang.trim())) {
+          return fail(res, 400, `Invalid language code "${lang}" in caption_languages. Must be a valid BCP-47 code (e.g. "en-US", "vi-VN").`);
+        }
+      }
+      updates.caption_languages = [...new Set(caption_languages.map(l => l.trim()))];
+    }
+    if (dubbing_languages !== undefined) {
+      if (!Array.isArray(dubbing_languages)) {
+        return fail(res, 400, 'dubbing_languages must be an array of BCP-47 language codes');
+      }
+      for (const lang of dubbing_languages) {
+        if (typeof lang !== 'string' || !BCP47_REGEX.test(lang.trim())) {
+          return fail(res, 400, `Invalid language code "${lang}" in dubbing_languages. Must be a valid BCP-47 code (e.g. "en-US", "vi-VN").`);
+        }
+      }
+      updates.dubbing_languages = [...new Set(dubbing_languages.map(l => l.trim()))];
+    }
     if (render_versions !== undefined) updates.render_versions = render_versions;
     if (video_urls !== undefined) updates.video_urls = video_urls;
     if (video_url !== undefined) updates.video_url = video_url;
@@ -431,19 +452,15 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
     }
 
     let screenplay = ep.screenplay || '';
-    if (!screenplay && Array.isArray(ep.scenes) && ep.scenes.length > 0) {
-      screenplay = `# ${(ep.title || `Episode ${ep.episode_number}`).toUpperCase()}\n\n` +
-        ep.scenes.map((s: any) => {
-          let block = `### ${(s.heading || `SCENE ${s.index}`).toUpperCase()}\n\n${s.action || ''}`;
-          if (s.dialogue && s.dialogue.length > 0) {
-            const dlgText = s.dialogue.map((d: any) => {
-              const tone = d.speechTone || d.emotion ? `_(${d.speechTone || d.emotion})_\n` : '';
-              return `**${(d.character || 'CHARACTER').toUpperCase()}**\n${tone}${d.line || ''}`;
-            }).join('\n\n');
-            block += `\n\n${dlgText}`;
-          }
-          return block;
-        }).join('\n\n') + '\n\n##### FADE TO BLACK:';
+    const isRawJson = (str: string) => {
+      const trimmed = (str || '').trim();
+      return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+    };
+
+    if ((!screenplay || isRawJson(screenplay)) && Array.isArray(ep.scenes) && ep.scenes.length > 0) {
+      screenplay = scriptAgent.assembleMarkdownScreenplay(ep.scenes as any, ep.title || `Episode ${ep.episode_number}`);
+      // Auto-heal in database so it becomes permanent clean markdown
+      await db.updateEpisode(ep.id, { screenplay }).catch(() => {});
     }
 
     const characters = series.characters || [];
@@ -451,7 +468,8 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
     const props = series.props || [];
 
     const hasFullScreenplay = Boolean(
-      ep.screenplay &&
+      screenplay &&
+      !isRawJson(screenplay) &&
       Array.isArray(ep.scenes) &&
       ep.scenes.length >= 4
     );

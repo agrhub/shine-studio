@@ -1,20 +1,8 @@
 import crypto from 'crypto';
 import { Logger } from '../utils/logger.js';
+import type { SynthIDMetadata } from '@/types.js';
 
-export interface SynthIDMetadata {
-  origin: string;
-  watermarkVersion: string;
-  provider: 'Google DeepMind SynthID' | 'ShineAI Sovereign Provenance';
-  assetType: 'image' | 'video' | 'audio' | 'music' | 'cover';
-  model: string;
-  timestamp: string;
-  seriesId?: string;
-  episodeId?: string;
-  sceneId?: string;
-  synthIdHash: string;
-  signature: string;
-  verified: boolean;
-}
+export type { SynthIDMetadata };
 
 export interface SynthIDEmbedResult {
   synthIdHash: string;
@@ -51,15 +39,15 @@ export class SynthIDService {
 
     return {
       origin: 'ShineAI Studio Content Provenance',
-      watermarkVersion: 'SynthID-v2.4-DeepMind',
+      watermark_version: 'SynthID-v2.4-DeepMind',
       provider: 'Google DeepMind SynthID',
-      assetType: params.assetType,
+      asset_type: params.assetType,
       model,
       timestamp,
-      seriesId: params.seriesId,
-      episodeId: params.episodeId,
-      sceneId: params.sceneId,
-      synthIdHash,
+      series_id: params.seriesId,
+      episode_id: params.episodeId,
+      scene_id: params.sceneId,
+      synth_id_hash: synthIdHash,
       signature,
       verified: true,
     };
@@ -78,19 +66,19 @@ export class SynthIDService {
   }): Promise<SynthIDEmbedResult> {
     const synthIdMetadata = this.generateSynthIDSignature(params);
 
-    Logger.info(`[SynthIDService] Embedded SynthID watermark [${synthIdMetadata.synthIdHash}] into ${params.assetType} (${synthIdMetadata.model})`);
+    Logger.info(`[SynthIDService] Embedded SynthID watermark [${synthIdMetadata.synth_id_hash}] into ${params.assetType} (${synthIdMetadata.model})`);
 
     const headers: Record<string, string> = {
       'X-SynthID-Verified': 'true',
       'X-SynthID-Provider': synthIdMetadata.provider,
-      'X-SynthID-Version': synthIdMetadata.watermarkVersion,
-      'X-SynthID-Hash': synthIdMetadata.synthIdHash,
+      'X-SynthID-Version': synthIdMetadata.watermark_version,
+      'X-SynthID-Hash': synthIdMetadata.synth_id_hash,
       'X-SynthID-Model': synthIdMetadata.model,
       'X-SynthID-Timestamp': synthIdMetadata.timestamp,
     };
 
     return {
-      synthIdHash: synthIdMetadata.synthIdHash,
+      synthIdHash: synthIdMetadata.synth_id_hash,
       synthIdMetadata,
       watermarkedBuffer: params.buffer,
       headers,

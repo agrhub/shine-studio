@@ -7,4 +7,5 @@ Visual Style: {{visualStyle}}
 CRITICAL FACIAL & HAIR IDENTITY CONTINUITY: The character in BOTH the headshot and full-body shot MUST BE THE EXACT SAME PERSON as in the reference image. Strictly preserve the identical bone structure, eye shape and angle, eyelid crease, nose bridge and tip, lip fullness, jawline contour, skin complexion/undertone, and natural hair color and hairline.
 CRITICAL OUTFIT OVERRIDE: ONLY change the clothing, garments, shoes, and accessories from the neck down to match: "{{clothingAndAccessories}}". DO NOT copy any garments, collars, lanyards, or ID badges from the reference portrait.
 {{/if}}
+CRITICAL NEGATIVE CONSTRAINTS: Absolutely NO text, NO typography, NO character names or titles written on the image, NO numbers, NO subtitles, NO watermarks, NO ID cards with readable text, NO live stream graphics or chat overlays. Pure photographic imagery only.
 

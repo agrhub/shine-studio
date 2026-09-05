@@ -7,74 +7,31 @@ export interface TargetLanguageInfo {
 }
 
 /**
- * Common ISO-3166-1 alpha-2 / country name to primary ISO-639-1 language code mapping.
- * Used when a country name or country code is provided instead of a direct BCP-47 language tag.
+ * Validates whether a string matches the standard BCP-47 language tag format
+ * (e.g. 'en-US', 'vi-VN', 'ja-JP', 'en', 'vi', 'zh-CN', etc.)
  */
-const COUNTRY_TO_LANGUAGE_CODE: Record<string, string> = {
-  // Asia & Southeast Asia
-  vn: 'vi', vietnam: 'vi', 'viet nam': 'vi', sea: 'vi',
-  cn: 'zh', china: 'zh', taiwan: 'zh-TW', tw: 'zh-TW', 'hong kong': 'zh-HK', hk: 'zh-HK',
-  jp: 'ja', japan: 'ja',
-  kr: 'ko', korea: 'ko', 'south korea': 'ko',
-  th: 'th', thailand: 'th',
-  id: 'id', indonesia: 'id',
-  my: 'ms', malaysia: 'ms',
-  ph: 'fil', philippines: 'fil',
-  in: 'hi', india: 'hi',
-  pk: 'ur', pakistan: 'ur',
-  bd: 'bn', bangladesh: 'bn',
-  sg: 'en', singapore: 'en',
-  kh: 'km', cambodia: 'km',
-  la: 'lo', laos: 'lo',
-  mm: 'my', myanmar: 'my',
+export function isValidBCP47(tag: string): boolean {
+  if (!tag || typeof tag !== 'string') return false;
+  const trimmed = tag.trim();
+  if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(trimmed)) {
+    return false;
+  }
+  try {
+    const loc = new Intl.Locale(trimmed);
+    return Boolean(loc.language);
+  } catch {
+    return false;
+  }
+}
 
-  // Europe
-  gb: 'en', uk: 'en', 'united kingdom': 'en', england: 'en',
-  fr: 'fr', france: 'fr',
-  de: 'de', germany: 'de',
-  es: 'es', spain: 'es',
-  it: 'it', italy: 'it',
-  pt: 'pt', portugal: 'pt',
-  ru: 'ru', russia: 'ru',
-  ua: 'uk', ukraine: 'uk',
-  pl: 'pl', poland: 'pl',
-  nl: 'nl', netherlands: 'nl',
-  se: 'sv', sweden: 'sv',
-  no: 'no', norway: 'no',
-  dk: 'da', denmark: 'da',
-  fi: 'fi', finland: 'fi',
-  gr: 'el', greece: 'el',
-  tr: 'tr', turkey: 'tr',
-  ro: 'ro', romania: 'ro',
-  cz: 'cs', czech: 'cs',
-  hu: 'hu', hungary: 'hu',
-  at: 'de', austria: 'de',
-  ch: 'de', switzerland: 'de',
-  be: 'fr', belgium: 'fr',
-  ie: 'en', ireland: 'en',
-
-  // Americas
-  us: 'en', usa: 'en', 'united states': 'en', global: 'en',
-  ca: 'en', canada: 'en',
-  mx: 'es', mexico: 'es',
-  br: 'pt', brazil: 'pt', 'brasil': 'pt',
-  ar: 'es', argentina: 'es',
-  co: 'es', colombia: 'es',
-  cl: 'es', chile: 'es',
-  pe: 'es', peru: 'es',
-  latam: 'es',
-
-  // Middle East & Africa
-  sa: 'ar', 'saudi arabia': 'ar', uae: 'ar', egypt: 'ar', eg: 'ar',
-  il: 'he', israel: 'he',
-  za: 'en', 'south africa': 'en',
-  ng: 'en', nigeria: 'en',
-  ke: 'sw', kenya: 'sw',
-
-  // Oceania
-  au: 'en', australia: 'en',
-  nz: 'en', 'new zealand': 'en',
-};
+/**
+ * Asserts that a string is a valid BCP-47 language tag; throws an Error if invalid.
+ */
+export function assertValidBCP47(tag: string): void {
+  if (!isValidBCP47(tag)) {
+    throw new Error(`Invalid language code "${tag}". Language code must follow the BCP-47 standard (e.g. "en-US", "vi-VN", "ja-JP").`);
+  }
+}
 
 // Cache resolved language infos to avoid redundant Intl lookups
 const languageInfoCache = new Map<string, TargetLanguageInfo>();
@@ -92,11 +49,12 @@ function getIntlDisplayName(localeCode: string, targetDisplayLocale: string): st
 }
 
 /**
- * Dynamically construct full TargetLanguageInfo for any language code
+ * Dynamically construct full TargetLanguageInfo for any valid BCP-47 language code
  */
-export function createLanguageInfo(code: string, explicitName?: string, explicitNativeName?: string): TargetLanguageInfo {
-  const normCode = code.toLowerCase().trim();
-  const cacheKey = `${normCode}_${explicitName || ''}_${explicitNativeName || ''}`;
+export function getLanguageInfo(code: string, explicitName?: string, explicitNativeName?: string): TargetLanguageInfo {
+  assertValidBCP47(code);
+  const normCode = code.trim();
+  const cacheKey = `${normCode.toLowerCase()}_${explicitName || ''}_${explicitNativeName || ''}`;
   if (languageInfoCache.has(cacheKey)) {
     return languageInfoCache.get(cacheKey)!;
   }
@@ -107,13 +65,12 @@ export function createLanguageInfo(code: string, explicitName?: string, explicit
   // Resolve English display name (e.g. "Vietnamese", "Japanese", "Spanish")
   let name = explicitName || getIntlDisplayName(normCode, 'en') || getIntlDisplayName(baseCode, 'en');
   if (!name) {
-    name = normCode.toUpperCase();
+    name = normCode;
   }
 
   // Resolve native display name (e.g. "Tiếng Việt", "日本語", "Español")
   let nativeName = explicitNativeName || getIntlDisplayName(normCode, normCode) || getIntlDisplayName(baseCode, baseCode);
   if (!nativeName || nativeName === name) {
-    // Try base code in its own locale
     nativeName = getIntlDisplayName(baseCode, baseCode) || name;
   }
 
@@ -122,59 +79,15 @@ export function createLanguageInfo(code: string, explicitName?: string, explicit
     code: normCode,
     nativeName,
     promptInstruction: `All titles, synopsis, story core, hidden line, three-act structure, cliffhanger hooks, character identities, character traits, sceneCore, and conflictEscalation MUST be written natively in ${name} (${nativeName}).`,
-    dialogueInstruction: `Character spoken dialogue, emotional subtext, action descriptions, and scene directions MUST BE IN ${name.toUpperCase()} (${nativeName}) so that neural TTS voiceover dubbing matches the target country without translation.`,
+    dialogueInstruction: `Character spoken dialogue, emotional subtext, action descriptions, and scene directions MUST BE IN ${name.toUpperCase()} (${nativeName}) so that neural TTS voiceover dubbing matches the target language without translation.`,
   };
 
   languageInfoCache.set(cacheKey, info);
   return info;
 }
 
-/**
- * Resolve any country name, country code, or BCP-47 language tag to TargetLanguageInfo.
- * Automatically supports 100% of countries and languages worldwide without hardcoded restrictions.
- */
-export function getLanguageForCountry(countryOrLanguage?: string): TargetLanguageInfo {
-  if (!countryOrLanguage) {
-    return createLanguageInfo('en', 'English', 'English (US)');
-  }
-
-  const clean = countryOrLanguage.toLowerCase().trim().replace(/[-_]/g, ' ');
-  const rawCode = countryOrLanguage.trim();
-
-  // 1. Direct match in COUNTRY_TO_LANGUAGE_CODE map
-  if (COUNTRY_TO_LANGUAGE_CODE[clean]) {
-    const langCode = COUNTRY_TO_LANGUAGE_CODE[clean];
-    return createLanguageInfo(langCode);
-  }
-
-  // 2. Tokenized partial match in country dictionary (e.g. "viet nam", "united states")
-  const parts = clean.split(/\s+/);
-  for (const part of parts) {
-    if (COUNTRY_TO_LANGUAGE_CODE[part]) {
-      return createLanguageInfo(COUNTRY_TO_LANGUAGE_CODE[part]);
-    }
-  }
-
-  // 3. Check if rawCode is already a valid BCP-47 / ISO-639 language tag (e.g. 'vi', 'vi-VN', 'zh', 'zh-CN', 'ja', 'es', 'pt-BR')
-  try {
-    const locale = new Intl.Locale(rawCode);
-    if (locale.language) {
-      return createLanguageInfo(locale.baseName || locale.language);
-    }
-  } catch {
-    // If not a valid standard locale tag, continue to fallback
-  }
-
-  // 4. Try matching partial country keys
-  for (const [countryKey, langCode] of Object.entries(COUNTRY_TO_LANGUAGE_CODE)) {
-    if (clean.includes(countryKey) || countryKey.includes(clean)) {
-      return createLanguageInfo(langCode);
-    }
-  }
-
-  // 5. Fallback: create dynamic language info directly from the input string
-  return createLanguageInfo(rawCode, countryOrLanguage, countryOrLanguage);
-}
+// Alias for backwards compatibility
+export const createLanguageInfo = getLanguageInfo;
 
 /**
  * Heuristically detect natural language of a text string.
@@ -193,39 +106,70 @@ export function detectTextLanguage(text: string): string | null {
   if (/[\u0600-\u06ff]/.test(clean)) return 'ar'; // Arabic
   if (/[\u0400-\u04ff]/.test(clean)) return 'ru'; // Russian/Cyrillic
 
-  // 2. Vietnamese diacritics & specific common words
-  const viDiacritics = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i;
-  const viKeywords = /\b(chào|hãy|tạo|kịch bản|tập|phim|nhân vật|câu chuyện|tiếng việt|bạn|tôi|của|cho|và|với|là|được|trong|này|nhé|nào|lên ý tưởng|ý tưởng|trả thù|hào môn|tổng tài)\b/i;
-  if (viDiacritics.test(clean) || viKeywords.test(clean)) {
-    return 'vi';
-  }
-
-  // 3. Spanish markers & common words
-  const esMarkers = /[¿¡]|(\b(hola|por favor|crear|guion|historia|personaje|episodio|para|con|como|gracias|buenos días|buenas noches|venganza)\b)/i;
-  if (esMarkers.test(clean)) {
-    return 'es';
-  }
-
-  // 4. French markers & common words
-  const frMarkers = /\b(bonjour|salut|créer|scénario|histoire|personnage|épisode|pour|avec|merci|s'il vous plaît)\b/i;
-  if (frMarkers.test(clean)) {
-    return 'fr';
-  }
-
-  // 5. German markers & common words
-  const deMarkers = /\b(hallo|bitte|erstellen|drehbuch|geschichte|charakter|folge|für|mit|danke|guten tag)\b/i;
-  if (deMarkers.test(clean)) {
-    return 'de';
-  }
-
-  // 6. English words & standard Latin phrasing
-  const enKeywords = /\b(the|is|and|to|in|for|with|let's|brainstorm|create|write|script|series|episode|character|story|plot|revenge|urban|drama|about|what|how|why|can|you|please|hello|hi|hey|help|generate|plan|design|review|audit)\b/i;
-  if (enKeywords.test(clean)) {
+  // 2. Automated wizard system prompt check - always treat standard English generation prompt as English
+  if (/^Please generate a complete micro-drama master plan/i.test(clean) ||
+      /\bInitiating Series Master Plan Generation\b/i.test(clean)) {
     return 'en';
   }
 
-  // 7. If text is predominantly Latin without diacritics, default to English if it contains multiple words
-  if (/^[a-zA-Z0-9\s.,!?'"()\-–—:;@#$%&*+=\/\\<>]+$/.test(clean) && clean.split(/\s+/).length >= 2) {
+  // 3. Multi-signal scoring for Latin-based languages
+  let viScore = 0;
+  let enScore = 0;
+  let esScore = 0;
+  let frScore = 0;
+  let deScore = 0;
+
+  // Vietnamese UNIQUE characters (horn, circumflex, hook, tilde, dot-below, đ):
+  // NOTE: Simple accented vowels like é, è, á, à, ó, ò, ú, ù, í, ì alone are NOT unique to Vietnamese;
+  // they exist in French, Spanish, Italian, and common English loanwords (e.g. fiancé, café, résumé).
+  // Only count characters with distinctive Vietnamese markers!
+  const viUniqueLetters = /[ăâđêôơưảãạẳẵặẩẫậẻẽẹểễệỉĩịỏõọởỡợổỗộủũụửữựỳỷỹỵđĂÂĐÊÔƠƯẢÃẠẲẴẶẨẪẬẺẼẸỂỄỆỈĨỊỎÕỌỞỠỢỔỖỘỦŨỤỬỮỰỲỶỸỴĐ]/g;
+  const viUniqueMatches = clean.match(viUniqueLetters);
+  if (viUniqueMatches) {
+    viScore += viUniqueMatches.length * 3;
+  }
+
+  // Vietnamese distinctive vocabulary & grammar keywords
+  const viKeywords = clean.match(/\b(chào|hãy|tạo|kịch bản|tập|phim|nhân vật|câu chuyện|tiếng việt|bạn|tôi|của|cho|và|với|là|được|trong|này|nhé|nào|ý tưởng|trả thù|hào môn|tổng tài|kiểm tra|xem|sửa|đổi|bối cảnh|đạo cụ|xem lại|đánh giá|phân tích|xác nhận)\b/gi);
+  if (viKeywords) {
+    viScore += viKeywords.length * 5;
+  }
+
+  // English distinctive vocabulary & grammar keywords
+  const enKeywords = clean.match(/\b(the|is|are|was|were|and|to|in|for|with|of|at|by|from|as|on|it|this|that|please|generate|complete|micro|drama|master|plan|title|genre|target|country|language|episodes|format|synopsis|review|character|characters|location|locations|prop|props|scene|scenes|script|check|audit|create|series|confirm|start|what|how|why|can|you|about|after|before|her|his|their|my|me|so|all|any|new|betrayed|bankrupted|revenge|rich|story|narrative|suggest|outline|dialogue)\b/gi);
+  if (enKeywords) {
+    enScore += enKeywords.length * 2;
+  }
+
+  // Spanish markers & words
+  const esWords = clean.match(/\b(hola|por favor|crear|guion|historia|personaje|episodio|para|con|como|gracias|buenos|venganza)\b/gi);
+  if (/[¿¡]/.test(clean) || esWords) {
+    esScore += (esWords ? esWords.length * 3 : 0) + (/[¿¡]/.test(clean) ? 5 : 0);
+  }
+
+  // French markers & words
+  const frWords = clean.match(/\b(bonjour|salut|créer|scénario|histoire|personnage|épisode|pour|avec|merci|plaît)\b/gi);
+  if (frWords) {
+    frScore += frWords.length * 3;
+  }
+
+  // German markers & words
+  const deWords = clean.match(/\b(hallo|bitte|erstellen|drehbuch|geschichte|charakter|folge|für|mit|danke)\b/gi);
+  if (deWords) {
+    deScore += deWords.length * 3;
+  }
+
+  const maxScore = Math.max(viScore, enScore, esScore, frScore, deScore);
+  if (maxScore >= 2) {
+    if (enScore === maxScore) return 'en';
+    if (viScore === maxScore) return 'vi';
+    if (esScore === maxScore) return 'es';
+    if (frScore === maxScore) return 'fr';
+    if (deScore === maxScore) return 'de';
+  }
+
+  // 4. Default: If text contains predominantly Latin characters with multiple words, default to English
+  if (/^[a-zA-Z0-9\s.,!?'"()\-–—:;@#$%&*+=\/\\<>éèáàóòúùíìçñ]+$/.test(clean) && clean.split(/\s+/).length >= 2) {
     return 'en';
   }
 
@@ -233,35 +177,64 @@ export function detectTextLanguage(text: string): string | null {
 }
 
 /**
- * Resolve Chatbot Language with strict 2-tier priority:
- * 1. Priority 1: Language of user's message in the chat box.
- * 2. Priority 2: User's app setting / profile language.
+ * Resolve Chatbot Language with strict 3-tier priority:
+ * 1. Priority 1: Language of user's message in the chat box (scored accurately).
+ * 2. Priority 2: Project Script Language / Target Country from context.
+ * 3. Priority 3: User's app setting / profile language.
  */
 export function resolveChatLanguage(userMessage: string, context?: any): {
   languageCode: string;
   languageName: string;
   nativeName: string;
-  priority: 'user_message' | 'app_profile';
+  priority: 'user_message' | 'context_language' | 'app_profile';
   instruction: string;
 } {
   // Priority 1: User's chat message
   const detectedCode = detectTextLanguage(userMessage);
-  let resolvedCode: string | undefined = detectedCode || undefined;
-  let priority: 'user_message' | 'app_profile' = 'user_message';
 
-  // Priority 2: Fallback to App UI / Profile Language
-  if (!resolvedCode) {
-    priority = 'app_profile';
-    const appLang = context?.appLanguage || context?.profileLanguage || context?.language || 'en';
-    resolvedCode = appLang.toLowerCase().split(/[-_]/)[0] || 'en';
+  // Priority 2: Context Language (e.g. 'en-US', 'vi-VN')
+  const contextLang = context?.language || context?.scriptLanguage;
+  let contextLangCode: string | undefined = undefined;
+  if (contextLang && typeof contextLang === 'string' && isValidBCP47(contextLang)) {
+    contextLangCode = contextLang.trim();
   }
 
-  const langInfo = getLanguageForCountry(resolvedCode || 'en');
+  let resolvedCode: string;
+  let priority: 'user_message' | 'context_language' | 'app_profile';
+
+  if (detectedCode && isValidBCP47(detectedCode)) {
+    resolvedCode = detectedCode;
+    priority = 'user_message';
+  } else if (contextLangCode) {
+    resolvedCode = contextLangCode;
+    priority = 'context_language';
+  } else {
+    const appLang = context?.appLanguage || context?.profileLanguage;
+    if (appLang && typeof appLang === 'string' && isValidBCP47(appLang)) {
+      resolvedCode = appLang.trim();
+      priority = 'app_profile';
+    } else {
+      resolvedCode = 'en-US';
+      priority = 'app_profile';
+    }
+  }
+
+  const langInfo = getLanguageInfo(resolvedCode);
+
+  const prohibitionNote = langInfo.code === 'en'
+    ? 'STRICT PROHIBITION: NEVER respond in Vietnamese or any language other than English. All conversational output, summaries, critiques, and thoughts MUST be 100% in English.'
+    : `STRICT PROHIBITION: NEVER respond in any language other than ${langInfo.name} unless the user explicitly switches languages.`;
 
   const instruction = `[CRITICAL LANGUAGE MANDATE - ABSOLUTE PRIORITY]:
-The user's conversation language has been detected as: ${langInfo.name} (${langInfo.nativeName}, code: ${langInfo.code}) based on ${priority === 'user_message' ? 'the natural language of their message' : 'their application profile setting'}.
+The conversation language has been resolved as: ${langInfo.name} (${langInfo.nativeName}, code: ${langInfo.code}) based on ${
+    priority === 'user_message'
+      ? 'the natural language of the user message'
+      : priority === 'context_language'
+      ? 'the project script language / target country setting'
+      : 'the application profile setting'
+  }.
 You MUST write 100% of your conversational response, explanations, brainstorm pitches, titles, character descriptions, dialogue samples, and status reports in ${langInfo.name} (${langInfo.nativeName}).
-STRICT PROHIBITION: NEVER respond in any other language unless the user explicitly switches languages in subsequent messages.`;
+${prohibitionNote}`;
 
   return {
     languageCode: langInfo.code,

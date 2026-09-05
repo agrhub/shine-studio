@@ -202,10 +202,10 @@ aiRouter.post('/generate-script', async (req, res) => {
     const pipelineResult = await directorAgent.runPipeline({
       title: title || 'Undercover Mastermind',
       genre: genre || 'Suspense',
-      visualStyle: visual_style || 'realistic',
+      visual_style: visual_style || 'realistic',
       synopsis: synopsis || 'Betrayed heir undercover to dismantle corrupt board.',
-      episodeNumber: episode_number || 1,
-      totalEpisodes: total_episodes || 20,
+      episode_number: episode_number || 1,
+      total_episodes: total_episodes || 20,
     });
 
     return res.json({

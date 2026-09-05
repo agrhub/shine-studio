@@ -1,4 +1,4 @@
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { mcpClient } from '../integrations/mcp/ParallelMCPClient.js';
 import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
@@ -23,6 +23,7 @@ export class TrendRadarAgent {
           id: item.id || `${cleanRegion.toLowerCase()}_${idx + 1}`,
           topic: item.title || item.topic || `Viral Trend ${idx + 1}`,
           description: item.description || `Trending micro-drama trope: ${(item.tropes || []).join(', ') || 'High-stakes conflict'}`,
+          genre: item.genre || 'revenge',
           trope: (Array.isArray(item.tropes) && item.tropes[0]) || item.trope || 'High-Converting Trope',
           hashtag_velocity: item.hashtagVelocity || `+${item.viralScore ? item.viralScore * 5 : 480}% (TikTok/Reels/Shorts)`,
           competitor_hook: item.competitorHook || `3-second opening hook for ${item.title || item.topic || 'story'}`,
@@ -67,10 +68,10 @@ export class TrendRadarAgent {
       region: cleanRegion,
       languageName,
       lang,
-	  maxTrends: MAX_TRENDS
+	    maxTrends: MAX_TRENDS
     });
 
-    const rawText = await geminiClient.generateText({
+    const rawText = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: trendSkill,
       jsonMode: true,

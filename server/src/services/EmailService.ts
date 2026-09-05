@@ -176,7 +176,50 @@ export class EmailService {
         </div>
       `
     };
+    await this.sendMail(mailOptions);
+  }
+
+  public async sendFlowCookieExpiredAlert(accountEmail: string, reason: string): Promise<void> {
+    const adminEmail = EnvConfig.adminEmail;
+    const updateUrl = `${EnvConfig.frontendUrl}/settings`;
+    const timeStr = new Date().toISOString();
     
+    const mailOptions = {
+      from: this.fromEmail,
+      to: adminEmail,
+      subject: `[ALERT] Google Flow Session Expired (${accountEmail}) - Action Required`,
+      text: `Account: ${accountEmail}\nTime: ${timeStr}\nReason: ${reason}\n\nPlease visit ${updateUrl} to update the session cookie.`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f1015; color: #f3f4f6; border-radius: 16px; border: 1px solid #27272a; padding: 32px 24px;">
+          <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <div style="width: 36px; height: 36px; background: #ef4444; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; color: #fff; font-size: 20px; text-align: center; line-height: 36px;">!</div>
+            <span style="font-size: 18px; font-weight: 800; margin-left: 12px; color: #fff;">Shine Studio &bull; <span style="color: #ef4444;">Flow Service Pool</span></span>
+          </div>
+
+          <h2 style="color: #fff; font-size: 20px; font-weight: 700; margin: 0 0 12px 0;">Session Cookie Expired Alert</h2>
+          
+          <p style="color: #9ca3af; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+            The system detected that the session cookie for the following Google Flow account has expired or access was rejected:
+          </p>
+
+          <div style="background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
+            <p style="margin: 6px 0; font-size: 14px;"><strong style="color: #9ca3af;">Account:</strong> <span style="color: #38bdf8; font-weight: 600;">${accountEmail}</span></p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong style="color: #9ca3af;">Time:</strong> <span style="color: #e5e7eb;">${timeStr}</span></p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong style="color: #9ca3af;">Failure Details:</strong> <span style="color: #f87171;">${reason}</span></p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong style="color: #9ca3af;">Impact:</strong> <span style="color: #fbbf24;">AI video (Veo-3) and image generation tasks assigned to this account are paused.</span></p>
+          </div>
+
+          <div style="text-align: center; margin: 28px 0;">
+            <a href="${updateUrl}" style="background-color: #00dc82; color: #000; font-weight: 700; font-size: 14px; padding: 12px 28px; text-decoration: none; border-radius: 8px; display: inline-block;">Update Cookie in Settings</a>
+          </div>
+
+          <p style="color: #6b7280; font-size: 12px; line-height: 1.5; margin: 24px 0 0 0; border-top: 1px solid #27272a; padding-top: 16px;">
+            This automated alert was dispatched by Shine Studio FlowSyncService.
+          </p>
+        </div>
+      `
+    };
+
     await this.sendMail(mailOptions);
   }
 

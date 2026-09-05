@@ -28,5 +28,11 @@ LANGUAGE SPECIFICATION (MANDATORY):
 - All scene dialogue, character speech, emotions, voiceover tones, and screenplay action descriptions MUST BE IN {{languageName}}.
 - Screenplay format must use standard Markdown conventions (Slugline ###, Character Name **NAME**, Parenthetical _(tone)_).
 
+HIGH-DENSITY DIALOGUE MANDATE FOR DRAMA VIDEO (CRITICAL):
+- Micro-drama relies on continuous, gripping dialogue to hook the audience and drive the story!
+- At least 75% to 85% of all shots across the episode MUST contain spoken dialogue or internal voiceover/monologue (`dialogue: [...]`).
+- Avoid empty, silent shots where characters merely walk or stare without purpose. Characters must deliver cutting retorts, inner thoughts, whispered threats, or explosive secrets in nearly every shot!
+- Purely silent shots are limited to at most 1–2 shots across the entire episode.
+
 Execute this task and produce the full episode script matching the JSON Output Schema defined in your System Skill.
 Ensure the output JSON includes the full array of scenes (with nested shots), characters, locations, and props.

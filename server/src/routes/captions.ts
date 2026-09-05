@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { getDatabaseProvider } from '../database/index.js';
 import { CharacterSeriesEntity, EpisodeEntity, SceneDialogue, SceneEntity, SeriesEntity,  } from '@/types.js';
@@ -95,7 +96,7 @@ export async function generateCaptionsInternal(params: {
       dialogue,
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an AI Subtitle & Kinetic Caption Timing Engine for vertical short-form video. word.from and word.to must be relative milliseconds from 0.',
       jsonMode: true,
@@ -189,7 +190,7 @@ captionsRouter.post('/translate', async (req: Request, res: Response) => {
       cuesCount: cues.length,
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are a professional film localization translator for vertical micro-dramas. Translate each cue into punchy natural dialogue in target language.',
       jsonMode: true,
@@ -326,7 +327,7 @@ Respond with ONLY valid JSON adhering strictly to this schema:
   ]
 }`;
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt: promptText,
       systemInstruction: `You are a master micro-drama subtitle & dubbing translator. You translate lines into ${reqTargetLang} while preserving raw emotion, dramatic pacing, and natural spoken flow. Return valid JSON only.`,
       jsonMode: true,
@@ -412,7 +413,7 @@ async function translateDialogueList(dialogues: SceneDialogue[], targetLang: str
   if (lines.length === 0) return dialogues;
 
   try {
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt: `Translate the following dialogue lines into ${targetLang}:\n${JSON.stringify(lines, null, 2)}\nReturn ONLY a JSON array of translated strings: ["..."]`,
       jsonMode: true,
     });

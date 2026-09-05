@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 
 export const novelConverterRouter = Router();
@@ -16,7 +16,7 @@ novelConverterRouter.post('/convert-novel', async (req: Request, res: Response) 
       novelText: novelText || 'A betrayed heiress returns in disguise to reclaim her company.',
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an expert Micro-Drama Novel Adaptation Agent. You transform long-form web novels into high-velocity vertical micro-drama episodes.',
       jsonMode: true,

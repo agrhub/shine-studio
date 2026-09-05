@@ -1,8 +1,10 @@
 import axios from 'axios';
 import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../gemini/GeminiClient.js';
 import { flowAdapter } from '../flow/FlowAdapter.js';
+import { antigravityClient } from '../antigravity/AntigravityClient.js';
+import { antigravityOAuthService } from '../antigravity/AntigravityOAuthService.js';
 import { getDatabaseProvider } from '@/database/index.js';
-import { AIAccountStatus, AIAccountType } from '~/types.js';
+import { AIAccountStatus, AIAccountType, IAIAccount } from '~/types.js';
 import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import type { StudioSystemConfig } from '@/types.js';
@@ -24,6 +26,7 @@ export interface RouteGenerationOptions {
 }
 
 export class AIProviderRouter {
+  private textRequestCounter = 0;
   /**
    * Routes AI requests:
    * Uses Google Flow Account pool for Image and Video if available.
@@ -47,11 +50,11 @@ export class AIProviderRouter {
           if (bestAccount && bestAccount.session_token) {
             Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Image (${options.model}) (Account: ${bestAccount.email}, Credits: ${bestAccount.credits_remaining})`);
             
-            const flowAccountAdapterParam = {
+            const flowAccountAdapterParam: IAIAccount = {
               id: bestAccount.id,
               email: bestAccount.email,
-              flow_st: bestAccount.session_token,
-              flow_at: bestAccount.access_token,
+              session_token: bestAccount.session_token,
+              access_token: bestAccount.access_token,
               project_id: bestAccount.project_id,
               status: AIAccountStatus.READY,
               credits: bestAccount.credits_remaining,
@@ -129,11 +132,11 @@ export class AIProviderRouter {
           if (bestAccount && bestAccount.session_token) {
             Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Video (${options.model}) (Account: ${bestAccount.email})`);
             
-            const flowAccountAdapterParam = {
+            const flowAccountAdapterParam: IAIAccount = {
               id: bestAccount.id,
               email: bestAccount.email,
-              flow_st: bestAccount.session_token,
-              flow_at: bestAccount.access_token,
+              session_token: bestAccount.session_token,
+              access_token: bestAccount.access_token,
               project_id: bestAccount.project_id,
               status: AIAccountStatus.READY,
               credits: bestAccount.credits_remaining,
@@ -171,14 +174,17 @@ export class AIProviderRouter {
       Logger.info(`[AIProviderRouter] Generating Video via GeminiClient (${options.model})`);
       const videoResult: any = await geminiClient.generateVideo(options.prompt, options.model, {
         aspectRatio: options.aspectRatio === '1:1' ? '1:1' : options.aspectRatio === '16:9' ? '16:9' : '9:16',
-        characterReferences: options.imageEnd ? [] : (options.characterReferences || []),//ingore reference images if start + end frame are provided
+        characterReferences: options.imageEnd ? [] : (options.characterReferences || []), // ignore reference images if start + end frame are provided
         imageStart: options.imageStart,
         imageEnd: options.imageEnd,
+        durationSeconds: options.extraOptions?.duration || options.extraOptions?.durationSeconds,
       });
 
+      const finalUrl = videoResult?.url || videoResult?.videoUrl || (typeof videoResult === 'string' ? videoResult : '');
       return {
         provider: 'Gemini (Veo)',
-        url: videoResult?.videoUrl || (typeof videoResult === 'string' ? videoResult : ''),
+        url: finalUrl,
+        mimeType: videoResult?.mimeType || 'video/mp4',
         data: videoResult,
       };
     }
@@ -272,13 +278,51 @@ export class AIProviderRouter {
       };
     }
 
-    // Text Generation: GeminiClient with FlowAdapter Fallback on Resource Exhausted (409/429)
+    // Text Generation: Proactive Load Sharing between Antigravity and GeminiClient
+    const agAccount = await antigravityOAuthService.getAvailableAccount();
+    const shouldTryAntigravityFirst = !!agAccount && (this.textRequestCounter++ % 2 === 0 || !EnvConfig.geminiApiKey);
+
+    if (shouldTryAntigravityFirst && agAccount) {
+      try {
+        const agText = await antigravityClient.generateText({
+          prompt: options.prompt,
+          model: options.model,
+          systemInstruction: options.systemInstruction,
+          jsonMode: options.jsonMode,
+          temperature: options.extraOptions?.temperature,
+          account: agAccount,
+        });
+
+        if (agText) {
+          if (options.jsonMode) {
+            try {
+              this.parseJsonWithRepair(agText);
+              return {
+                provider: 'Antigravity (Google Cloud Code)',
+                data: agText,
+              };
+            } catch (jsonErr: any) {
+              Logger.warn(`[AIProviderRouter] Antigravity primary response was not valid JSON in jsonMode (${jsonErr.message}). Falling back to GeminiClient...`);
+            }
+          } else {
+            return {
+              provider: 'Antigravity (Google Cloud Code)',
+              data: agText,
+            };
+          }
+        }
+      } catch (agErr: any) {
+        Logger.warn(`[AIProviderRouter] Antigravity primary load-share attempt failed (${agErr.message}). Falling back to Gemini...`);
+      }
+    }
+
     try {
       const text = await geminiClient.generateText({
         prompt: options.prompt,
         model: options.model,
         jsonMode: options.jsonMode,
         systemInstruction: options.systemInstruction,
+        temperature: options.extraOptions?.temperature,
       });
 
       return {
@@ -300,7 +344,16 @@ export class AIProviderRouter {
         errMsg.includes('quota');
 
       if (isResourceExhausted) {
-        Logger.warn(`[AIProviderRouter] GeminiClient hit Resource Exhausted (${errMsg}). Attempting FlowAdapter fallback...`);
+        Logger.warn(`[AIProviderRouter] GeminiClient hit Resource Exhausted (${errMsg}). Attempting Antigravity fallback...`);
+        const agText = await this.tryAntigravityTextFallback(options);
+        if (agText) {
+          return {
+            provider: 'Antigravity (Google Cloud Code)',
+            data: agText,
+          };
+        }
+
+        Logger.warn(`[AIProviderRouter] Antigravity fallback unavailable or failed. Attempting FlowAdapter fallback...`);
         const flowText = await this.tryFlowTextFallback(options);
         if (flowText) {
           return {
@@ -311,6 +364,29 @@ export class AIProviderRouter {
       }
       throw geminiErr;
     }
+  }
+
+  private async tryAntigravityTextFallback(options: RouteGenerationOptions): Promise<string | null> {
+    try {
+      const db = await getDatabaseProvider();
+      const agAccounts = await db.getAntigravityAccounts('ACTIVE');
+      if (!agAccounts || agAccounts.length === 0) return null;
+
+      const text = await antigravityClient.generateText({
+        prompt: options.prompt,
+        model: options.model,
+        systemInstruction: options.systemInstruction,
+        jsonMode: options.jsonMode,
+      });
+
+      if (text) {
+        Logger.info(`[AIProviderRouter] Successfully generated Text via Antigravity pool fallback`);
+        return text;
+      }
+    } catch (err: any) {
+      Logger.warn(`[AIProviderRouter] tryAntigravityTextFallback error: ${err.message}`);
+    }
+    return null;
   }
 
   private async tryFlowTextFallback(options: RouteGenerationOptions): Promise<string | null> {
@@ -324,11 +400,11 @@ export class AIProviderRouter {
       for (const account of sortedAccounts) {
         if (!account.session_token) continue;
         try {
-          const flowAccountAdapterParam = {
+          const flowAccountAdapterParam: IAIAccount = {
             id: account.id,
             email: account.email,
-            flow_st: account.session_token,
-            flow_at: account.access_token,
+            session_token: account.session_token,
+            access_token: account.access_token,
             project_id: account.project_id,
             status: AIAccountStatus.READY,
             credits: account.credits_remaining,
@@ -362,15 +438,32 @@ export class AIProviderRouter {
 
   // ─── High-Level Convenience Methods ───────────────────────────────────────────
 
-  async generateText(prompt: string, options?: { model?: string; systemInstruction?: string }): Promise<string> {
+  async generateText(
+    promptOrOptions: string | { prompt: string; model?: string; systemInstruction?: string; jsonMode?: boolean; temperature?: number; [key: string]: any },
+    legacyOptions?: { model?: string; systemInstruction?: string; jsonMode?: boolean; temperature?: number; [key: string]: any }
+  ): Promise<string> {
+    let prompt = '';
+    let opts: { model?: string; systemInstruction?: string; jsonMode?: boolean; temperature?: number; [key: string]: any } = {};
+
+    if (typeof promptOrOptions === 'string') {
+      prompt = promptOrOptions;
+      opts = legacyOptions || {};
+    } else if (promptOrOptions && typeof promptOrOptions === 'object') {
+      prompt = promptOrOptions.prompt || '';
+      opts = promptOrOptions;
+    }
+
     const db = await getDatabaseProvider();
     const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
-    const targetModel = options?.model || studioConfig?.gemini?.textModel || EnvConfig.geminiModelText;
+    const targetModel = opts.model || studioConfig?.gemini?.textModel || EnvConfig.geminiModelText;
+
     const res = await this.routeGeneration({
       prompt,
       type: 'TEXT',
       model: targetModel,
-      systemInstruction: options?.systemInstruction,
+      jsonMode: opts.jsonMode,
+      systemInstruction: opts.systemInstruction,
+      extraOptions: { temperature: opts.temperature },
     });
     return String(res.data || '');
   }
@@ -385,84 +478,105 @@ export class AIProviderRouter {
       return str;
     } catch {}
 
-    // 2. Try markdown fenced codeblock
-    const codeBlockMatch = str.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (codeBlockMatch && codeBlockMatch[1]) {
-      const candidate = codeBlockMatch[1].trim();
+    // 2. Try markdown fenced codeblock(s)
+    const codeBlockMatches = [...str.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
+    for (const match of codeBlockMatches) {
+      const candidate = match[1]?.trim();
+      if (!candidate) continue;
       try {
         JSON.parse(candidate);
         return candidate;
       } catch {}
+      // If candidate has outermost brackets, return it for repair
+      if (candidate.startsWith('{') || candidate.startsWith('[')) {
+        return candidate;
+      }
     }
 
-    // 3. Robust Bracket Balancing to find exact outermost JSON object or array
+    // 3. Robust Bracket Balancing to find outermost JSON object or array
     const firstBrace = str.indexOf('{');
     const firstBracket = str.indexOf('[');
-    if (firstBrace === -1 && firstBracket === -1) return str;
 
-    const isObject = firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket);
-    const startIdx = isObject ? firstBrace : firstBracket;
-    const openChar = isObject ? '{' : '[';
-    const closeChar = isObject ? '}' : ']';
+    const candidates: string[] = [];
 
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    let endIdx = -1;
-
-    for (let i = startIdx; i < str.length; i++) {
-      const char = str[i];
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (char === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (!inString) {
-        if (char === openChar) {
-          depth++;
-        } else if (char === closeChar) {
-          depth--;
-          if (depth === 0) {
-            endIdx = i;
-            break;
+    const balanceBracket = (startIdx: number, openChar: string, closeChar: string): string | null => {
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = startIdx; i < str.length; i++) {
+        const char = str[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\' && inString) {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (!inString) {
+          if (char === openChar) {
+            depth++;
+          } else if (char === closeChar) {
+            depth--;
+            if (depth === 0) {
+              return str.substring(startIdx, i + 1).trim();
+            }
           }
         }
       }
+      return null;
+    };
+
+    if (firstBrace !== -1) {
+      const objCandidate = balanceBracket(firstBrace, '{', '}');
+      if (objCandidate) candidates.push(objCandidate);
     }
 
-    if (endIdx !== -1) {
-      const extracted = str.substring(startIdx, endIdx + 1).trim();
+    if (firstBracket !== -1) {
+      const arrCandidate = balanceBracket(firstBracket, '[', ']');
+      if (arrCandidate) candidates.push(arrCandidate);
+    }
+
+    // If any candidate parses directly, return it immediately
+    for (const cand of candidates) {
       try {
-        JSON.parse(extracted);
-        return extracted;
+        JSON.parse(cand);
+        return cand;
       } catch {}
     }
 
+    // If candidates exist, return the longest candidate for repair
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.length - a.length);
+      return candidates[0];
+    }
+
     // 4. Fallback to lastIndex boundary
-    const lastIdx = isObject ? str.lastIndexOf('}') : str.lastIndexOf(']');
-    if (lastIdx > startIdx) {
-      return str.substring(startIdx, lastIdx + 1).trim();
+    const lastBrace = str.lastIndexOf('}');
+    const lastBracket = str.lastIndexOf(']');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      return str.substring(firstBrace, lastBrace + 1).trim();
+    }
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      return str.substring(firstBracket, lastBracket + 1).trim();
     }
 
     return str;
   }
 
-  private parseJsonWithRepair<T>(rawStr: string): T {
+  private parseJsonWithRepair<T>(rawStr: string, fallbackData?: T): T {
     const extracted = this.extractJsonString(rawStr);
-    
+
     // 1. Direct parse attempt
     try {
       return JSON.parse(extracted) as T;
     } catch {}
 
-    // 2. Progressive Sanitize and Repair markdown artifacts (e.g. "title":_ "...", "title": _"...", "title": **"..."**)
+    // 2. Progressive Sanitize and Repair markdown artifacts & syntax flaws
     let repaired = extracted
       .replace(/\/\/.*$/gm, '')
       .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -471,6 +585,7 @@ export class AIProviderRouter {
       .replace(/"[_*]+(?=[\s,\}\]])/g, '"')
       .replace(/([0-9a-zA-Z\-_]+)[_*]+(?=[\s,\}\]])/g, '$1')
       .replace(/,\s*([}\]])/g, '$1')
+      .replace(/([{\s,])([a-zA-Z0-9_-]+)\s*:/g, '$1"$2":')
       .trim();
 
     try {
@@ -497,7 +612,12 @@ export class AIProviderRouter {
       return JSON.parse(balanced) as T;
     } catch {}
 
-    // 4. Fallback: throw original JSON.parse error with extracted string for clear debugging
+    // 4. Return fallbackData if caller provided one
+    if (fallbackData !== undefined) {
+      return fallbackData;
+    }
+
+    // 5. Fallback: throw original JSON.parse error with extracted string for clear debugging
     return JSON.parse(extracted) as T;
   }
 
@@ -505,19 +625,48 @@ export class AIProviderRouter {
     const db = await getDatabaseProvider();
     const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
     const targetModel = options?.model || studioConfig?.gemini?.textModel || EnvConfig.geminiModelText;
+
+    const baseSysPrompt = options?.systemInstruction?.trim() || '';
+    const strictJsonRequirement =
+      'CRITICAL REQUIREMENT: Respond ONLY with a valid, raw JSON object or array. ' +
+      'Do NOT include markdown code blocks, conversational introductions, greetings, or explanations. ' +
+      'Start output directly with { or [ and end with } or ].';
+    const systemInstruction = baseSysPrompt
+      ? `${strictJsonRequirement}\n\n${baseSysPrompt}`
+      : strictJsonRequirement;
+
     try {
       const res = await this.routeGeneration({
         prompt,
         type: 'TEXT',
         jsonMode: true,
         model: targetModel,
-        systemInstruction: options?.systemInstruction,
+        systemInstruction,
       });
       const rawText = String(res.data || '');
-      return this.parseJsonWithRepair<T>(rawText);
+      return this.parseJsonWithRepair<T>(rawText, fallbackData);
     } catch (err: any) {
+      // Proactively retry directly with GeminiClient to recover from non-JSON or malformed responses
+      try {
+        Logger.warn(`[AIProviderRouter] generateJSON parse error (${err.message}). Proactively retrying via GeminiClient...`);
+        const geminiText = await geminiClient.generateText({
+          prompt,
+          model: targetModel,
+          jsonMode: true,
+          systemInstruction,
+        });
+        if (geminiText) {
+          return this.parseJsonWithRepair<T>(geminiText, fallbackData);
+        }
+      } catch (retryErr: any) {
+        Logger.warn(`[AIProviderRouter] GeminiClient proactive retry also failed: ${retryErr.message}`);
+      }
+
+      if (fallbackData !== undefined) {
+        Logger.warn(`[AIProviderRouter] generateJSON recovered using fallbackData: ${err.message}`);
+        return fallbackData;
+      }
       Logger.error(`[AIProviderRouter] generateJSON error: ${err.message}`);
-      if (fallbackData !== undefined) return fallbackData;
       throw err;
     }
   }
@@ -543,7 +692,22 @@ export class AIProviderRouter {
     };
   }
 
-  async generateVideo(prompt: string, options?: { aspectRatio?: '9:16' | '1:1' | '16:9'; model?: string; characterReferences?: string[]; imageInputs?: string[]; backgroundImageId?: string; startFrameUrl?: string; endFrameUrl?: string; imageStart?: string; imageEnd?: string }): Promise<{ url: string; provider: string }> {
+  async generateVideo(
+    prompt: string,
+    options?: {
+      aspectRatio?: '9:16' | '1:1' | '16:9';
+      model?: string;
+      characterReferences?: string[];
+      imageInputs?: string[];
+      backgroundImageId?: string;
+      startFrameUrl?: string;
+      endFrameUrl?: string;
+      imageStart?: string;
+      imageEnd?: string;
+      duration?: number;
+      extraOptions?: any;
+    }
+  ): Promise<{ url: string; provider: string; mimeType?: string }> {
     const db = await getDatabaseProvider();
     const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
     const targetModel = options?.model || studioConfig?.gemini?.videoModel || EnvConfig.geminiModelVideo;
@@ -554,12 +718,17 @@ export class AIProviderRouter {
       model: targetModel,
       characterReferences: options?.characterReferences,
       imageInputs: options?.imageInputs,
-      imageStart: options?.imageStart,
-      imageEnd: options?.imageEnd,
+      imageStart: options?.imageStart || options?.startFrameUrl,
+      imageEnd: options?.imageEnd || options?.endFrameUrl,
+      extraOptions: {
+        duration: options?.duration || options?.extraOptions?.duration || 6,
+        ...options?.extraOptions,
+      },
     });
     return {
       url: res.url || '',
       provider: res.provider,
+      mimeType: res.mimeType || 'video/mp4',
     };
   }
 

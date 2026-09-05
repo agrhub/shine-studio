@@ -185,11 +185,15 @@ export class GCSStorageAdapter implements IStorageAdapter {
       let end = fileSize > 0 ? fileSize - 1 : 0;
       let isRange = false;
 
+      const MAX_CHUNK_BYTES = 16 * 1024 * 1024; // 16 MB max per response chunk to stay well under Cloud Run 32MB response limit
+
       if (typeof options === 'string' && options.startsWith('bytes=')) {
         const parts = options.replace('bytes=', '').split('-');
         start = parseInt(parts[0], 10) || 0;
         if (parts[1] && parts[1].trim().length > 0) {
           end = parseInt(parts[1], 10);
+        } else {
+          end = fileSize > 0 ? Math.min(fileSize - 1, start + MAX_CHUNK_BYTES - 1) : 0;
         }
         isRange = true;
       } else if (typeof options === 'object' && options !== null) {
@@ -200,11 +204,23 @@ export class GCSStorageAdapter implements IStorageAdapter {
         if (options.end !== undefined) {
           end = options.end;
           isRange = true;
+        } else if (fileSize > MAX_CHUNK_BYTES) {
+          end = start + MAX_CHUNK_BYTES - 1;
+          isRange = true;
         }
+      } else if (fileSize > MAX_CHUNK_BYTES) {
+        // Enforce range chunking for large files (> 16 MB) to prevent Cloud Run 32MB payload error
+        end = start + MAX_CHUNK_BYTES - 1;
+        isRange = true;
       }
 
       if (end < start) end = start;
       if (fileSize > 0 && end >= fileSize) end = fileSize - 1;
+      // Guarantee single chunk is at most MAX_CHUNK_BYTES
+      if ((end - start + 1) > MAX_CHUNK_BYTES) {
+        end = start + MAX_CHUNK_BYTES - 1;
+        isRange = true;
+      }
 
       const stream = file.createReadStream(isRange ? { start, end } : {});
       const chunkSize = (end - start) + 1;
@@ -220,17 +236,21 @@ export class GCSStorageAdapter implements IStorageAdapter {
         },
       };
     } catch (err: any) {
-      Logger.warn(`[GCSStorageAdapter] Direct metadata fetch failed for ${normalizedKey}: ${err.message}. Falling back to createReadStream.`);
-      const sdkOptions = typeof options === 'object' && options !== null ? options : {};
-      const stream = file.createReadStream(sdkOptions as { start?: number; end?: number });
-      return {
-        stream,
-        status: 200,
-        headers: {
-          'content-type': 'video/mp4',
-          'accept-ranges': 'bytes',
-        },
-      };
+      const errMsg = String(err?.message || '');
+      const errCode = Number(err?.code || 0);
+
+      if (errCode === 404 || errMsg.includes('No such object') || errMsg.includes('Not Found')) {
+        Logger.warn(`[GCSStorageAdapter] File not found in bucket ${this.bucketName}: ${normalizedKey}`);
+        throw new Error(`Asset not found in GCS: ${normalizedKey}`);
+      }
+
+      if (errCode === 403 || errMsg.includes('Permission') || errMsg.includes('denied')) {
+        Logger.error(`[GCSStorageAdapter] GCS Permission denied for bucket ${this.bucketName}: ${errMsg}`);
+        throw new Error(`GCS Storage permission denied: ${errMsg}`);
+      }
+
+      Logger.warn(`[GCSStorageAdapter] Metadata fetch failed for ${normalizedKey}: ${errMsg}.`);
+      throw err;
     }
   }
 

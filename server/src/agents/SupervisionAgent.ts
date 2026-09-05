@@ -1,4 +1,4 @@
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { mcpClient } from '../integrations/mcp/ParallelMCPClient.js';
 import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
@@ -111,7 +111,7 @@ export class SupervisionAgent {
     });
 
     try {
-      const rawText = await geminiClient.generateText({
+      const rawText = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: complianceSkill || 'You are a professional micro-drama compliance, safety, and market copyright auditor.',
         grounding: true,

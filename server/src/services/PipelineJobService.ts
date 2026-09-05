@@ -44,8 +44,16 @@ export class PipelineJobService {
     // 1. Check if there is already an active running job for this episode
     const active = await db.findActivePipelineJob(series_id, episode_id, type);
     if (active) {
-      Logger.info(`[PipelineJobService] Active job ${active.id} already exists for Series ${series_id} / Episode ${episode_id}. Returning existing job.`);
-      return { job: active, is_new: false };
+      const lastActivity = new Date(active.updated_at || active.created_at).getTime();
+      if (Date.now() - lastActivity > 20 * 60 * 1000) {
+        Logger.warn(`[PipelineJobService] Job ${active.id} is stale/zombie (no update for ${Math.round((Date.now() - lastActivity) / 60000)}m). Auto-failing to allow fresh run.`);
+        active.status = 'failed';
+        active.error = 'Task timed out after inactivity';
+        await db.savePipelineJob(active).catch(() => {});
+      } else {
+        Logger.info(`[PipelineJobService] Active job ${active.id} already exists for Series ${series_id} / Episode ${episode_id}. Returning existing job.`);
+        return { job: active, is_new: false };
+      }
     }
 
     const series = await db.getSeriesById(series_id);
@@ -74,10 +82,10 @@ export class PipelineJobService {
 
     const newJob: PipelineJobEntity = {
       id: `job_${nanoid(12)}`,
-      user_id,
-      series_id,
-      episode_id,
-      session_id,
+      user_id: user_id,
+      series_id: series_id,
+      episode_id: episode_id,
+      session_id: session_id,
       type,
       title: jobTitle,
       status: 'running',

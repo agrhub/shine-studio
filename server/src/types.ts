@@ -3,11 +3,84 @@
  * Strict schema with 100% snake_case field names and non-null fields to catch errors at compile-time.
  */
 
+export interface AssetVersion {
+  id: string;
+  image_url: string;
+  url?: string;
+  video_url?: string;
+  audio_url?: string;
+  voiceover_url?: string;
+  bgm_url?: string;
+  prompt?: string;
+  negative_prompt?: string;
+  created_at: string;
+  is_selected?: boolean;
+  aspect_ratio?: string;
+  model?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type CustomizableAssetType =
+  | 'character'
+  | 'wardrobe'
+  | 'location'
+  | 'prop'
+  | 'scene_frame'
+  | 'scene_video'
+  | 'voiceover'
+  | 'bgm'
+  | 'episode_bgm';
+
+export type CustomizableAsset =
+  | CharacterSeriesEntity
+  | CharacterWardrobeVariant
+  | LocationAsset
+  | PropAsset
+  | SceneEntity
+  | EpisodeEntity;
+
+export interface CustomizeAssetParams {
+  series_id: string;
+  episode_id?: string;
+  asset_type: CustomizableAssetType;
+  asset_id: string;
+  variant_id?: string;
+  custom_prompt: string;
+  use_reference_image?: boolean;
+  reference_image_url?: string;
+  aspect_ratio?: string;
+  user_id?: string;
+}
+
+export interface CustomizeAssetResult {
+  image_url: string;
+  prompt: string;
+  version: AssetVersion;
+  asset: CustomizableAsset;
+}
+
+export interface SelectAssetVersionParams {
+  series_id: string;
+  episode_id?: string;
+  asset_type: CustomizableAssetType;
+  asset_id: string;
+  variant_id?: string;
+  version_id: string;
+}
+
+export interface SelectAssetVersionResult {
+  success: boolean;
+  active_image_url: string;
+  asset: CustomizableAsset;
+}
+
 export interface CharacterWardrobeVariant {
   variant_id: string;
   name: string;
   clothing_and_accessories: string;
   image_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   associated_scenes?: number[];
   category?: string;
 }
@@ -41,7 +114,8 @@ export interface CharacterSeriesEntity {
   wardrobe_variants: CharacterWardrobeVariant[];
   speech_style: string;
   avatar?: string | null;
-  // image_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   lora_model?: string;
   description: string;
   created_at?: string;
@@ -55,6 +129,8 @@ export interface LocationAsset {
   physical_characteristics: string;
   time_of_day?: string;
   image_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   frame_description?: string;
 }
 
@@ -64,6 +140,8 @@ export interface PropAsset {
   name: string;
   physical_characteristics: string;
   image_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   frame_description?: string;
   owner?: string;
 }
@@ -73,6 +151,8 @@ export interface ShotFrame {
   index: number;
   title: string;
   frame_visual: string;
+  prompt?: string;
+  versions?: AssetVersion[];
   frame_audio?: string;
   frame_motion?: string;
   dialogue?: SceneDialogue[];
@@ -154,9 +234,15 @@ export interface SceneEntity {
   image_url?: string;
   storyboard_frame_url?: string;
   storyboard_end_frame_url?: string;
+  prompt?: string;
+  versions?: AssetVersion[];
+  end_frame_versions?: AssetVersion[];
+  video_versions?: AssetVersion[];
   video_url?: string;
   voiceover_url?: string;
+  voice_versions?: AssetVersion[];
   bgm_url?: string;
+  bgm_versions?: AssetVersion[];
   status: 'draft' | 'image_ready' | 'video_ready' | string;
   dialogue: SceneDialogue[];
   reference_assets: SceneReferenceAssets;
@@ -195,6 +281,8 @@ export interface SceneEntity {
   }>;
   voice_duration_us?: number;
   voice_start_us?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ChatMessageEntity {
@@ -368,9 +456,14 @@ export interface EpisodeEntity {
   dubbing_languages?: string[];
   video_url?: string;
   video_urls?: Record<string, string>;
+  bgm_url?: string;
+  bgm_versions?: AssetVersion[];
   render_versions?: EpisodeRenderVersion[];
   published_urls?: Record<string, string>;
   published_platforms?: EpisodePublishedPlatform[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
+  characters?: CharacterSeriesEntity[];
   created_at?: string;
   updated_at?: string;
 }
@@ -766,16 +859,15 @@ export interface IAIAccount {
   avatar_url?: string;
   account_type: string;
   status: AIAccountStatus | string;
-  flow_st?: string;
-  flow_at?: string;
-  flow_at_expires_at?: Date;
+  session_token?: string;
+  access_token?: string;
+  token_expires_at?: Date;
   project_id?: string;
   credits?: number;
   error_message?: string;
   last_fingerprint?: Map<string, string>;
   service_keys?: Map<string, string>;
   is_active: boolean;
-  save(...args: any[]): Promise<any>;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -783,12 +875,39 @@ export interface IAIAccount {
 export interface FlowAccountEntity {
   id: string;
   email: string;
+  name?: string;
+  avatar?: string;
   session_token: string;
   access_token?: string;
   project_id?: string;
   status: string;
   credits_remaining: number;
   last_synced_at?: string;
+}
+
+export interface AntigravityAccountEntity {
+  id: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  avatar_url?: string;
+  access_token?: string;
+  refresh_token: string;
+  expires_at?: number;
+  token_expires_at?: Date | string;
+  project_id?: string;
+  tier?: string;
+  is_paid?: boolean;
+  status: 'ACTIVE' | 'READY' | 'UNAUTHORIZED' | 'ERROR' | 'RATE_LIMITED' | 'REVOKED' | string;
+  error_message?: string;
+  quotas?: Record<string, { used: number; limit: number }>;
+  available_models?: Array<{ id: string; displayName?: string; remainingFraction?: number; percentage?: number; resetTime?: string; category?: string }>;
+  rate_limit_reset_at?: number;
+  request_count?: number;
+  last_used_at?: string;
+  last_synced_at?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface TimelineSnapshotEntity {
@@ -878,6 +997,121 @@ export interface WorkerJobEntity {
   file_size?: number;
   submitted_at: string;
   updated_at: string;
+}
+
+export interface TrackedRenderJob {
+  remoteJobId: string;
+  pipelineJobId: string;
+  seriesId: string;
+  episodeId: string;
+  workerUrl: string;
+  storageKey: string;
+  combKey: string;
+  combLabel: string;
+  projectData: IProject | Record<string, unknown>;
+  options: Record<string, unknown>;
+  retryCount: number;
+  lastProgressPct: number;
+  lastActivityTime: number;
+}
+
+export interface RenderJobPayload {
+  jobId: string;
+  seriesId: string;
+  episodeId: string;
+  sceneIndex?: number;
+  timelineData: IProject | Record<string, unknown>;
+  aspectRatio?: string;
+  fps?: number;
+  resolution?: string;
+  outputFormat?: string;
+  callbackUrl?: string;
+  submittedAt: string;
+}
+
+export interface CloudRunClusterStatus {
+  serviceName: string;
+  region: string;
+  renderUrl: string;
+  status: 'ONLINE' | 'STANDBY' | 'DEGRADED';
+  activeWorkers: number;
+  maxConcurrency: number;
+  queueDepth: number;
+  systemLoad: {
+    cpuCores: number;
+    freeMemoryMb: number;
+    totalMemoryMb: number;
+  };
+}
+
+export interface RenderProgressEvent {
+  jobId: string;
+  episodeId?: string;
+  status: 'queued' | 'rendering' | 'compositing' | 'completed' | 'failed';
+  progressPercent: number;
+  downloadUrl?: string;
+  outputUrl?: string;
+  s3Key?: string;
+  error?: string;
+  renderTimeMs?: number;
+  fileSize?: number;
+  timestamp: string;
+}
+
+export interface CompositorClip {
+  id: string;
+  startTime: number;
+  duration: number;
+  assetUrl: string;
+  type?: 'Video' | 'Image' | 'Audio' | 'Caption';
+  volume?: number;
+  text?: string;
+  languageCode?: string;
+}
+
+export interface CompositorTrack {
+  id: string;
+  name?: string;
+  type?: 'Video' | 'Audio' | 'Caption' | string;
+  languageCode?: string;
+  muted?: boolean;
+  visible?: boolean;
+  clips: CompositorClip[];
+}
+
+export interface CompositorPayload {
+  series_id: string;
+  episode_id: string;
+  dubbing_languages?: string[];
+  caption_languages?: string[];
+  resolution?: string;
+  fps?: number;
+  format?: string;
+  tracks?: CompositorTrack[];
+  timeline_state?: Record<string, unknown>;
+}
+
+export interface CompositorJobPayload {
+  series_id: string;
+  episode_id: string;
+  pipeline_job_id?: string;
+  language?: string;
+  aspect_ratio?: '9:16' | '16:9' | '1:1';
+  include_subtitles?: boolean;
+  resolution?: '720p' | '1080p' | '4k';
+  burn_subtitles?: boolean;
+  fps?: number;
+}
+
+export interface RenderJobState {
+  jobId: string;
+  seriesId: string;
+  episodeId: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  outputUrl: string | null;
+  outputsByLang?: Record<string, string>;
+  error?: string | null;
 }
 
 export interface PipelineJobLog {
@@ -1048,7 +1282,7 @@ export interface MasterPlanOutput {
   visual_style: string;
   visual_style_prompt: string;
   country: string;
-  ratio: string;
+  ratio: "9:16" | "16:9" | "4:3" | "1:1" | string;
   total_episodes: number;
   total_duration_seconds?: number;
   language: string;
@@ -1107,7 +1341,7 @@ export interface IProject {
   settings: IProjectSettings;
   tracks: ITrack[];
   clips: Record<string, any>;
-  [key: string]: any;
+  // [key: string]: any;
 }
 
 export interface TimelineSnapshotVersion {
@@ -1141,33 +1375,7 @@ export interface RestoreTimelineResult {
   created_at: string;
 }
 
-// export interface IProjectSettings {
-//   width: number;
-//   height: number;
-//   fps: number;
-//   duration: number;
-//   backgroundColor: string;
-//   [key: string]: any;
-// }
 
-// export interface ITrack {
-//   id: string;
-//   name: string;
-//   type: string;
-//   clipIds: string[];
-//   accepts?: string[];
-//   static?: boolean;
-//   muted?: boolean;
-//   visible?: boolean;
-//   [key: string]: any;
-// }
-
-export interface IProject {
-  settings: IProjectSettings;
-  tracks: ITrack[];
-  clips: Record<string, any>;
-  // [key: string]: any;
-}
 
 export interface TimelineDimensions {
   width: number;
@@ -1248,11 +1456,10 @@ export interface TrendTopicOutput {
   competitor_hook: string;
   country: string;
   engagement_score: number;
-  genre?: string;
+  genre: string;
 }
 
 export interface ViralTrendItem extends TrendTopicOutput {
-  genre?: string;
   target_episodes?: number;
   duration_seconds?: number;
   category?: string;
@@ -1325,7 +1532,7 @@ export interface ScriptAgentInput {
 }
 
 export interface RefinePlanInput {
-  currentPlan: any;
+  currentPlan: MasterPlanOutput;
   userInstruction: string;
 }
 
@@ -1337,18 +1544,15 @@ export interface RefinePlanOutput {
 export interface FullScriptPipelineRequest {
   title: string;
   genre: string;
-  visualStyle?: string;
   visual_style?: string;
   synopsis: string;
-  episodeNumber?: number;
   episode_number?: number;
-  totalEpisodes?: number;
   total_episodes?: number;
 }
 
 export interface FullScriptPipelineResponse {
   outline: MasterPlanOutput;
-  adaptation: any;
+  adaptation: AdaptationOutput;
   scriptItem: ScriptItem;
   supervision: SupervisionResult;
 }
@@ -1377,9 +1581,9 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: Array<{
     name: string;
-    args: any;
+    args: Record<string, unknown>;
     status: 'running' | 'success' | 'error';
-    result?: any;
+    result?: unknown;
     retries?: number;
   }>;
   suggestions?: Array<{ label: string; prompt: string }>;
@@ -1393,7 +1597,7 @@ export interface EpisodeChatSession {
   messages: ChatMessage[];
   lastActive: number;
   masterPlan?: MasterPlanOutput;
-  contextData?: any;
+  contextData?: Record<string, unknown>;
 }
 
 export interface StoryboardPanel {
@@ -1419,13 +1623,35 @@ export interface CreateSeriesParams {
   target_audience?: string;
   country?: string;
   language?: string;
-  ratio?: string;
+  ratio?: "9:16" | "16:9" | "4:3" | "1:1" | string;
   episode_count?: number;
-  master_plan?: any;
-  characters?: any[];
-  locations?: any[];
-  props?: any[];
+  master_plan: MasterPlanOutput;
+  characters?: CharacterSeriesEntity[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
   pre_generate_ep1?: boolean;
+}
+
+export interface GenerateSceneVideoResult {
+  assetId: string;
+  url: string;
+  s3Key: string;
+  bgmUrl: string;
+  voiceoverUrl: string;
+  voiceId?: string;
+  voiceStartUs: number;
+  voiceDurationUs: number;
+  captionsData: SceneCaptionData[];
+  videoPrompt: string;
+  duration: number;
+  motion: string;
+  cameraMovement: string;
+  sizeBytes: number;
+  provider?: string;
+  synthId?: SynthIDMetadata | Record<string, unknown>;
+  synthIdHeaders?: Record<string, string>;
+  status: string;
+  version?: AssetVersion;
 }
 
 export interface VideoRenderJob {
@@ -1459,7 +1685,7 @@ export interface GenerateSceneVideoParams {
   series_id?: string;
   episode_id?: string;
   scene_id?: string;
-  duration?: number | string;
+  duration?: number;
   motion?: string;
   camera_movement?: string;
   prompt?: string;
@@ -1577,4 +1803,80 @@ export interface SceneAudioPipelineResult {
   speechOnsetDetected: boolean;
   words: SceneCaptionWord[];
   captionsData: SceneCaptionData[];
+}
+
+// ─── OMNI FLASH VIDEO MODEL INTERFACES ──────────────────────────────────────
+export interface GeminiOmniVideoPreferences {
+  aspectRatio?: '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
+  durationSeconds?: number;// <= 10s
+  resolution?: '360p' | '480p' | '720p' | '1080p';
+  generateAudio?: boolean;
+  personGeneration?: 'dont_allow' | 'allow_adult';
+}
+
+export interface GeminiOmniVideoOptions {
+  modelId?: string; // defaults to 'gemini-omni-1.1-flash'
+  startFrame?: string; // maps to <FIRST_FRAME>
+  endFrame?: string; // maps to <LAST_FRAME>
+  referenceImages?: string[]; // maps to <IMAGE_REF_0>, <IMAGE_REF_1>, etc.
+  preferences?: GeminiOmniVideoPreferences;
+  async?: boolean;
+}
+
+export interface GeminiOmniVideoResult {
+  url?: string;
+  mimeType?: string;
+  jobId?: string;
+  status?: string;
+}
+
+export interface FlowOmniVideoOptions {
+  aspectRatio?: 'VIDEO_ASPECT_RATIO_PORTRAIT' | 'VIDEO_ASPECT_RATIO_LANDSCAPE' | '9:16' | '16:9' | '1:1';
+  durationSeconds?: number;
+  referenceImages: string[];
+  userPaygateTier?: string;
+  resolution?: string;
+  async?: boolean;
+}
+
+export interface FlowOmniVideoResult {
+  jobId?: string;
+  status?: string;
+  url?: string;
+}
+
+export interface SynthIDMetadata {
+  origin: string;
+  watermark_version: string;
+  provider: 'Gemini' | string;
+  asset_type: 'image' | 'video' | 'audio' | 'music' | 'cover' | string;
+  model: string;
+  timestamp: string;
+  series_id?: string;
+  episode_id?: string;
+  scene_id?: string;
+  synth_id_hash: string;
+  signature: string;
+  verified: boolean;
+  // [key: string]: unknown;
+}
+
+export interface DialogueVoiceSynthesisResult {
+  s3_key: string;
+  url: string;
+  audio_url: string;
+  size_bytes: number;
+  mime_type: string;
+  voice_id: string;
+  voice_name: string;
+  language: string;
+  text: string;
+  cues: SceneCaptionData[];
+  start_us: number;
+  end_us: number;
+  start_ms: number;
+  end_ms: number;
+  duration_us: number;
+  duration_ms: number;
+  words?: SceneCaptionWord[];
 }

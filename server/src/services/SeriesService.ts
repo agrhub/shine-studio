@@ -4,14 +4,21 @@ import { GEMINI_SUPPORTED_VOICES } from '@/integrations/ai/gemini/GeminiClient.j
 import { Logger } from '@/utils/logger.js';
 import { nanoid } from 'nanoid';
 import { normalizeSceneEntity } from '@/utils/sceneNormalizer.js';
-import type { CharacterSeriesEntity, CharacterWardrobeVariant, CreateSeriesParams } from '@/types.js';
+import type {
+  CharacterSeriesEntity,
+  CharacterWardrobeVariant,
+  CreateSeriesParams,
+  SeriesEntity,
+  EpisodeEntity,
+  SceneEntity,
+} from '@/types.js';
 
 export class SeriesService {
   /**
    * Universal series and serialized episodes creator
    * Used by REST endpoint, AI Agent create_series tool, and CLI wizards
    */
-  public static async createSeries(params: CreateSeriesParams): Promise<{ series: any; episodes: any[] }> {
+  public static async createSeries(params: CreateSeriesParams): Promise<{ series: SeriesEntity; episodes: EpisodeEntity[] }> {
     const {
       title,
       genre,
@@ -121,6 +128,11 @@ export class SeriesService {
       };
     });
 
+    const rawLanguage = (language || master_plan?.language || 'en-US').trim();
+    if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(rawLanguage)) {
+      throw new Error(`Invalid language code "${rawLanguage}". Must be a valid BCP-47 language tag (e.g. "en-US", "vi-VN").`);
+    }
+
     const db = await getDatabaseProvider();
     const newSeries = await db.createSeries({
       id: seriesId,
@@ -132,15 +144,15 @@ export class SeriesService {
       visual_style_prompt: visual_style_prompt || master_plan?.visual_style_prompt || '',
       target_audience: target_audience || master_plan?.target_audience || 'General',
       country: country || master_plan?.country || 'United States',
-      language: language || master_plan?.language || 'en-US',
-      ratio: ratio || master_plan?.ratio || '9:16',
+      language: rawLanguage,
+      ratio: ((ratio || master_plan?.ratio || '9:16') as "9:16" | "16:9" | "4:3" | "1:1"),
       viral_hook: master_plan?.viral_hook || '',
-      master_plan: master_plan || null,
+      master_plan: master_plan,
       characters: normalizedCharacters,
       locations: locations || master_plan?.locations || [],
       props: props || master_plan?.props || [],
       episode_count: rawEpCount,
-      episode_duration: master_plan?.total_duration_seconds || master_plan?.episode_duration || 90,
+      episode_duration: master_plan?.total_duration_seconds || 60,
       status: 'DRAFT',
     });
 
@@ -148,7 +160,7 @@ export class SeriesService {
 
     // Optional: Pre-generate full scene screenplay for Episode 1 synchronously.
     // When false (default), screenplay_writer_agent handles it via streaming chat.
-    let ep1Scenes: any[] = [];
+    let ep1Scenes: SceneEntity[] = [];
     let ep1Screenplay: string = '';
     let ep1Duration: number = newSeries.episode_duration || 60;
 
@@ -175,7 +187,9 @@ export class SeriesService {
         });
 
         if (scriptRes?.scenes) {
-          ep1Scenes = (scriptRes.scenes || []).map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1));
+          ep1Scenes = (scriptRes.scenes || [])
+            .map((s: SceneEntity, idx: number) => normalizeSceneEntity(s, idx + 1))
+            .filter((s): s is SceneEntity => s !== null);
           ep1Screenplay = scriptRes.screenplay || '';
           ep1Duration = scriptRes.total_duration_seconds || ep1Duration;
           if (Array.isArray(scriptRes.characters) && scriptRes.characters.length > 0) {

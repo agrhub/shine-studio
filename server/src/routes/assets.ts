@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import { aiProviderRouter } from '@/integrations/ai/router/AIProviderRouter.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { LocalStorageAdapter } from '@/services/storage/LocalStorageAdapter.js';
+import { GCSStorageAdapter } from '@/services/storage/GCSStorageAdapter.js';
 import { SfxService } from '@/services/SfxService.js';
 import { loadSkill } from '@/utils/SkillLoader.js';
 import { SynthIDService } from '@/services/SynthIDService.js';
@@ -13,10 +14,11 @@ import { getUserId } from '@/utils/auth.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
 import { getVisualStylePrompt } from '../constants/VisualStyles.js';
-import { geminiClient } from '@/integrations/ai/gemini/GeminiClient.js';
 import { videoService } from '@/services/VideoService.js';
+import { AssetService } from '@/services/AssetService.js';
+import { TimelineService } from '@/services/TimelineService.js';
 import { normalizeSceneEntity, normalizeLocationAsset, normalizePropAsset, normalizeCharacterEntity } from '@/utils/sceneNormalizer.js';
-import type { CharacterSeriesEntity, EpisodeEntity, LocationAsset, PropAsset, SceneEntity } from '@/types.js';
+import type { CharacterSeriesEntity, EpisodeEntity, LocationAsset, PropAsset, SceneEntity, AssetVersion } from '@/types.js';
 
 export const assetsRouter = Router();
 
@@ -39,7 +41,7 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
       ext === '.webp' ? 'image/webp' :
       'application/octet-stream';
 
-    // 1. Fast-path: serve directly from local disk (no range processing needed)
+    // 1. Fast-path: serve directly from local disk (if file exists locally)
     const localStorage = LocalStorageAdapter.getInstance();
     const localPath = localStorage.getLocalFilePath(normalizedKey);
     if (localPath) {
@@ -67,15 +69,65 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
       });
     }
 
-    // 2. Cloud storage: transparent proxy — forward Range header directly to provider
+    // 2. Cloud storage: transparent proxy or direct redirect for large media
     const adapter = await StorageFactory.getActiveAdapter();
     const rangeHeader = req.headers.range;
 
-    const result = await (adapter as any).getFileStream(normalizedKey, rangeHeader);
+    // Fast-path for Cloud Storage (GCS / S3 / B2):
+    // For media streaming on Cloud Run, redirecting (302) to signed URL bypasses Cloud Run's 32 MB payload limit completely
+    if (!(adapter instanceof LocalStorageAdapter) && req.query.proxy !== 'true') {
+      try {
+        const directUrl = await adapter.getFileUrl(normalizedKey, 7200);
+        if (directUrl && directUrl.startsWith('https://') && !directUrl.includes('/api/assets/file/')) {
+          return res.redirect(302, directUrl);
+        }
+      } catch (redirectErr: any) {
+        Logger.debug(`[Asset Proxy] Direct URL redirect fallback for ${normalizedKey}: ${redirectErr.message}`);
+      }
+    }
+
+    let result: any;
+    try {
+      result = await (adapter as any).getFileStream(normalizedKey, rangeHeader);
+    } catch (adapterErr: any) {
+      // Fallback: If primary adapter is not GCS and failed, try GCSStorageAdapter
+      if (!(adapter instanceof GCSStorageAdapter)) {
+        try {
+          const gcsAdapter = GCSStorageAdapter.getInstance();
+          result = await gcsAdapter.getFileStream(normalizedKey, rangeHeader);
+        } catch {
+          throw adapterErr;
+        }
+      } else {
+        throw adapterErr;
+      }
+    }
 
     // GCSStorageAdapter returns { stream, status, headers }; other adapters return a stream directly
     if (result && typeof result === 'object' && 'stream' in result) {
       const { stream, status, headers: proxyHeaders } = result;
+
+      if (typeof stream.setMaxListeners === 'function') stream.setMaxListeners(100);
+      const onError = (err: any) => {
+        const msg = err?.message || String(err);
+        if (msg.includes('socket hang up') || msg.includes('ECONNRESET') || msg.includes('aborted') || msg.includes('ERR_STREAM_PREMATURE_CLOSE')) {
+          Logger.debug(`[Asset Proxy] Range request cancelled by client for ${normalizedKey}: ${msg}`);
+        } else {
+          Logger.warn(`[Asset Proxy] Stream error for ${normalizedKey}: ${msg}`);
+        }
+        if (!res.headersSent) {
+          res.status(err?.code === 404 || msg.includes('No such object') ? 404 : 502).json({
+            code: err?.code === 404 ? 404 : 502,
+            data: null,
+            message: msg,
+            error: err?.code === 404 ? 'ASSET_NOT_FOUND' : 'STORAGE_STREAM_ERROR',
+          });
+        } else {
+          res.destroy(err);
+        }
+      };
+      stream.once('error', onError);
+      req.on('close', () => { if (typeof stream.destroy === 'function' && !stream.destroyed) stream.destroy(); });
 
       if (proxyHeaders['content-range']) res.setHeader('Content-Range', proxyHeaders['content-range']);
       if (proxyHeaders['content-length']) res.setHeader('Content-Length', proxyHeaders['content-length']);
@@ -84,18 +136,6 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.status(status || 200);
 
-      if (typeof stream.setMaxListeners === 'function') stream.setMaxListeners(100);
-      const onError = (err: any) => {
-        const msg = err?.message || String(err);
-        if (msg.includes('socket hang up') || msg.includes('ECONNRESET') || msg.includes('aborted')) {
-          Logger.debug(`[Asset Proxy] Range request cancelled by client for ${normalizedKey}: ${msg}`);
-        } else {
-          Logger.warn(`[Asset Proxy] Stream error for ${normalizedKey}: ${msg}`);
-        }
-        if (!res.headersSent) res.status(499).end();
-      };
-      stream.once('error', onError);
-      req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
       return stream.pipe(res);
     }
 
@@ -111,12 +151,13 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
         const msg = streamErr?.message || String(streamErr);
         if (msg.includes('socket hang up') || msg.includes('ECONNRESET') || msg.includes('aborted')) {
           Logger.debug(`[Asset Proxy] Stream cancelled by client for ${rawKey}: ${msg}`);
-          if (!res.headersSent) res.status(499).end();
         } else {
           Logger.warn(`[Asset Proxy] Stream error for key ${rawKey}: ${msg}`);
-          if (!res.headersSent) {
-            res.status(404).json({ code: 404, data: null, message: `Asset not found: ${msg}`, error: 'ASSET_NOT_FOUND' });
-          }
+        }
+        if (!res.headersSent) {
+          res.status(404).json({ code: 404, data: null, message: `Asset not found: ${msg}`, error: 'ASSET_NOT_FOUND' });
+        } else {
+          res.destroy(streamErr);
         }
       };
       stream.once('error', onError);
@@ -126,8 +167,9 @@ assetsRouter.get('/file/*', async (req: Request, res: Response) => {
 
     return res.send(stream);
   } catch (err: any) {
-    return res.status(404).json({
-      code: 404, data: null,
+    Logger.warn(`[Asset Proxy] Failed to serve file ${req.params[0]}: ${err.message}`);
+    return res.status(err?.code === 403 ? 403 : 404).json({
+      code: err?.code === 403 ? 403 : 404, data: null,
       message: `Asset not found: ${err.message}`,
       error: 'ASSET_NOT_FOUND',
     });
@@ -201,7 +243,34 @@ assetsRouter.get('/versions', async (req: Request, res: Response) => {
 // POST /api/assets/select-version - Select and activate an asset version for a scene/episode
 assetsRouter.post('/select-version', async (req: Request, res: Response) => {
   try {
-    const { asset_id, series_id, episode_id, scene_id, scene_index, is_end_frame } = req.body;
+    const { asset_id, series_id, episode_id, scene_id, scene_index, is_end_frame, asset_type, variant_id, version_id } = req.body;
+
+    // Handle AssetService-based version selection if asset_type and version_id are provided
+    if (asset_type && version_id) {
+      if (!series_id || !asset_id) {
+        return res.status(400).json({
+          code: 400,
+          data: null,
+          message: 'series_id and asset_id are required for version selection',
+          error: 'INVALID_PAYLOAD',
+        });
+      }
+      const result = await AssetService.selectAssetVersion({
+        series_id,
+        episode_id,
+        asset_type,
+        asset_id,
+        variant_id,
+        version_id,
+      });
+      return res.json({
+        code: 200,
+        data: result,
+        message: 'Asset version selected successfully',
+        error: null,
+      });
+    }
+
     if (!asset_id) {
       return res.status(400).json({ code: 400, data: null, message: 'asset_id is required', error: 'INVALID_PAYLOAD' });
     }
@@ -219,7 +288,7 @@ assetsRouter.post('/select-version', async (req: Request, res: Response) => {
       const episode = await db.getEpisodeById(targetEpisodeId);
       if (episode && Array.isArray(episode.scenes)) {
         const scIdx = scene_index !== undefined ? Number(scene_index) : undefined;
-        const targetScene = episode.scenes.find((s: any) => 
+        const targetScene = episode.scenes.find((s: SceneEntity) => 
           (targetSceneId && s.id === targetSceneId) || 
           (scIdx !== undefined && s.index === scIdx)
         );
@@ -228,18 +297,53 @@ assetsRouter.post('/select-version', async (req: Request, res: Response) => {
           if (asset.type === 'scene_video') {
             targetScene.video_url = asset.url;
             targetScene.status = 'video_ready';
+            if (Array.isArray(targetScene.video_versions)) {
+              targetScene.video_versions = targetScene.video_versions.map((v: AssetVersion) => ({
+                ...v,
+                is_selected: v.image_url === asset.url || v.video_url === asset.url || v.url === asset.url,
+              }));
+            }
           } else if (asset.type === 'scene_end_image' || is_end_frame) {
             targetScene.storyboard_end_frame_url = asset.url;
+            if (Array.isArray(targetScene.end_frame_versions)) {
+              targetScene.end_frame_versions = targetScene.end_frame_versions.map((v: AssetVersion) => ({
+                ...v,
+                is_selected: v.image_url === asset.url || v.url === asset.url,
+              }));
+            }
           } else if (asset.type === 'voice') {
             targetScene.voiceover_url = asset.url;
+            if (Array.isArray(targetScene.voice_versions)) {
+              targetScene.voice_versions = targetScene.voice_versions.map((v: AssetVersion) => ({
+                ...v,
+                is_selected: v.image_url === asset.url || v.voiceover_url === asset.url || v.audio_url === asset.url || v.url === asset.url,
+              }));
+            }
           } else if (asset.type === 'audio' || asset.type === 'bgm') {
             targetScene.bgm_url = asset.url;
+            if (Array.isArray(targetScene.bgm_versions)) {
+              targetScene.bgm_versions = targetScene.bgm_versions.map((v: AssetVersion) => ({
+                ...v,
+                is_selected: v.image_url === asset.url || v.bgm_url === asset.url || v.audio_url === asset.url || v.url === asset.url,
+              }));
+            }
           } else {
             targetScene.storyboard_frame_url = asset.url;
             targetScene.image_url = asset.url;
             if (targetScene.status === 'draft') targetScene.status = 'image_ready';
+            if (Array.isArray(targetScene.versions)) {
+              targetScene.versions = targetScene.versions.map((v: AssetVersion) => ({
+                ...v,
+                is_selected: v.image_url === asset.url || v.url === asset.url,
+              }));
+            }
           }
           await db.updateEpisode(targetEpisodeId, { scenes: episode.scenes });
+          try {
+            await TimelineService.getOrBuildEpisodeTimeline(targetEpisodeId);
+          } catch (tlErr: any) {
+            Logger.warn(`[assetsRouter.select-version] Failed to auto-sync timeline: ${tlErr.message}`);
+          }
         }
       }
     }
@@ -366,15 +470,15 @@ assetsRouter.post('/image-generate', async (req: Request, res: Response) => {
       user_id: userId,
       type,
       prompt,
-      series_id,
-      episode_id,
-      scene_id,
-      aspect_ratio,
+      series_id: series_id,
+      episode_id: episode_id,
+      scene_id: scene_id,
+      aspect_ratio: aspect_ratio,
       style,
-      scene_index,
+      scene_index: scene_index,
       characters,
-      scene_data,
-      is_end_frame,
+      scene_data: scene_data,
+      is_end_frame: is_end_frame,
     });
 
     if (result.synthIdHeaders) {
@@ -477,7 +581,7 @@ assetsRouter.post('/video-generate', async (req: Request, res: Response) => {
 // POST /api/assets/music-generate — AI BGM Soundtrack Generation
 assetsRouter.post('/music-generate', async (req, res: Response) => {
   try {
-    const { series_id, episode_id, prompt, genre, duration } = req.body;
+    const { series_id, episode_id, prompt, genre, duration, scene_id, scene_index } = req.body;
     const userId = getUserId(req);
     const db = await getDatabaseProvider();
 
@@ -519,6 +623,81 @@ assetsRouter.post('/music-generate', async (req, res: Response) => {
       created_at: new Date().toISOString(),
     });
 
+    // Auto-update episode and scene bgm_url in database, then sync timeline
+    if (episode_id) {
+      try {
+        const ep = await db.getEpisodeById(episode_id);
+        if (ep) {
+          let updated = false;
+          if (Array.isArray(ep.scenes) && (scene_id || scene_index !== undefined)) {
+            const sIdx = scene_index !== undefined
+              ? ep.scenes.findIndex((s: SceneEntity) => Number(s.index || s.scene_number) === Number(scene_index))
+              : ep.scenes.findIndex((s: SceneEntity) => s.id === scene_id);
+            if (sIdx !== -1) {
+              const curBgmVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].bgm_versions) ? [...ep.scenes[sIdx].bgm_versions] : [];
+              if (curBgmVersions.length === 0 && ep.scenes[sIdx].bgm_url && ep.scenes[sIdx].bgm_url !== finalUrl) {
+                curBgmVersions.push({
+                  id: `v1_bgm_${sIdx + 1}`,
+                  image_url: ep.scenes[sIdx].bgm_url,
+                  audio_url: ep.scenes[sIdx].bgm_url,
+                  bgm_url: ep.scenes[sIdx].bgm_url,
+                  url: ep.scenes[sIdx].bgm_url,
+                  created_at: new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              const newBgmVer: AssetVersion = {
+                id: `ver_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                image_url: finalUrl,
+                audio_url: finalUrl,
+                bgm_url: finalUrl,
+                url: finalUrl,
+                prompt: musicPrompt,
+                created_at: new Date().toISOString(),
+                is_selected: true,
+              };
+              ep.scenes[sIdx].bgm_versions = [newBgmVer, ...curBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
+              ep.scenes[sIdx].bgm_url = finalUrl;
+              updated = true;
+            }
+          }
+          if (!ep.bgm_url || !scene_id) {
+            const curEpBgmVersions: AssetVersion[] = Array.isArray(ep.bgm_versions) ? [...ep.bgm_versions] : [];
+            if (curEpBgmVersions.length === 0 && ep.bgm_url && ep.bgm_url !== finalUrl) {
+              curEpBgmVersions.push({
+                id: `v1_ep_bgm_${ep.id}`,
+                image_url: ep.bgm_url,
+                audio_url: ep.bgm_url,
+                bgm_url: ep.bgm_url,
+                url: ep.bgm_url,
+                created_at: new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newEpBgmVer: AssetVersion = {
+              id: `ver_ep_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: finalUrl,
+              audio_url: finalUrl,
+              bgm_url: finalUrl,
+              url: finalUrl,
+              prompt: musicPrompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+            };
+            ep.bgm_versions = [newEpBgmVer, ...curEpBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
+            ep.bgm_url = finalUrl;
+            updated = true;
+          }
+          if (updated) {
+            await db.updateEpisode(ep.id, { bgm_url: ep.bgm_url, bgm_versions: ep.bgm_versions, scenes: ep.scenes });
+            await TimelineService.getOrBuildEpisodeTimeline(ep.id);
+          }
+        }
+      } catch (epErr: any) {
+        Logger.warn(`[assetsRouter.music-generate] Failed to auto-update episode BGM: ${epErr.message}`);
+      }
+    }
+
     return res.status(201).json({
       code: 201,
       data: {
@@ -544,8 +723,8 @@ assetsRouter.post('/music-generate', async (req, res: Response) => {
   }
 });
 
-import { AssetService } from '@/services/AssetService.js';
 import { scriptAgent } from '@/agents/ScriptAgent.js';
+import { getLanguageInfo, assertValidBCP47 } from '@/utils/LanguageMapping.js';
 
 /**
  * Helper: Automatically resolves country, language, and duration from Series & Episode in DB
@@ -559,16 +738,16 @@ async function resolveProjectLanguageContext(
   country?: string;
   language?: string;
   duration?: number;
-  existingCharacters?: any[];
-  existingLocations?: any[];
-  existingProps?: any[];
+  existingCharacters?: CharacterSeriesEntity[];
+  existingLocations?: LocationAsset[];
+  existingProps?: PropAsset[];
 }> {
   let country = explicitCountry;
   let language = explicitLanguage;
   let duration: number | undefined;
-  let characters: any[] = [];
-  let locations: any[] = [];
-  let props: any[] = [];
+  let characters: CharacterSeriesEntity[] = [];
+  let locations: LocationAsset[] = [];
+  let props: PropAsset[] = [];
 
   if (seriesId || episodeId) {
     try {
@@ -785,9 +964,17 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
         if (episode_id) {
           const ep = await db.getEpisodeById(episode_id);
           if (ep) {
+            const isRawJson = (str: string) => {
+              const trimmed = (str || '').trim();
+              return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+            };
+            const cleanScreenplay = isRawJson(screenplay)
+              ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, ep.title)
+              : screenplay;
+
             const totalDuration = result.total_duration_seconds || 60;
             await db.updateEpisode(episode_id, {
-              screenplay,
+              screenplay: cleanScreenplay,
               scenes: normalizedScenes,
               reference_assets: {
                 character_ids: normalizedCharacters.map(c => c.id),
@@ -799,7 +986,7 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
                 episode: ep.title,
                 episode_number: ep.episode_number,
                 title: ep.title,
-                screenplay,
+                screenplay: cleanScreenplay,
                 scenes: normalizedScenes,
                 total_duration_seconds: totalDuration,
               }),
@@ -811,10 +998,19 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
       }
     }
 
+    const isRawJson = (str: string) => {
+      const trimmed = (str || '').trim();
+      return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+    };
+    const finalScreenplay = isRawJson(result.screenplay || screenplay)
+      ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, (episode as any)?.title)
+      : (result.screenplay || screenplay);
+
     return res.json({
       code: 200,
       data: {
         ...result,
+        screenplay: finalScreenplay,
         scenes: normalizedScenes,
         characters: normalizedCharacters,
         locations: normalizedLocations,
@@ -828,10 +1024,70 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
   }
 });
 
+// POST /api/assets/screenplay/enrich-dialogue — Enrich silent shots with punchy micro-drama dialogue and internal monologues
+assetsRouter.post('/screenplay/enrich-dialogue', async (req: Request, res: Response) => {
+  try {
+    const { series_id, episode_id, shots, screenplay, country, language } = req.body;
+    const db = await getDatabaseProvider();
+    let targetShots = Array.isArray(shots) ? shots : [];
+    let targetScreenplay = screenplay || '';
+
+    let ep: EpisodeEntity | null = null;
+    if (episode_id) {
+      ep = await db.getEpisodeById(episode_id);
+      if (ep) {
+        if (targetShots.length === 0 && Array.isArray(ep.scenes) && ep.scenes.length > 0) {
+          targetShots = ep.scenes;
+        }
+        if (!targetScreenplay && ep.screenplay) {
+          targetScreenplay = ep.screenplay;
+        }
+      }
+    }
+
+    if (targetShots.length === 0) {
+      return res.status(400).json({ code: 400, data: null, message: 'Shots array is required', error: 'INVALID_PAYLOAD' });
+    }
+
+    const ctx = await resolveProjectLanguageContext(series_id, episode_id, country, language);
+    const langCode = ctx.language || 'en-US';
+    assertValidBCP47(langCode);
+    const langInfo = getLanguageInfo(langCode);
+
+    const targetDurationSeconds = ep?.duration_seconds || targetShots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
+    const enriched = await scriptAgent.enrichShotsWithDramaDialogue(targetShots, {
+      screenplay: targetScreenplay,
+      title: ep?.title || 'Episode',
+      characters: ctx.existingCharacters || [],
+      langInfo,
+      targetDurationSeconds,
+    });
+
+    const normalizedScenes: SceneEntity[] = enriched.map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)).filter((s): s is SceneEntity => s !== null);
+
+    if (episode_id && ep) {
+      await db.updateEpisode(episode_id, {
+        scenes: normalizedScenes,
+      });
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        scenes: normalizedScenes,
+      },
+      message: 'Episode dialogue enriched successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'ENRICH_DIALOGUE_FAILED' });
+  }
+});
+
 // POST /api/assets/character/sheet — Generate 2-in-1 Character Sheet (Head & shoulders left + Full body right)
 assetsRouter.post('/character/sheet', async (req: Request, res: Response) => {
   try {
-    const { character_name, physical_characteristics = '', clothing_and_accessories = '', visual_style, reference_image_url } = req.body;
+    const { character_name, physical_characteristics = '', clothing_and_accessories = '', visual_style, reference_image_url, series_id, character_id } = req.body;
 
     if (!character_name) {
       return res.status(400).json({ code: 400, data: null, message: 'character_name is required', error: 'INVALID_PAYLOAD' });
@@ -844,6 +1100,26 @@ assetsRouter.post('/character/sheet', async (req: Request, res: Response) => {
       visual_style,
       reference_image_url
     );
+
+    if (series_id) {
+      try {
+        const db = await getDatabaseProvider();
+        const series = await db.getSeriesById(series_id);
+        if (series && Array.isArray(series.characters)) {
+          const cIdx = series.characters.findIndex((c: any) => (character_id && c.id === character_id) || c.name === character_name);
+          if (cIdx >= 0) {
+            series.characters[cIdx].avatar = result.imageUrl;
+            if (result.version) {
+              const curVersions = Array.isArray(series.characters[cIdx].versions) ? series.characters[cIdx].versions : [];
+              series.characters[cIdx].versions = [result.version, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+            }
+            await db.updateSeries(series_id, { characters: series.characters });
+          }
+        }
+      } catch (sErr: any) {
+        Logger.warn(`[assetsRouter.characterSheet] Auto-update series character notice: ${sErr.message}`);
+      }
+    }
 
     return res.json({
       code: 200,
@@ -862,7 +1138,7 @@ assetsRouter.post('/character/sheet', async (req: Request, res: Response) => {
 // POST /api/assets/location/sheet — Generate 4-in-1 Location Sheet (1 establishing + 3 perspective views 16:9)
 assetsRouter.post('/location/sheet', async (req: Request, res: Response) => {
   try {
-    const { location_name, physical_characteristics = '', time_of_day = 'Daytime', visual_style } = req.body;
+    const { location_name, physical_characteristics = '', time_of_day = 'Daytime', visual_style, series_id, location_id } = req.body;
 
     if (!location_name) {
       return res.status(400).json({ code: 400, data: null, message: 'location_name is required', error: 'INVALID_PAYLOAD' });
@@ -874,6 +1150,26 @@ assetsRouter.post('/location/sheet', async (req: Request, res: Response) => {
       time_of_day,
       visual_style
     );
+
+    if (series_id) {
+      try {
+        const db = await getDatabaseProvider();
+        const series = await db.getSeriesById(series_id);
+        if (series && Array.isArray(series.locations)) {
+          const lIdx = series.locations.findIndex((l: any) => (location_id && l.id === location_id) || l.name === location_name);
+          if (lIdx >= 0) {
+            series.locations[lIdx].image_url = result.imageUrl;
+            if (result.version) {
+              const curVersions = Array.isArray(series.locations[lIdx].versions) ? series.locations[lIdx].versions : [];
+              series.locations[lIdx].versions = [result.version, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+            }
+            await db.updateSeries(series_id, { locations: series.locations });
+          }
+        }
+      } catch (sErr: any) {
+        Logger.warn(`[assetsRouter.locationSheet] Auto-update series location notice: ${sErr.message}`);
+      }
+    }
 
     return res.json({
       code: 200,
@@ -892,7 +1188,7 @@ assetsRouter.post('/location/sheet', async (req: Request, res: Response) => {
 // POST /api/assets/prop/sheet — Generate Prop Product Shot (Isolated on seamless white background)
 assetsRouter.post('/prop/sheet', async (req: Request, res: Response) => {
   try {
-    const { prop_name, physical_characteristics = '', visual_style } = req.body;
+    const { prop_name, physical_characteristics = '', visual_style, series_id, prop_id } = req.body;
 
     if (!prop_name) {
       return res.status(400).json({ code: 400, data: null, message: 'prop_name is required', error: 'INVALID_PAYLOAD' });
@@ -903,6 +1199,40 @@ assetsRouter.post('/prop/sheet', async (req: Request, res: Response) => {
       physical_characteristics,
       visual_style
     );
+
+    if (series_id) {
+      try {
+        const db = await getDatabaseProvider();
+        const series = await db.getSeriesById(series_id);
+        if (series && Array.isArray(series.props)) {
+          const pIdx = series.props.findIndex((p: any) => (prop_id && p.id === prop_id) || p.name === prop_name);
+          if (pIdx >= 0) {
+            const curVersions: any[] = Array.isArray(series.props[pIdx].versions) ? [...series.props[pIdx].versions] : [];
+            if (curVersions.length === 0 && series.props[pIdx].image_url && series.props[pIdx].image_url !== result.imageUrl) {
+              curVersions.push({
+                id: `v1_prop_${series.props[pIdx].id || pIdx + 1}`,
+                image_url: series.props[pIdx].image_url,
+                created_at: new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newPropVer = {
+              id: `ver_prop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: result.imageUrl,
+              prompt: result.prompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              aspect_ratio: '16:9',
+            };
+            series.props[pIdx].versions = [newPropVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+            series.props[pIdx].image_url = result.imageUrl;
+            await db.updateSeries(series_id, { props: series.props });
+          }
+        }
+      } catch (sErr: any) {
+        Logger.warn(`[assetsRouter.propSheet] Auto-update series prop notice: ${sErr.message}`);
+      }
+    }
 
     return res.json({
       code: 200,
@@ -947,7 +1277,7 @@ assetsRouter.post('/screenplay/breakdown-shots', async (req: Request, res: Respo
 // POST /api/assets/storyboard/shot-image — Generate Shot Frame Image with linked assets
 assetsRouter.post('/storyboard/shot-image', async (req: Request, res: Response) => {
   try {
-    const { shot, assets, visual_style, aspect_ratio } = req.body;
+    const { shot, assets, visual_style, aspect_ratio, episode_id, scene_index } = req.body;
     const frameVisual = shot?.frame_visual;
     if (!shot || !frameVisual) {
       return res.status(400).json({ code: 400, data: null, message: 'Shot data is required', error: 'INVALID_PAYLOAD' });
@@ -967,6 +1297,45 @@ assetsRouter.post('/storyboard/shot-image', async (req: Request, res: Response) 
       aspect_ratio
     );
 
+    if (episode_id) {
+      try {
+        const db = await getDatabaseProvider();
+        const ep = await db.getEpisodeById(episode_id);
+        if (ep && Array.isArray(ep.scenes)) {
+          const scIdx = scene_index !== undefined ? Number(scene_index) : (shot?.index !== undefined ? Number(shot.index) : undefined);
+          const sIdx = ep.scenes.findIndex((s: any) => (scIdx !== undefined && Number(s.index || s.scene_number) === scIdx) || (shot?.id && s.id === shot.id));
+          if (sIdx >= 0) {
+            const curVersions: any[] = Array.isArray(ep.scenes[sIdx].versions) ? [...ep.scenes[sIdx].versions] : [];
+            const startImg = ep.scenes[sIdx].storyboard_frame_url || ep.scenes[sIdx].image_url;
+            if (curVersions.length === 0 && startImg && startImg !== result.imageUrl) {
+              curVersions.push({
+                id: `v1_start_${ep.scenes[sIdx].id || sIdx + 1}`,
+                image_url: startImg,
+                created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newVer = {
+              id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: result.imageUrl,
+              prompt: result.prompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              aspect_ratio: aspect_ratio || '9:16',
+            };
+            ep.scenes[sIdx].versions = [newVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+            ep.scenes[sIdx].storyboard_frame_url = result.imageUrl;
+            ep.scenes[sIdx].image_url = result.imageUrl;
+            ep.scenes[sIdx].status = 'image_ready';
+            await db.updateEpisode(episode_id, { scenes: ep.scenes });
+            await TimelineService.getOrBuildEpisodeTimeline(episode_id);
+          }
+        }
+      } catch (epErr: any) {
+        Logger.warn(`[assetsRouter.shotImage] Auto-update episode scene notice: ${epErr.message}`);
+      }
+    }
+
     return res.json({
       code: 200,
       data: {
@@ -978,6 +1347,61 @@ assetsRouter.post('/storyboard/shot-image', async (req: Request, res: Response) 
     });
   } catch (err: any) {
     return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SHOT_IMAGE_FAILED' });
+  }
+});
+
+// POST /api/assets/customize — Customize asset using custom prompt & reference image
+assetsRouter.post('/customize', async (req: Request, res: Response) => {
+  try {
+    const {
+      series_id,
+      episode_id,
+      asset_type,
+      asset_id,
+      variant_id,
+      custom_prompt,
+      use_reference_image,
+      reference_image_url,
+      aspect_ratio,
+    } = req.body;
+
+    if (!series_id || !asset_type || !asset_id || !custom_prompt) {
+      return res.status(400).json({
+        code: 400,
+        data: null,
+        message: 'series_id, asset_type, asset_id, and custom_prompt are required',
+        error: 'INVALID_PAYLOAD',
+      });
+    }
+
+    const userId = getUserId(req);
+    const result = await AssetService.customizeAsset({
+      series_id,
+      episode_id,
+      asset_type,
+      asset_id,
+      variant_id,
+      custom_prompt,
+      use_reference_image: use_reference_image !== false,
+      reference_image_url,
+      aspect_ratio,
+      user_id: userId,
+    });
+
+    return res.json({
+      code: 200,
+      data: result,
+      message: 'Asset customized successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    Logger.error(`[assetsRouter.customize] Error: ${err.message}`);
+    return res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message,
+      error: 'CUSTOMIZE_ASSET_FAILED',
+    });
   }
 });
 

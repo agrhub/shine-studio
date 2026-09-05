@@ -8,50 +8,15 @@ import { PubSubService } from '../pubsub/PubSubService.js';
 import { videoRendererPool } from './VideoRendererPool.js';
 import { Logger } from '../../utils/logger.js';
 import { PatchSyncService } from '@/realtime/PatchSyncService.js';
-import type { IProject, PipelineJobEntity } from '../../types.js';
-
-export interface CompositorClip {
-  id: string;
-  startTime: number;
-  duration: number;
-  assetUrl: string;
-  type?: 'Video' | 'Image' | 'Audio' | 'Caption';
-  volume?: number;
-  text?: string;
-  languageCode?: string;
-}
-
-export interface CompositorTrack {
-  id: string;
-  type: 'Video' | 'Audio' | 'Caption';
-  languageCode?: string;
-  muted?: boolean;
-  visible?: boolean;
-  clips: CompositorClip[];
-}
-
-export interface CompositorPayload {
-  series_id: string;
-  episode_id: string;
-  dubbing_languages?: string[];
-  caption_languages?: string[];
-  resolution?: string;
-  fps?: number;
-  format?: string;
-  tracks?: CompositorTrack[];
-  timeline_state?: any;
-}
-
-export interface RenderJobState {
-  jobId: string;
-  seriesId: string;
-  episodeId: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
-  progress: number;
-  outputUrl: string | null;
-  outputsByLang?: Record<string, string>;
-  error?: string | null;
-}
+import type {
+  IProject,
+  PipelineJobEntity,
+  CompositorClip,
+  CompositorTrack,
+  CompositorPayload,
+  RenderJobState,
+} from '@/types.js';
+export type { CompositorClip, CompositorTrack, CompositorPayload, RenderJobState };
 
 /**
  * OpenVideo Server-Side Export Engine.
@@ -66,7 +31,7 @@ export class CompositorWorker extends EventEmitter {
   createJob(payload: CompositorPayload): RenderJobState {
     const jobId = `job_${Date.now()}_${nanoid(6)}`;
     const job: RenderJobState = {
-      jobId,
+      jobId: jobId,
       seriesId: payload.series_id,
       episodeId: payload.episode_id,
       status: 'queued',
@@ -235,6 +200,8 @@ export class CompositorWorker extends EventEmitter {
       const baseTimeline = await TimelineService.getOrBuildEpisodeTimeline(payload.episode_id);
 
       // 3. Render all combinations concurrently
+      const cloudRunWorkerUrl = (process.env.RENDER_WORKER_URL || process.env.CLOUD_RUN_RENDER_URL || '').trim().replace(/\/+$/, '');
+      let renderedViaCloud = false;
       const outputsByLang: Record<string, string> = {};
       let completedCount = 0;
       const combinationProgressMap = new Map<string, number>();
@@ -393,13 +360,12 @@ export class CompositorWorker extends EventEmitter {
           }
 
           const storageKey = `renders/${payload.series_id}/${payload.episode_id}/rendered_${safeKey}_${nanoid(6)}.mp4`;
-          const cloudRunWorkerUrl = (process.env.RENDER_WORKER_URL || process.env.CLOUD_RUN_RENDER_URL || '').trim().replace(/\/+$/, '');
-          let renderedViaCloud = false;
 
           // Step C1: Check if Cloud Run Video Render Worker is available
           if (cloudRunWorkerUrl) {
             try {
-              Logger.info(`[CompositorWorker] Submitting async video render job to Cloud Run at: ${cloudRunWorkerUrl} for ${comb.label}...`);
+              Logger.info(`[CompositorWorker] Dispatching async video render job to Cloud Run at: ${cloudRunWorkerUrl} for ${comb.label}...`);
+              await reportCombProgress(comb.key, comb.label, 5, 'Cloud Run Dispatching');
 
               const submitResp = await axios.post(
                 `${cloudRunWorkerUrl}/render`,
@@ -415,111 +381,82 @@ export class CompositorWorker extends EventEmitter {
                     backgroundColor: "#111111",
                     videoCodec: "avc1.640033",
                     bitrate: 12_000_000,
-                    audioCodec: "opus",//render worker only work with opus now
-                    audioSampleRate: 48000
+                    audioCodec: "opus",
+                    audioSampleRate: 48000,
                   },
                 },
                 { timeout: 30_000 }
               );
 
-              const remoteJobId = submitResp.data?.jobId;
+              const remoteJobId: string = String(submitResp.data?.jobId || '');
               if (remoteJobId) {
-                Logger.info(`[CompositorWorker] Cloud Run job created: ${remoteJobId} (${comb.label}). Listening for Pub/Sub & Polling...`);
+                Logger.info(`[CompositorWorker] Cloud Run job created: ${remoteJobId} (${comb.label}). Delegated to PubSubService autonomous monitor.`);
 
-                const pubsubService = PubSubService.getInstance();
-                
-                let pubSubCompletedEvent: any = null;
-                // Real-time Pub/Sub progress hook
-                const unsubscribeProgress = pubsubService.onJobProgress(remoteJobId, async (event) => {
-                  const pct = Math.min(99, Math.max(1, Math.round(event.progressPercent || 0)));
-                  await reportCombProgress(comb.key, comb.label, pct, 'Cloud Run');
-                  if (event.status === 'completed') {
-                    pubSubCompletedEvent = event;
-                  }
+                // Register with PubSubService: handles all Pub/Sub events, watchdog polling, auto-retry on worker crash, and DB updates
+                PubSubService.getInstance().trackRenderJob({
+                  remoteJobId: remoteJobId,
+                  pipelineJobId: jobId,
+                  seriesId: payload.series_id,
+                  episodeId: payload.episode_id,
+                  workerUrl: cloudRunWorkerUrl,
+                  storageKey: storageKey,
+                  combKey: comb.key,
+                  combLabel: comb.label,
+                  projectData: projectData,
+                  options: {
+                    width: projectData.settings.width || 1080,
+                    height: projectData.settings.height || 1920,
+                    fps: projectData.settings.fps || 30,
+                    format: 'mp4',
+                    audio: true,
+                    prioritizeSpeed: false,
+                    backgroundColor: "#111111",
+                    videoCodec: "avc1.640033",
+                    bitrate: 12_000_000,
+                    audioCodec: "opus",
+                    audioSampleRate: 48000,
+                  },
                 });
 
-                // Poll every 2 seconds until completion or timeout (max 10 minutes)
-                const pollStart = Date.now();
-                const maxTimeoutMs = 10 * 60 * 1000;
-
+                // Persist remote_job_id and metadata to pipelineJob in DB so it survives backend restart
                 try {
-                  while (Date.now() - pollStart < maxTimeoutMs) {
-                    await new Promise(r => setTimeout(r, 2000));
-
-                    if (pubSubCompletedEvent) {
-                      Logger.info(`[CompositorWorker] Cloud Run job ${remoteJobId} completed via Pub/Sub notification.`);
-                      try {
-                        const downloadUrl = pubSubCompletedEvent.downloadUrl || `${cloudRunWorkerUrl}/download/${remoteJobId}`;
-                        const videoResp = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 120_000 });
-                        const videoBuffer = Buffer.from(videoResp.data);
-
-                        if (!videoBuffer || videoBuffer.length < 10_000) {
-                          Logger.warn(`[CompositorWorker] Cloud Run worker returned empty/corrupted video (${videoBuffer?.length || 0} bytes), falling back to local render pool...`);
-                          renderedViaCloud = false;
-                          break;
-                        }
-
-                        await adapter.uploadFile(storageKey, videoBuffer, 'video/mp4');
-                        Logger.info(`[CompositorWorker] Video saved to storage: ${storageKey} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
-                        renderedViaCloud = true;
-                        break;
-                      } catch (downloadErr: any) {
-                        Logger.warn(`[CompositorWorker] Failed to download Cloud Run video (${downloadErr.message}), falling back to local render pool...`);
-                        renderedViaCloud = false;
-                        break;
-                      }
-                    }
-
-                    let jobData: any = null;
-                    try {
-                      const statusResp = await axios.get(`${cloudRunWorkerUrl}/jobs/${remoteJobId}`, {
-                        timeout: 15_000,
-                        validateStatus: (status) => status < 500,
-                      });
-                      jobData = statusResp.data;
-                    } catch (pollErr: any) {
-                      Logger.debug(`[CompositorWorker] Cloud Run poll notice for ${remoteJobId}: ${pollErr.message}`);
-                    }
-
-                    if (jobData && jobData.success) {
-                      if (jobData.status === 'rendering') {
-                        const pct = Math.min(99, Math.max(1, Math.round(jobData.progress || 0)));
-                        await reportCombProgress(comb.key, comb.label, pct, 'Cloud Run');
-                      } else if (jobData.status === 'completed') {
-                        Logger.info(`[CompositorWorker] Cloud Run job ${remoteJobId} finished. Downloading rendered video...`);
-                        try {
-                          const downloadUrl = jobData.downloadUrl || `${cloudRunWorkerUrl}/download/${remoteJobId}`;
-                          const videoResp = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 120_000 });
-                          const videoBuffer = Buffer.from(videoResp.data);
-
-                          if (!videoBuffer || videoBuffer.length < 10_000) {
-                            Logger.warn(`[CompositorWorker] Cloud Run worker returned empty/corrupted video (${videoBuffer?.length || 0} bytes), falling back to local render pool...`);
-                            renderedViaCloud = false;
-                            break;
-                          }
-
-                          await adapter.uploadFile(storageKey, videoBuffer, 'video/mp4');
-                          Logger.info(`[CompositorWorker] Video saved to storage: ${storageKey} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
-                          renderedViaCloud = true;
-                          break;
-                        } catch (downloadErr: any) {
-                          Logger.warn(`[CompositorWorker] Failed to download Cloud Run video (${downloadErr.message}), falling back to local render pool...`);
-                          renderedViaCloud = false;
-                          break;
-                        }
-                      } else if (jobData.status === 'failed') {
-                        Logger.warn(`[CompositorWorker] Cloud Run job ${remoteJobId} reported failure (${jobData.error || 'Unknown error'}), falling back to local render pool...`);
-                        renderedViaCloud = false;
-                        break;
-                      }
-                    }
+                  const pJob = await db.getPipelineJobById(jobId);
+                  if (pJob) {
+                    pJob.outputs = {
+                      ...(pJob.outputs || {}),
+                      remote_job_id: remoteJobId,
+                      worker_url: cloudRunWorkerUrl,
+                      storage_key: storageKey,
+                      comb_key: comb.key,
+                      comb_label: comb.label,
+                      project_data: projectData,
+                      render_options: {
+                        width: projectData.settings.width || 1080,
+                        height: projectData.settings.height || 1920,
+                        fps: projectData.settings.fps || 30,
+                        format: 'mp4',
+                        audio: true,
+                        prioritizeSpeed: false,
+                        backgroundColor: "#111111",
+                        videoCodec: "avc1.640033",
+                        bitrate: 12_000_000,
+                        audioCodec: "opus",
+                        audioSampleRate: 48000,
+                      },
+                    };
+                    pJob.current_step = `Rendering on Cloud Run (${remoteJobId}): 5%`;
+                    await db.savePipelineJob(pJob);
+                    PatchSyncService.broadcast(payload.series_id, 'pipeline_job:updated', pJob);
                   }
-                } finally {
-                  unsubscribeProgress();
+                } catch (dbErr: any) {
+                  Logger.warn(`[CompositorWorker] Failed to save remoteJobId to pipelineJob DB: ${dbErr.message}`);
                 }
+
+                await reportCombProgress(comb.key, comb.label, 10, 'Cloud Run Dispatched');
+                renderedViaCloud = true;
               }
             } catch (cloudErr: any) {
-              Logger.warn(`[CompositorWorker] Cloud Run render worker notice (${cloudErr.message}), falling back to local headless render...`);
+              Logger.warn(`[CompositorWorker] Cloud Run dispatch notice (${cloudErr.message}), falling back to local headless render...`);
             }
           }
 
@@ -533,6 +470,7 @@ export class CompositorWorker extends EventEmitter {
               format: 'mp4',
               audio: true,
               prioritizeSpeed: false,
+              timeout: 240_000, // 4-minute safety timeout
               backgroundColor: "#111111",
               videoCodec: "avc1.640033",
               bitrate: 12000000,
@@ -546,17 +484,23 @@ export class CompositorWorker extends EventEmitter {
 
             // Step D: Upload to Cloud Storage (S3 / R2 / B2 / GCS / Local)
             await adapter.uploadFile(storageKey, renderedVideoBuffer, 'video/mp4');
-          }
-          
-          // Secure streaming URL via /api/assets/file/* endpoint
-          const fileEndpointUrl = `/api/assets/file/${storageKey}`;
-          outputsByLang[key] = fileEndpointUrl;
 
-          completedCount++;
-          combinationProgressMap.set(comb.key, 100);
-          await reportCombProgress(comb.key, comb.label, 100, 'Done');
+            // Secure streaming URL via /api/assets/file/* endpoint
+            const fileEndpointUrl = `/api/assets/file/${storageKey}`;
+            outputsByLang[key] = fileEndpointUrl;
+
+            completedCount++;
+            combinationProgressMap.set(comb.key, 100);
+            await reportCombProgress(comb.key, comb.label, 100, 'Done');
+          }
         })
       );
+
+      // If rendered via Cloud Run, PubSubService autonomously handles completion & DB persistence
+      if (cloudRunWorkerUrl && renderedViaCloud) {
+        Logger.info(`[CompositorWorker] All render jobs dispatched to Cloud Run for Episode ${payload.episode_id}. CompositorWorker initialization complete.`);
+        return;
+      }
 
       job.progress = 95;
       job.outputsByLang = outputsByLang;

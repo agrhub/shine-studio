@@ -199,11 +199,11 @@ export class DspAudioService {
 
       Logger.info(`[DspAudioService] Clean BGM isolated successfully: ${bgmUrl}`);
       return {
-        bgmUrl,
-        speechStartUs,
-        speechEndUs,
+        bgmUrl: bgmUrl,
+        speechStartUs: speechStartUs,
+        speechEndUs: speechEndUs,
         speechDurationUs: Math.max(500_000, speechEndUs - speechStartUs),
-        hasSpeechActivity,
+        hasSpeechActivity: hasSpeechActivity,
       };
     } catch (err: any) {
       Logger.warn(`[DspAudioService] DSP separation notice: ${err.message}, falling back to default`);

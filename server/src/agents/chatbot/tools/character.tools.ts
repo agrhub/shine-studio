@@ -5,7 +5,7 @@ import { Logger } from '@/utils/logger.js';
 import { characterService } from '@/services/CharacterService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
-import type { CharacterSeriesEntity, CharacterWardrobeVariant, AssetJobItem, EpisodeEntity } from '@/types.js';
+import type { CharacterSeriesEntity, CharacterWardrobeVariant, AssetJobItem, EpisodeEntity, AssetVersion } from '@/types.js';
 
 export class CharacterToolExecutors {
   /**
@@ -194,7 +194,7 @@ export class CharacterToolExecutors {
               variant_id: varId,
               variant_name: variant.name,
               char_name: char.name,
-              clothing_desc: variant.clothing_and_accessories || (variant as any).description || 'Signature character wardrobe outfit',
+              clothing_desc: variant.clothing_and_accessories || 'Signature character wardrobe outfit',
               char_traits: char.visual_traits || char.physical_characteristics || char.traits,
               age: char.age,
               gender: char.gender,
@@ -206,7 +206,28 @@ export class CharacterToolExecutors {
             });
           });
 
+          const curVersions: AssetVersion[] = Array.isArray(variant.versions) ? [...(variant.versions as AssetVersion[])] : [];
+          if (curVersions.length === 0 && variant.image_url && variant.image_url !== result.image_url) {
+            curVersions.push({
+              id: `v1_wardrobe_${varId}`,
+              image_url: variant.image_url,
+              created_at: new Date().toISOString(),
+              is_selected: false,
+            });
+          }
+          const newVer: AssetVersion = result.version || {
+            id: `ver_wardrobe_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            image_url: result.image_url,
+            prompt: result.prompt,
+            created_at: new Date().toISOString(),
+            is_selected: true,
+          };
           variant.image_url = result.image_url;
+          if (result.prompt) variant.prompt = result.prompt;
+          variant.versions = [
+            { ...newVer, is_selected: true },
+            ...curVersions.filter((v: AssetVersion) => v.id !== newVer.id).map((v: AssetVersion) => ({ ...v, is_selected: false })),
+          ];
           results.push({ character: char.name, variant: variant.name, status: 'generated', image_url: result.image_url });
 
           await params.onItemProgress?.({

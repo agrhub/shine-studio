@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { getDatabaseProvider } from '@/database/index.js';
-import { IAIAccount, AIModelType } from '~/types.js';
+import { IAIAccount, AIModelType, FlowOmniVideoOptions, FlowOmniVideoResult } from '~/types.js';
 import { captchaService } from './CaptchaService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { flowSyncService } from './FlowSyncService.js';
@@ -49,7 +49,7 @@ export class FlowAdapter {
         const userAgent = account.last_fingerprint?.get('user_agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
         
         const headers = {
-            'authorization': `Bearer ${account.flow_at}`,
+            'authorization': `Bearer ${account.access_token}`,
             'Content-Type': 'application/json',
             'User-Agent': userAgent,
             'x-browser-channel': 'stable',
@@ -259,11 +259,11 @@ export class FlowAdapter {
             const freshAccounts = await db.getFlowAccounts();
             const freshAccount = freshAccounts.find(a => a.email === account.email || a.id === account.id);
             if (freshAccount && freshAccount.access_token) {
-                account.flow_at = freshAccount.access_token;
+                account.access_token = freshAccount.access_token;
                 account.project_id = freshAccount.project_id;
             }
 
-            if (!account.flow_at) {
+            if (!account.access_token) {
                 await flowSyncService.refreshAccountTokens(account);
             }
 
@@ -281,7 +281,7 @@ export class FlowAdapter {
     private getHeaders(account: IAIAccount, customReferer?: string){
         const userAgent = account.last_fingerprint?.get('user_agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
         const headers: any = {
-            'authorization': `Bearer ${account.flow_at}`,
+            'authorization': `Bearer ${account.access_token}`,
             'Content-Type': 'application/json',
             'User-Agent': userAgent,
             'x-browser-channel': 'stable',
@@ -463,6 +463,28 @@ export class FlowAdapter {
      * Generate video using Google Flow (Veo)
      */
     public async generateVideo(account: IAIAccount, prompt: string, modelName: string, config: any = {}) {
+        // Dispatch to dedicated generateOmniVideo when model is omni or abra
+        if (modelName && (modelName.toLowerCase().includes('omni') || modelName.toLowerCase().includes('abra'))) {
+            const rawImages = [
+                ...(config.imageInputs || []),
+                ...(config.referenceImages || []),
+                ...(config.characterImages || []),
+                ...(config.characterReferences || []),
+                config.imageStart,
+                config.imageEnd,
+                config.image
+            ].filter(Boolean);
+
+            return this.generateOmniVideo(account, prompt, {
+                aspectRatio: config.aspectRatio,
+                durationSeconds: config.durationSeconds > 10 ? 10 : config.durationSeconds,
+                referenceImages: rawImages,
+                userPaygateTier: config.userPaygateTier,
+                resolution: config.resolution,
+                async: config.async,
+            });
+        }
+
         await this.syncFlowAccount(account, config);
         let projectId = account.project_id;
         if (!projectId) {
@@ -659,6 +681,134 @@ export class FlowAdapter {
     }
 
     /**
+     * Dedicated Omni Video Generation using Google Flow's abra_r2v model
+     * Reference: tmp/flow2api/src/services/flow_client.py (line 2746 generate_omni_reference_video)
+     */
+    public async generateOmniVideo(
+        account: IAIAccount,
+        prompt: string,
+        options: FlowOmniVideoOptions
+    ): Promise<FlowOmniVideoResult | null> {
+        await this.syncFlowAccount(account, options);
+        let projectId = account.project_id;
+        if (!projectId) {
+            throw new Error('Flow Project ID not found');
+        }
+
+        // Resolve reference images
+        const rawImages = (options.referenceImages || []).filter(Boolean);
+        const uniqueImages = [...new Set(rawImages)];
+        if (uniqueImages.length === 0) {
+            throw new Error('Omni reference video requires at least 1 reference image');
+        }
+
+        const resolvedMediaIds: string[] = [];
+        for (const img of uniqueImages.slice(0, 3)) { // Flow limits to 3 references
+            resolvedMediaIds.push(await this.resolveMediaInput(account, img, projectId));
+        }
+
+        const duration = options.durationSeconds === 5 ? '5s' : '10s';
+        const videoModelKey = `abra_r2v_${duration}`;
+        const rawRatio = options.aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE';
+        const aspectRatio = this.mapAspectRatio(AIModelType.VIDEO, rawRatio);
+
+        let retry = 5;
+        while (retry > 0) {
+            try {
+                const recaptchaToken = await captchaService.solve({
+                    projectId: projectId,
+                    action: 'VIDEO_GENERATION',
+                    tokenId: (account as any).id || (account as any)._id
+                });
+
+                if (!recaptchaToken) {
+                    throw new Error('Failed to obtain reCAPTCHA token for Flow Omni generation');
+                }
+
+                const sessionId = this.getSessionId();
+                const sceneId = uuidv4();
+                const url = `${this.apiBaseUrl}/video:batchAsyncGenerateVideoReferenceImages`;
+
+                const clientContext = {
+                    recaptchaContext: {
+                        token: recaptchaToken,
+                        applicationType: "RECAPTCHA_APPLICATION_TYPE_WEB"
+                    },
+                    sessionId: sessionId,
+                    projectId: projectId,
+                    tool: 'PINHOLE',
+                    userPaygateTier: options.userPaygateTier || "PAYGATE_TIER_ZERO"
+                };
+
+                const requests: any = {
+                    aspectRatio: aspectRatio,
+                    seed: Math.floor(Math.random() * 99999) + 1,
+                    videoModelKey: videoModelKey,
+                    metadata: { sceneId: sceneId },
+                    textInput: {
+                        structuredPrompt: {
+                            parts: [{ text: prompt }]
+                        }
+                    },
+                    referenceImages: resolvedMediaIds.map(id => ({
+                        mediaId: id,
+                        imageUsageType: 'IMAGE_USAGE_TYPE_ASSET'
+                    }))
+                };
+
+                const payload: any = {
+                    clientContext: clientContext,
+                    requests: [requests],
+                    useV2ModelConfig: true,
+                    mediaGenerationContext: {
+                        batchId: uuidv4()
+                    }
+                };
+
+                const headers = this.getHeaders(account);
+                Logger.info(`[FlowAdapter.generateOmniVideo] Target: ${url}, ModelKey: ${videoModelKey}, References: ${resolvedMediaIds.length}`);
+                const response = await axios.post(url, payload, { headers });
+
+                const mediaName = response.data.name ||
+                                  response.data.operation?.name ||
+                                  response.data.results?.[0]?.name ||
+                                  response.data.media?.[0]?.name;
+
+                if (!mediaName) {
+                    throw new Error('Flow API Error: No operation name returned for Omni video');
+                }
+
+                Logger.info(`[FlowAdapter.generateOmniVideo] Generation submitted. Operation: ${mediaName}`);
+
+                if (options.async === true) {
+                    return { jobId: mediaName, status: 'pending' };
+                }
+
+                return await this.pollMedia(account, projectId, mediaName, AIModelType.VIDEO);
+            } catch (error: any) {
+                const msg = error.response?.data?.error?.message || error.message;
+                if (error.response?.status === 404 || msg?.includes('Requested entity was not found')) {
+                    const newProjectId = await this.createFlowProject(account, projectId);
+                    if (!newProjectId) throw new Error('Flow Video Generation Failed: Failed to create new project');
+                    projectId = newProjectId;
+                    retry--;
+                    continue;
+                }
+                if (msg.includes("Resource has been exhausted")) {
+                    await flowSyncService.refreshAccountTokens(account);
+                }
+                if (msg !== "reCAPTCHA evaluation failed") {
+                    throw new Error(`Flow Omni Video Generation Failed: ${msg}`);
+                }
+                Logger.info(`[FlowAdapter.generateOmniVideo] reCAPTCHA evaluation failed. Retrying in 5s...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                retry--;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Poll for media generation results
      */
     private async pollMedia(account: IAIAccount, projectId: string, mediaName: string, type: AIModelType.IMAGE | AIModelType.VIDEO): Promise<any> {
@@ -667,7 +817,7 @@ export class FlowAdapter {
             : `${this.apiBaseUrl}/projects/${projectId}/${mediaName}`;
 
         const headers = {
-            'Authorization': `Bearer ${account.flow_at}`,
+            'Authorization': `Bearer ${account.access_token}`,
             'User-Agent': account.last_fingerprint?.get('user_agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
             'Content-Type': 'application/json',
             'Origin': 'https://labs.google',
@@ -767,7 +917,7 @@ export class FlowAdapter {
      * Resolve actual video access URL via Google Labs trpc getMediaUrlRedirect
      */
     public async getMediaUrlRedirect(account: IAIAccount, mediaName: string): Promise<string | null> {
-        const st = account.flow_st || (account as any).session_token || '';
+        const st = account.session_token || '';
         const normalizedMediaName = (mediaName || '').trim();
         if (!normalizedMediaName) return null;
 

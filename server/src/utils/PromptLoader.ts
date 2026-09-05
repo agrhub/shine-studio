@@ -26,12 +26,23 @@ export class PromptLoader {
       return this.cache.get(normalizedPath)!;
     }
 
+    const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
     const possiblePaths = [
-      path.resolve(PROMPTS_DIR, normalizedPath),
+      // 1. Production bundle: dist/prompts right beside dist/index.js
+      path.join(currentFileDir, 'prompts', normalizedPath),
+      // 2. Monorepo CWD (/app or workspace root)
+      path.join(process.cwd(), 'server', 'dist', 'prompts', normalizedPath),
+      path.join(process.cwd(), 'server', 'src', 'prompts', normalizedPath),
+      path.join(process.cwd(), 'server', 'prompts', normalizedPath),
+      // 3. Local dev CWD = server directory (tsx / ts-node)
       path.join(process.cwd(), 'src', 'prompts', normalizedPath),
       path.join(process.cwd(), 'prompts', normalizedPath),
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', normalizedPath),
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'prompts', normalizedPath),
+      path.join(process.cwd(), 'dist', 'prompts', normalizedPath),
+      // 4. Relative to fileURLToPath (dev: src/utils/../prompts; prod: dist/../src/prompts)
+      path.resolve(currentFileDir, '../prompts', normalizedPath),
+      path.resolve(currentFileDir, '../src/prompts', normalizedPath),
+      path.resolve(currentFileDir, '../../server/src/prompts', normalizedPath),
+      path.resolve(currentFileDir, '../../src/prompts', normalizedPath),
     ];
 
     let fullPath = '';

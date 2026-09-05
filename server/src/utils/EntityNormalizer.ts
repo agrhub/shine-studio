@@ -92,13 +92,22 @@ export class EntityNormalizer {
           name: w.name || `Variant ${wIdx + 1}`,
           clothing_and_accessories: w.clothing_and_accessories || '',
           image_url: w.image_url,
+          prompt: w.prompt,
+          versions: Array.isArray(w.versions) ? w.versions : (w.image_url ? [{ id: `v_${wIdx + 1}`, image_url: w.image_url, prompt: w.prompt, created_at: w.created_at || new Date().toISOString(), is_selected: true }] : []),
           associated_scenes: Array.isArray(w.associated_scenes) ? w.associated_scenes : [],
         }))
       : (raw.clothing_and_accessories ? [{
           variant_id: `wv_default`,
           name: raw.clothing_and_accessories.slice(0, 40),
           clothing_and_accessories: raw.clothing_and_accessories,
+          prompt: raw.prompt,
+          versions: [],
         }] : []);
+
+    const charImageUrl = raw.avatar || null;
+    const charVersions = Array.isArray(raw.versions) && raw.versions.length > 0
+      ? raw.versions
+      : (charImageUrl ? [{ id: `v_init`, image_url: charImageUrl, prompt: raw.prompt, created_at: raw.created_at || new Date().toISOString(), is_selected: true }] : []);
 
     const parsed = CharacterSeriesEntitySchema.safeParse({
       id: raw.id || `char_${nanoid(8)}`,
@@ -118,7 +127,9 @@ export class EntityNormalizer {
       frame_description: raw.frame_description || '',
       wardrobe_variants: wardrobeVariants,
       speech_style: raw.speech_style || '',
-      avatar: raw.avatar || raw.image_url || null,
+      avatar: raw.avatar || '',
+      prompt: raw.prompt,
+      versions: charVersions,
       lora_model: raw.lora_model || '',
       description: raw.description || '',
       created_at: raw.created_at || new Date().toISOString(),
@@ -130,6 +141,10 @@ export class EntityNormalizer {
     if (!raw || typeof raw !== 'object') return null;
     const name = (raw.name || '').trim();
     if (!name) return null;
+    const locVersions = Array.isArray(raw.versions) && raw.versions.length > 0
+      ? raw.versions
+      : (raw.image_url ? [{ id: `v_init`, image_url: raw.image_url, prompt: raw.prompt, created_at: new Date().toISOString(), is_selected: true }] : []);
+
     const parsed = LocationAssetSchema.safeParse({
       id: raw.id || `loc_${nanoid(6)}`,
       series_id: raw.series_id,
@@ -137,6 +152,8 @@ export class EntityNormalizer {
       physical_characteristics: raw.physical_characteristics || '',
       time_of_day: raw.time_of_day || 'Day',
       image_url: raw.image_url,
+      prompt: raw.prompt,
+      versions: locVersions,
       frame_description: raw.frame_description || '',
     });
     return parsed.success ? (parsed.data as LocationAsset) : null;
@@ -146,6 +163,10 @@ export class EntityNormalizer {
     if (!raw || typeof raw !== 'object') return null;
     const name = (raw.name || '').trim();
     if (!name) return null;
+    const propVersions = Array.isArray(raw.versions) && raw.versions.length > 0
+      ? raw.versions
+      : (raw.image_url ? [{ id: `v_init`, image_url: raw.image_url, prompt: raw.prompt, created_at: new Date().toISOString(), is_selected: true }] : []);
+
     const parsed = PropAssetSchema.safeParse({
       id: raw.id || `prop_${nanoid(6)}`,
       series_id: raw.series_id,
@@ -153,6 +174,8 @@ export class EntityNormalizer {
       owner: raw.owner || '',
       physical_characteristics: raw.physical_characteristics || '',
       image_url: raw.image_url,
+      prompt: raw.prompt,
+      versions: propVersions,
       frame_description: raw.frame_description || '',
     });
     return parsed.success ? (parsed.data as PropAsset) : null;
@@ -233,8 +256,12 @@ export class EntityNormalizer {
       cover_image: raw.cover_image || '',
       video_url: raw.video_url || '',
       video_urls: raw.video_urls || {},
-      dubbing_languages: Array.isArray(raw.dubbing_languages) ? raw.dubbing_languages : [],
-      caption_languages: Array.isArray(raw.caption_languages) ? raw.caption_languages : [],
+      dubbing_languages: Array.isArray(raw.dubbing_languages)
+        ? raw.dubbing_languages.filter((l: any): l is string => typeof l === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(l.trim()))
+        : [],
+      caption_languages: Array.isArray(raw.caption_languages)
+        ? raw.caption_languages.filter((l: any): l is string => typeof l === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(l.trim()))
+        : [],
       status: raw.status || 'draft',
     };
   }

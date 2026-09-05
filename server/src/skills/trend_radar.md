@@ -40,7 +40,7 @@ Respond strictly with a JSON array of objects conforming to this exact schema:
     "description": "Gripping 2-sentence synopsis establishing immediate conflict, stakes, and twist.",
     "trope": "Core Micro-Drama Trope in target language",
     "category": "Romance / Revenge",
-    "genre": "Revenge Thriller",
+    "genre": "revenge",
     "hashtag_velocity": "+520% (TikTok/Reels/Shorts)",
     "competitor_hook": "3-second opening hook line with high emotional shock value.",
     "country": "VN",
@@ -51,3 +51,14 @@ Respond strictly with a JSON array of objects conforming to this exact schema:
   }
 ]
 ```
+
+### CRITICAL RULE FOR `genre`:
+The `genre` field MUST strictly match one of the 6 platform genre IDs:
+- `"suspense"` (Suspense / Mystery)
+- `"revenge"` (Revenge / Drama)
+- `"romance"` (Romance / Contract)
+- `"satire"` (Satire / Comedy)
+- `"fantasy"` (Fantasy / Rebirth)
+- `"scifi"` (Sci-Fi / Cyberpunk)
+
+Do NOT return free-form text or localized names (e.g. do NOT return "Revenge Thriller" or "Báo thù"). Always return one of the 6 exact IDs above.

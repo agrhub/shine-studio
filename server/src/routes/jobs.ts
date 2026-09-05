@@ -70,6 +70,19 @@ jobsRouter.get('/active', async (req: Request, res: Response) => {
           }
         }
 
+        if (j.status === 'running') {
+          const lastActivity = new Date(j.updated_at || j.created_at).getTime();
+          if (Date.now() - lastActivity > 20 * 60 * 1000) {
+            j.status = 'failed';
+            j.current_step = 'Task timed out (worker crashed or instance destroyed)';
+            if (j.step_progress?.render) {
+              j.step_progress.render.status = 'failed';
+              j.step_progress.render.message = 'Render worker timed out or crashed';
+            }
+            db.savePipelineJob(j).catch(() => {});
+          }
+        }
+
         return {
           ...j,
           series_title: seriesTitle || (j as any).seriesTitle || 'Untitled Series',

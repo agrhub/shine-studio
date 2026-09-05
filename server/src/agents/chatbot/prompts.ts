@@ -11,7 +11,7 @@ import { PromptLoader } from '@/utils/PromptLoader.js';
 import { loadSkill } from '@/utils/SkillLoader.js';
 import { getDatabaseProvider } from '~/database';
 import { GEMINI_FEMALE_VOICES, GEMINI_MALE_VOICES, GEMINI_NEUTRAL_VOICES } from '~/integrations/ai/gemini/GeminiClient';
-import { getLanguageForCountry } from '~/utils/LanguageMapping';
+import { getLanguageInfo } from '~/utils/LanguageMapping';
 
 export interface AgentContextParams {
   userId?: string;
@@ -194,7 +194,7 @@ CAPABILITIES:
         const durationDisplay = `${Math.floor(totalDurationSeconds / 60)}m ${totalDurationSeconds % 60 ? `${totalDurationSeconds % 60}s` : ''}`.trim();
         const country = context?.country || 'United States';
         const scriptLanguage = context?.language || 'en-US';
-        const langInfo = getLanguageForCountry(scriptLanguage);
+        const langInfo = getLanguageInfo(scriptLanguage);
         const visualStyle = context?.visual_style || context?.visualStyle || 'Cinematic';
         const visualStylePrompt = context?.visual_style_prompt || context?.visualStylePrompt || '';
         const title = context?.title || 'Original Micro-Drama';

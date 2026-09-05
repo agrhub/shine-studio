@@ -89,11 +89,12 @@ export class TTSService {
       durationSeconds = extractAudioDurationSeconds(Buffer.alloc(0), req.text, req.speed || 1.0);
     }
 
+    const isSuccess = !!audioUrl && audioUrl.length > 0;
     return {
-      audioUrl: audioUrl || `/api/assets/file/voice_${req.voiceId || 'default'}.mp3`,
+      audioUrl: audioUrl || '',
       durationSeconds,
       voiceId: req.voiceId,
-      status: 'READY',
+      status: isSuccess ? 'READY' : 'FAILED',
     };
   }
 }

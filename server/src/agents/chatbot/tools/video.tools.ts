@@ -5,7 +5,7 @@ import { Logger } from '@/utils/logger.js';
 import { videoService } from '@/services/VideoService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
-import type { SceneEntity, AssetJobItem } from '@/types.js';
+import type { SceneEntity, AssetJobItem, AssetVersion } from '@/types.js';
 
 export class VideoToolExecutors {
   /**
@@ -90,17 +90,38 @@ export class VideoToolExecutors {
               end_frame_url: endFrame,
               prompt: customPrompt,
               duration: sc.duration_seconds || 5,
-              aspect_ratio: '9:16',
+              aspect_ratio: series.ratio,
               scene_data: sc,
             });
           });
 
-          const videoUrl = result?.url || (result as Partial<SceneEntity>)?.video_url;
+          const videoUrl = result?.url;
           const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
           if (idx >= 0 && videoUrl) {
+            const curVidVersions: AssetVersion[] = Array.isArray(updatedScenes[idx].video_versions) ? [...(updatedScenes[idx].video_versions as AssetVersion[])] : [];
+            if (curVidVersions.length === 0 && updatedScenes[idx].video_url && updatedScenes[idx].video_url !== videoUrl) {
+              curVidVersions.push({
+                id: `v1_vid_${scIndex}`,
+                image_url: updatedScenes[idx].video_url,
+                created_at: new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newVidVer: AssetVersion = {
+              id: `ver_vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: videoUrl,
+              prompt: customPrompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              aspect_ratio: '9:16',
+            };
             updatedScenes[idx] = {
               ...updatedScenes[idx],
               video_url: videoUrl,
+              video_versions: [newVidVer, ...curVidVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))],
+              bgm_url: result?.bgmUrl || updatedScenes[idx].bgm_url,
+              voiceover_url: result?.voiceoverUrl || updatedScenes[idx].voiceover_url,
+              captions_data: result?.captionsData?.length ? result.captionsData : updatedScenes[idx].captions_data,
             };
           }
 
@@ -138,6 +159,12 @@ export class VideoToolExecutors {
       }
 
       await db.updateEpisode(params.episodeId, { scenes: updatedScenes });
+      try {
+        const { TimelineService } = await import('@/services/TimelineService.js');
+        await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
+      } catch (tlErr: any) {
+        Logger.warn(`[VideoTools.generateSceneVideo] Timeline sync notice: ${tlErr.message}`);
+      }
 
       const failedResults = results.filter((r) => r.status === 'failed');
       if (failedResults.length > 0) {

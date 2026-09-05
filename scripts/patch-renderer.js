@@ -80,6 +80,30 @@ for (const dir of pkgRoots) {
       console.log(`[Patch] Restored missing/empty renderer.js in: ${rPath}`);
     }
   }
+
+  // Fail-fast patch for renderer.html to capture media element 404/network errors
+  const htmlPath = path.join(dir, 'renderer.html');
+  if (fs.existsSync(htmlPath)) {
+    let htmlContent = fs.readFileSync(htmlPath, 'utf8');
+    if (!htmlContent.includes('__failFastMediaPatch__')) {
+      const mediaFailFastCode = `
+      // /* __failFastMediaPatch__ */ Fail-fast on asset load errors (404, CORS, invalid format)
+      window.addEventListener("error", (event) => {
+        const target = event.target;
+        if (target && (target.tagName === "VIDEO" || target.tagName === "AUDIO" || target.tagName === "IMG")) {
+          const src = target.currentSrc || target.src;
+          console.error("[browser:asset-error] Failed to load " + target.tagName + ":", src);
+          window.__RENDER_ERROR__ = "Failed to load " + target.tagName + " asset (404/Network): " + src;
+        }
+      }, true);
+`;
+      if (htmlContent.includes('async function render() {')) {
+        htmlContent = htmlContent.replace('async function render() {', `${mediaFailFastCode}\n      async function render() {`);
+        fs.writeFileSync(htmlPath, htmlContent, 'utf8');
+        console.log(`[Patch] Injected fail-fast media error handler in: ${htmlPath}`);
+      }
+    }
+  }
 }
 
 const found = new Set(candidatePaths.filter(p => fs.existsSync(p)));
@@ -172,6 +196,38 @@ for (const target of found) {
       );
     }
     changed = true;
+  }
+
+  if (!content.includes('__failFastAssetPatch')) {
+    const assetFailFastHook = `/* __failFastAssetPatch */
+            page.on("response", (res) => {
+              const status = res.status();
+              const url = res.url();
+              if (status >= 400 && !url.includes("favicon.ico") && !url.endsWith(".map")) {
+                process.stderr.write("[browser:error] Failed to load resource: HTTP " + status + " (" + url + ")\\n");
+                page.evaluate((err) => {
+                  if (!window.__RENDER_ERROR__) window.__RENDER_ERROR__ = err;
+                }, "Asset HTTP " + status + " error: " + url).catch(() => {});
+              }
+            });
+            page.on("requestfailed", (req) => {
+              const url = req.url();
+              const failure = req.failure();
+              if (!url.includes("favicon.ico") && !url.endsWith(".map")) {
+                process.stderr.write("[browser:requestfailed] " + url + ": " + failure?.errorText + "\\n");
+                page.evaluate((err) => {
+                  if (!window.__RENDER_ERROR__) window.__RENDER_ERROR__ = err;
+                }, "Asset network failure: " + url + " (" + failure?.errorText + ")").catch(() => {});
+              }
+            });`;
+
+    if (content.includes('page.on("pageerror"')) {
+      content = content.replace(
+        /page\.on\("pageerror",\s*\(err\)\s*=>\s*process\.stderr\.write\(`\[browser:pageerror\] \$\{err\.message\}\\n`\)\);/,
+        'page.on("pageerror", (err) => process.stderr.write(`[browser:pageerror] ${err.message}\\n`));\n            ' + assetFailFastHook
+      );
+      changed = true;
+    }
   }
 
   if (changed) {

@@ -52,9 +52,14 @@ Each shot MUST include:
 - ALWAYS use the exact `variant_id` from the character's wardrobe_variants array.
 - Never invent new variant IDs. If a character appears in multiple shots, reuse their defined `variant_id`.
 
-#### Dialogue Rules
-- Max 1 dialogue item per shot (strict).
-- Lines must be dramatically sharp, emotionally charged — no filler dialogue.
+#### Dialogue Rules (HIGH DENSITY MANDATE)
+- In micro-drama video, audio dialogue is the core viewer retention driver! Viewers swipe away if there are prolonged silent shots or dead air.
+- **Ensure cumulative spoken dialogue and voiceover (VO) covers 80% to 90% of the total episode duration**.
+- **Ensure at least 85% to 95% of shots contain spoken dialogue or internal monologue (VO)**.
+- **Per-shot word budget**: Each shot's dialogue line length must match 70%–85% of that shot's `duration_seconds` (~2.0–2.4 words per second; avoid 1-word grunts).
+- Max 10 dialogue items per shot (strict).
+- Lines must be dramatically sharp, emotionally charged — cutting retorts, icy threats, whispered commands, or psychological inner thoughts.
+- Purely silent shots (`dialogue: []`) are strictly limited to at most 1 per episode.
 - Match character `voice_id` to their defined voice in the series characters.
 
 ---

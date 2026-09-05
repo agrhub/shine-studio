@@ -390,6 +390,12 @@ export class AssetToolExecutors {
 
       // Persist any scenes that succeeded into database
       await db.updateEpisode(params.episodeId, { scenes: updatedScenes });
+      try {
+        const { TimelineService } = await import('@/services/TimelineService.js');
+        await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
+      } catch (tlErr: any) {
+        Logger.warn(`[AssetTools.generateSceneStoryboard] Timeline sync notice: ${tlErr.message}`);
+      }
 
       if (hasFailures) {
         return {

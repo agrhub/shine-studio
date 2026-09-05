@@ -9,6 +9,7 @@ import {
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
+  AntigravityAccountEntity,
   CreditTransactionEntity,
   AssetEntity,
   WorkerHeartbeatEntity,
@@ -34,6 +35,7 @@ export class MapDBProvider implements IDatabaseProvider {
   private timelines: Map<string, any> = new Map();
   private timelineVersions: Map<string, any[]> = new Map();
   private flowAccounts: Map<string, FlowAccountEntity> = new Map();
+  private antigravityAccounts: Map<string, AntigravityAccountEntity> = new Map();
   private assets: Map<string, AssetEntity> = new Map();
   private systemSettings: Map<string, any> = new Map();
   private workerHeartbeats: Map<string, WorkerHeartbeatEntity> = new Map();
@@ -64,6 +66,7 @@ export class MapDBProvider implements IDatabaseProvider {
         if (data.timelines) this.timelines = new Map(Object.entries(data.timelines));
         if (data.timelineVersions) this.timelineVersions = new Map(Object.entries(data.timelineVersions));
         if (data.flowAccounts) this.flowAccounts = new Map(Object.entries(data.flowAccounts));
+        if (data.antigravityAccounts) this.antigravityAccounts = new Map(Object.entries(data.antigravityAccounts));
         if (data.assets) this.assets = new Map(Object.entries(data.assets));
         if (data.systemSettings) this.systemSettings = new Map(Object.entries(data.systemSettings));
         if (data.workerHeartbeats) this.workerHeartbeats = new Map(Object.entries(data.workerHeartbeats));
@@ -96,6 +99,7 @@ export class MapDBProvider implements IDatabaseProvider {
       timelines: Object.fromEntries(this.timelines),
       timelineVersions: Object.fromEntries(this.timelineVersions),
       flowAccounts: Object.fromEntries(this.flowAccounts),
+      antigravityAccounts: Object.fromEntries(this.antigravityAccounts),
       assets: Object.fromEntries(this.assets),
       systemSettings: Object.fromEntries(this.systemSettings),
       workerHeartbeats: Object.fromEntries(this.workerHeartbeats),
@@ -672,6 +676,57 @@ export class MapDBProvider implements IDatabaseProvider {
     return existed;
   }
 
+  // ==================== Antigravity Accounts ====================
+  public async getAntigravityAccounts(status?: string): Promise<AntigravityAccountEntity[]> {
+    let list = Array.from(this.antigravityAccounts.values());
+    if (status) {
+      list = list.filter(a => a.status === status);
+    }
+    const map = new Map<string, AntigravityAccountEntity>();
+    for (const acc of list) {
+      const emailKey = (acc.email || '').trim().toLowerCase();
+      if (!emailKey) continue;
+      const existing = map.get(emailKey);
+      if (!existing || new Date(acc.updated_at || 0).getTime() > new Date(existing.updated_at || 0).getTime()) {
+        map.set(emailKey, acc);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => (a.request_count || 0) - (b.request_count || 0));
+  }
+
+  public async upsertAntigravityAccount(account: AntigravityAccountEntity): Promise<AntigravityAccountEntity> {
+    const email = (account.email || '').trim();
+    const existing = Array.from(this.antigravityAccounts.values()).find(a => a.email?.toLowerCase() === email.toLowerCase()) || (account.id ? this.antigravityAccounts.get(account.id) : null);
+    const id = existing?.id || account.id || `ag_${nanoid(8)}`;
+    const updated: AntigravityAccountEntity = {
+      ...(existing || {}),
+      ...account,
+      id,
+      email,
+      status: account.status || existing?.status || 'ACTIVE',
+      request_count: account.request_count !== undefined ? account.request_count : (existing?.request_count || 0),
+      updated_at: new Date().toISOString(),
+    };
+    this.antigravityAccounts.set(id, updated);
+    this.scheduleSave();
+    return updated;
+  }
+
+  public async deleteAntigravityAccount(idOrEmail: string): Promise<boolean> {
+    let key = idOrEmail;
+    if (!this.antigravityAccounts.has(key)) {
+      for (const [id, acc] of this.antigravityAccounts.entries()) {
+        if (acc.email === idOrEmail) {
+          key = id;
+          break;
+        }
+      }
+    }
+    const existed = this.antigravityAccounts.delete(key);
+    if (existed) this.scheduleSave();
+    return existed;
+  }
+
   // ==================== Assets ====================
   public async saveAsset(asset: AssetEntity): Promise<AssetEntity> {
     const id = asset.id || `ast_${nanoid(10)}`;
@@ -744,15 +799,67 @@ export class MapDBProvider implements IDatabaseProvider {
     this.scheduleSave();
   }
 
-  public async getWorkerNodes(): Promise<WorkerHeartbeatEntity[]> {
+  public async getWorkerNodes(options?: { activeOnly?: boolean }): Promise<WorkerHeartbeatEntity[]> {
     const now = Date.now();
-    return Array.from(this.workerHeartbeats.values()).map(w => {
-      // Mark offline if no heartbeat for > 2 minutes
-      const last = w.last_heartbeat || 0;
-      const ageMs = now - new Date(last).getTime();
-      const status = ageMs > 120000 ? 'OFFLINE' : w.status;
-      return { ...w, status };
+    const result: WorkerHeartbeatEntity[] = [];
+
+    for (const [id, w] of Array.from(this.workerHeartbeats.entries())) {
+      const raw: any = w;
+      const last = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || 0;
+      const ageMs = last ? (now - new Date(last).getTime()) : Infinity;
+      const status = ageMs > 90000 ? 'OFFLINE' : (raw.status || 'ONLINE');
+
+      // Auto-prune stale worker records older than 10 minutes
+      if (ageMs > 10 * 60 * 1000) {
+        this.workerHeartbeats.delete(id);
+        continue;
+      }
+
+      if (options?.activeOnly && status === 'OFFLINE') {
+        continue;
+      }
+
+      result.push({
+        ...raw,
+        worker_id: id,
+        workerId: id,
+        worker_name: raw.worker_name || raw.workerName || id,
+        workerName: raw.worker_name || raw.workerName || id,
+        service_name: raw.service_name || raw.serviceName || 'shine-render-worker',
+        serviceName: raw.service_name || raw.serviceName || 'shine-render-worker',
+        cpu_usage_pct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        cpuUsagePct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        memory_usage_mb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        memoryUsageMb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        last_heartbeat: last ? new Date(last).toISOString() : '',
+        lastHeartbeat: last ? new Date(last).toISOString() : '',
+        status,
+      });
+    }
+
+    result.sort((a: any, b: any) => {
+      if (a.status !== 'OFFLINE' && b.status === 'OFFLINE') return -1;
+      if (a.status === 'OFFLINE' && b.status !== 'OFFLINE') return 1;
+      return new Date(b.last_heartbeat || 0).getTime() - new Date(a.last_heartbeat || 0).getTime();
     });
+
+    return result;
+  }
+
+  public async pruneOfflineWorkers(): Promise<number> {
+    const now = Date.now();
+    let count = 0;
+    for (const [id, w] of Array.from(this.workerHeartbeats.entries())) {
+      const raw: any = w;
+      const last = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || 0;
+      const ageMs = last ? (now - new Date(last).getTime()) : Infinity;
+      if (ageMs > 90000 || raw.status === 'OFFLINE') {
+        this.workerHeartbeats.delete(id);
+        count++;
+      }
+    }
+    if (count > 0) this.scheduleSave();
+    return count;
   }
 
   public async recordWorkerJob(job: WorkerJobEntity): Promise<void> {

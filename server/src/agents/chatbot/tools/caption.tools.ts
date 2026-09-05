@@ -185,6 +185,12 @@ export class CaptionToolExecutors {
         scenes: updatedScenes,
         caption_languages: Array.from(currentCapLangs),
       });
+      try {
+        const { TimelineService } = await import('@/services/TimelineService.js');
+        await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
+      } catch (tlErr: any) {
+        Logger.warn(`[CaptionTools.generateSceneCaption] Timeline sync notice: ${tlErr.message}`);
+      }
 
       const generatedCount = results.filter((r) => r.status.includes('generated')).length;
       return {

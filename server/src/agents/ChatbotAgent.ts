@@ -20,7 +20,6 @@ import {
 import { createUserContent } from '@google/genai';
 import { InMemoryRunner, LlmAgent, StreamingMode, isFinalResponse } from '@google/adk';
 import { afterTool, beforeTool, rateLimitCallback } from './chatbot/callback.js';
-import { geminiClient } from '~/integrations/ai/gemini/GeminiClient.js';
 import { aiProviderRouter } from '~/integrations/ai/router/AIProviderRouter.js';
 import { resolveChatLanguage } from '~/utils/LanguageMapping.js';
 
@@ -152,9 +151,9 @@ export class ChatbotAgent {
     if (!session) {
       session = {
         sessionId: sessionKey,
-        userId,
-        seriesId,
-        episodeId,
+        userId: userId,
+        seriesId: seriesId,
+        episodeId: episodeId,
         messages: [],
         lastActive: Date.now(),
       };
@@ -451,8 +450,9 @@ export class ChatbotAgent {
 
     const wizardSyncInstruction = isWizard
       ? `\n\n[WIZARD MODE DIRECTIVE: You are in Step 3 of the Series Creation Wizard.
-- If the creator asks to create the series, launch the project, start episode 1, or enter workspace (e.g. "create series", "launch project", "start project"): Call the \`create_series\` tool with the finalized plan parameters so the series is saved into the database and the workspace opens automatically.
-- Otherwise, if discussing or refining the story, characters, or episode arcs: Output the updated Master Plan JSON inside a \`\`\`master_plan \`\`\` code block so the Wizard UI previews it live.]`
+- STRICT SAFETY RULE FOR create_series: ONLY call the \`create_series\` tool if the user EXPLICITLY commands to create/confirm/launch the series (e.g. "create series", "confirm series", "start series", "launch series", "tạo series", "xác nhận tạo series").
+- NEVER call \`create_series\` when the user asks to review, inspect, analyze, check, adjust, or critique characters, locations, props, synopsis, or master plan (e.g. "review the character, location..."). For reviews, simply provide your detailed creative analysis and critique directly in the chat. For adjustments, output the updated Master Plan JSON inside a \`\`\`master_plan \`\`\` code block so the Wizard UI previews it live.
+- If the user's instruction is ambiguous, underspecified, or unclear: DO NOT assume, guess, or execute arbitrary actions. ALWAYS ask clarifying questions first and offer suggestions.]`
       : '';
     const cleanUserMsg = (params.userMessage || '').trim();
     

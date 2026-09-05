@@ -11,6 +11,7 @@ import { Logger } from '@/utils/logger.js';
 import { nanoid } from 'nanoid';
 import { EnvConfig } from '@/config/env.js';
 import type {
+  AssetVersion,
   SceneEntity,
   EpisodeEntity,
   SeriesEntity,
@@ -23,6 +24,8 @@ import type {
   VideoRenderJob,
   GenerateSceneImageParams,
   GenerateSceneVideoParams,
+  GenerateSceneVideoResult,
+  SceneAudioPipelineResult,
 } from '@/types.js';
 
 export class VideoService {
@@ -165,7 +168,7 @@ export class VideoService {
     const propDetails = sceneObj?.prop_details || '';
 
     // ─── Character Continuity & Face Reference Extraction ─────────────────────
-    const rawCharacters: any[] = [
+    const rawCharacters: CharacterSeriesEntity[] = [
       ...(Array.isArray(targetSeries?.characters) ? targetSeries.characters : []),
     ];
 
@@ -191,7 +194,7 @@ export class VideoService {
       : null;
     const sceneContextLower = (sceneContext || '').toLowerCase();
 
-    const norm = (s: any): string => (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const norm = (s: unknown): string => (typeof s === 'string' ? s : (typeof s === 'object' && s !== null && 'name' in s ? String((s as { name?: unknown }).name) : (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
 
     for (const char of allSeriesCharacters) {
       const charNameNorm = norm(char.name);
@@ -347,8 +350,8 @@ export class VideoService {
 
       if (typeof generated === 'string') {
         visualDescription = generated.replace(/^["']|["']$/g, '').trim();
-      } else if (generated && (generated as any)?.text) {
-        visualDescription = (generated as any).text.replace(/^["']|["']$/g, '').trim();
+      } else if (generated && typeof generated === 'object' && 'text' in generated && typeof (generated as { text: unknown }).text === 'string') {
+        visualDescription = (generated as { text: string }).text.replace(/^["']|["']$/g, '').trim();
       }
     } catch (gErr) {
       Logger.warn(`[VideoService.generateSceneImage] Visual prompt optimization error: ${gErr}`);
@@ -495,17 +498,51 @@ export class VideoService {
         if (ep && Array.isArray(ep.scenes)) {
           const sIdx =
             typeof sceneIndex === 'number'
-               ? ep.scenes.findIndex((s: any) => s.index === sceneIndex || s.id === sceneId)
-              : ep.scenes.findIndex((s: any) => s.id === sceneId);
+               ? ep.scenes.findIndex((s: SceneEntity) => s.index === sceneIndex || s.id === sceneId)
+              : ep.scenes.findIndex((s: SceneEntity) => s.id === sceneId);
           if (sIdx !== -1) {
+            const newVersion: AssetVersion = {
+              id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: internalUrl,
+              url: internalUrl,
+              prompt: enhancedPrompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              aspect_ratio: targetAspect,
+            };
+
             if (isEndFrame) {
+              const curVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].end_frame_versions) ? [...ep.scenes[sIdx].end_frame_versions] : [];
+              if (curVersions.length === 0 && ep.scenes[sIdx].storyboard_end_frame_url && ep.scenes[sIdx].storyboard_end_frame_url !== internalUrl) {
+                curVersions.push({
+                  id: `v1_end_${ep.scenes[sIdx].id || sIdx + 1}`,
+                  image_url: ep.scenes[sIdx].storyboard_end_frame_url,
+                  url: ep.scenes[sIdx].storyboard_end_frame_url,
+                  created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              ep.scenes[sIdx].end_frame_versions = [newVersion, ...curVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
               ep.scenes[sIdx].storyboard_end_frame_url = internalUrl;
             } else {
+              const curVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].versions) ? [...ep.scenes[sIdx].versions] : [];
+              const startImg = ep.scenes[sIdx].storyboard_frame_url || ep.scenes[sIdx].image_url;
+              if (curVersions.length === 0 && startImg && startImg !== internalUrl) {
+                curVersions.push({
+                  id: `v1_start_${ep.scenes[sIdx].id || sIdx + 1}`,
+                  image_url: startImg,
+                  url: startImg,
+                  created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              ep.scenes[sIdx].versions = [newVersion, ...curVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
               ep.scenes[sIdx].storyboard_frame_url = internalUrl;
               ep.scenes[sIdx].image_url = internalUrl;
               ep.scenes[sIdx].status = 'image_ready';
             }
             await db.updateEpisode(ep.id, { scenes: ep.scenes });
+            await TimelineService.getOrBuildEpisodeTimeline(ep.id);
           }
         }
       } catch (err: any) {
@@ -531,7 +568,7 @@ export class VideoService {
   /**
    * Real Scene Image-to-Video Generation with Native Audio & Dialogue (Step B3)
    */
-  async generateSceneVideo(params: GenerateSceneVideoParams) {
+  async generateSceneVideo(params: GenerateSceneVideoParams): Promise<GenerateSceneVideoResult> {
     const userId = params.user_id || '';
     const seriesId = params.series_id;
     const episodeId = params.episode_id;
@@ -562,7 +599,7 @@ export class VideoService {
         seriesGenre = s.genre || seriesGenre;
         seriesRatio = (aspectRatio || s.ratio || seriesRatio).trim();
         seriesVisual = s.visual_style || seriesVisual;
-        seriesLanguage = s.language || seriesLanguage;
+        if (s.language) seriesLanguage = s.language;
         seriesChars = [...(s.characters || [])];
       }
     }
@@ -575,7 +612,7 @@ export class VideoService {
             seriesGenre = s.genre || seriesGenre;
             seriesRatio = (aspectRatio || s.ratio || seriesRatio).trim();
             seriesVisual = s.visual_style || seriesVisual;
-            seriesLanguage = s.language || seriesLanguage;
+            if (s.language) seriesLanguage = s.language;
             seriesChars = s.characters || [];
           }
         }
@@ -685,7 +722,7 @@ export class VideoService {
 
     const sceneContextLower = (sceneContext || '').toLowerCase();
 
-    const norm = (s: any): string => (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const norm = (s: unknown): string => (typeof s === 'string' ? s : (typeof s === 'object' && s !== null && 'name' in s ? String((s as { name?: unknown }).name) : (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
 
     for (const char of allSeriesCharacters) {
       const charNameNorm = norm(char.name);
@@ -778,7 +815,7 @@ export class VideoService {
     // Strictly do not look up nextScene.storyboardFrameUrl — only use current shot end-frame if present
     const endFrameUrl = initialEndFrameUrl || sceneData?.storyboard_end_frame_url;
     const startFrameDesc = sceneData?.frame_description || sceneData?.description || sceneData?.visual_prompt || '';
-    const endFrameDesc = sceneData?.end_frame_prompt || (sceneData as any)?.end_frame_action || '';
+    const endFrameDesc = sceneData?.end_frame_prompt || (sceneData as { end_frame_action?: string } | undefined)?.end_frame_action || '';
     const timeOfDay = sceneData?.time_of_day || '';
     const videoEffect = sceneData?.video_effect || (Array.isArray(sceneData?.effects) ? sceneData.effects.join(', ') : '');
 
@@ -816,8 +853,8 @@ export class VideoService {
 
       if (typeof generated === 'string') {
         visualPart = generated.replace(/^["']|["']$/g, '').trim();
-      } else if (generated && (generated as any)?.text) {
-        visualPart = (generated as any).text.replace(/^["']|["']$/g, '').trim();
+      } else if (generated && typeof generated === 'object' && 'text' in generated && typeof (generated as { text: unknown }).text === 'string') {
+        visualPart = (generated as { text: string }).text.replace(/^["']|["']$/g, '').trim();
       }
     } catch (gErr) {
       Logger.warn(`[VideoService.generateSceneVideo] Gemini visual prompt optimization error: ${gErr}`);
@@ -861,6 +898,7 @@ export class VideoService {
       // characterReferences,//disable references
       imageStart: startFrameUrl,
       imageEnd: endFrameUrl,
+      duration: targetDuration,
     });
 
     if (!videoResult || !videoResult.url) {
@@ -923,7 +961,7 @@ export class VideoService {
       try {
         const ep = await db.getEpisodeById(episodeId);
         if (ep && Array.isArray(ep.scenes)) {
-          const matchedIdx = ep.scenes.findIndex((s: any) => (sceneId && s.id === sceneId) || (sceneData?.id && s.id === sceneData.id));
+          const matchedIdx = ep.scenes.findIndex((s: SceneEntity) => (sceneId && s.id === sceneId) || (sceneData?.id && s.id === sceneData.id));
           if (matchedIdx !== -1) {
             sceneNum = ep.scenes[matchedIdx].index || (matchedIdx + 1);
           }
@@ -935,7 +973,7 @@ export class VideoService {
     }
 
     // ─── Automated Audio & Word-Level Caption Pipeline (BGM, TTS, Gemini Deepgram-style Captions) ───
-    let audioPipelineResult: any = null;
+    let audioPipelineResult: SceneAudioPipelineResult | null = null;
     try {
       audioPipelineResult = await CaptionService.processSceneAudioAndCaptions({
         videoUrl: internalUrl,
@@ -956,13 +994,84 @@ export class VideoService {
       try {
         const ep = await db.getEpisodeById(episodeId);
         if (ep && Array.isArray(ep.scenes)) {
-          const sIdx = ep.scenes.findIndex((s: any) => (sceneId && s.id === sceneId) || (sceneData?.id && s.id === sceneData.id) || (sceneNum && s.index === sceneNum));
+          const sIdx = ep.scenes.findIndex((s: SceneEntity) => (sceneId && s.id === sceneId) || (sceneData?.id && s.id === sceneData.id) || (sceneNum && s.index === sceneNum));
           if (sIdx !== -1) {
+            // 1. Maintain Video Version History
+            const curVidVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].video_versions) ? [...ep.scenes[sIdx].video_versions] : [];
+            if (curVidVersions.length === 0 && ep.scenes[sIdx].video_url && ep.scenes[sIdx].video_url !== internalUrl) {
+              curVidVersions.push({
+                id: `v1_vid_${ep.scenes[sIdx].id || sIdx + 1}`,
+                image_url: ep.scenes[sIdx].video_url,
+                video_url: ep.scenes[sIdx].video_url,
+                url: ep.scenes[sIdx].video_url,
+                created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newVidVer: AssetVersion = {
+              id: `ver_vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: internalUrl,
+              video_url: internalUrl,
+              url: internalUrl,
+              prompt: videoPrompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              aspect_ratio: seriesRatio || '9:16',
+            };
+            ep.scenes[sIdx].video_versions = [newVidVer, ...curVidVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
             ep.scenes[sIdx].video_url = internalUrl;
+
+            // 2. Maintain BGM Version History
             if (audioPipelineResult?.bgmUrl) {
+              const curBgmVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].bgm_versions) ? [...ep.scenes[sIdx].bgm_versions] : [];
+              if (curBgmVersions.length === 0 && ep.scenes[sIdx].bgm_url && ep.scenes[sIdx].bgm_url !== audioPipelineResult.bgmUrl) {
+                curBgmVersions.push({
+                  id: `v1_bgm_${ep.scenes[sIdx].id || sIdx + 1}`,
+                  image_url: ep.scenes[sIdx].bgm_url,
+                  audio_url: ep.scenes[sIdx].bgm_url,
+                  bgm_url: ep.scenes[sIdx].bgm_url,
+                  url: ep.scenes[sIdx].bgm_url,
+                  created_at: new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              const newBgmVer: AssetVersion = {
+                id: `ver_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                image_url: audioPipelineResult.bgmUrl,
+                audio_url: audioPipelineResult.bgmUrl,
+                bgm_url: audioPipelineResult.bgmUrl,
+                url: audioPipelineResult.bgmUrl,
+                created_at: new Date().toISOString(),
+                is_selected: true,
+              };
+              ep.scenes[sIdx].bgm_versions = [newBgmVer, ...curBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
               ep.scenes[sIdx].bgm_url = audioPipelineResult.bgmUrl;
             }
+
+            // 3. Maintain Voiceover Version History
             if (audioPipelineResult?.voiceoverUrl) {
+              const curVoiceVersions: AssetVersion[] = Array.isArray(ep.scenes[sIdx].voice_versions) ? [...ep.scenes[sIdx].voice_versions] : [];
+              if (curVoiceVersions.length === 0 && ep.scenes[sIdx].voiceover_url && ep.scenes[sIdx].voiceover_url !== audioPipelineResult.voiceoverUrl) {
+                curVoiceVersions.push({
+                  id: `v1_voice_${ep.scenes[sIdx].id || sIdx + 1}`,
+                  image_url: ep.scenes[sIdx].voiceover_url,
+                  audio_url: ep.scenes[sIdx].voiceover_url,
+                  voiceover_url: ep.scenes[sIdx].voiceover_url,
+                  url: ep.scenes[sIdx].voiceover_url,
+                  created_at: new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              const newVoiceVer: AssetVersion = {
+                id: `ver_voice_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                image_url: audioPipelineResult.voiceoverUrl,
+                audio_url: audioPipelineResult.voiceoverUrl,
+                voiceover_url: audioPipelineResult.voiceoverUrl,
+                url: audioPipelineResult.voiceoverUrl,
+                created_at: new Date().toISOString(),
+                is_selected: true,
+              };
+              ep.scenes[sIdx].voice_versions = [newVoiceVer, ...curVoiceVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
               ep.scenes[sIdx].voiceover_url = audioPipelineResult.voiceoverUrl;
             }
             if (audioPipelineResult?.voiceStartUs !== undefined) {
@@ -977,13 +1086,14 @@ export class VideoService {
             if (audioPipelineResult?.words?.length) {
               ep.scenes[sIdx].words = audioPipelineResult.words;
             }
-            if (language) {
+            if (language && language !== seriesLanguage && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(language.trim())) {
+              const langKey = language.trim();
               if (!ep.scenes[sIdx].translations) ep.scenes[sIdx].translations = {};
-              ep.scenes[sIdx].translations[language] = {
-                ...(ep.scenes[sIdx].translations[language] || {}),
-                voiceover_url: audioPipelineResult?.voiceoverUrl || ep.scenes[sIdx].translations[language]?.voiceover_url,
-                captions_data: audioPipelineResult?.captionsData || ep.scenes[sIdx].translations[language]?.captions_data,
-                words: audioPipelineResult?.words || ep.scenes[sIdx].translations[language]?.words,
+              ep.scenes[sIdx].translations[langKey] = {
+                ...(ep.scenes[sIdx].translations[langKey] || {}),
+                voiceover_url: audioPipelineResult?.voiceoverUrl || ep.scenes[sIdx].translations[langKey]?.voiceover_url,
+                captions_data: audioPipelineResult?.captionsData || ep.scenes[sIdx].translations[langKey]?.captions_data,
+                words: audioPipelineResult?.words || ep.scenes[sIdx].translations[langKey]?.words,
                 voice_duration_us: audioPipelineResult?.voiceDurationUs,
               };
             }
@@ -1008,7 +1118,7 @@ export class VideoService {
       voiceStartUs: audioPipelineResult?.voiceStartUs || 200_000,
       voiceDurationUs: audioPipelineResult?.voiceDurationUs || targetDuration * 1_000_000,
       captionsData: audioPipelineResult?.captionsData || [],
-      videoPrompt,
+      videoPrompt: videoPrompt,
       duration: targetDuration,
       motion: motionIntensity,
       cameraMovement: sceneCamera,
@@ -1023,9 +1133,9 @@ export class VideoService {
   async startRenderJob(seriesId: string, episodeId: string, prompt?: string): Promise<VideoRenderJob> {
     const jobId = `job_${Date.now()}`;
     const job: VideoRenderJob = {
-      jobId,
-      seriesId,
-      episodeId,
+      jobId: jobId,
+      seriesId: seriesId,
+      episodeId: episodeId,
       status: 'PROCESSING',
       progress: 15,
     };
@@ -1060,9 +1170,13 @@ export class VideoService {
         }
       }
 
+      if (!finalUrl) {
+        throw new Error('Video generation failed: Provider returned empty video URL');
+      }
+
       job.progress = 100;
       job.status = 'COMPLETED';
-      job.videoUrl = finalUrl || `/api/assets/file/default_rendered_episode.mp4`;
+      job.videoUrl = finalUrl;
       job.ssimParityScore = 0.985;
     } catch (err: any) {
       job.status = 'FAILED';

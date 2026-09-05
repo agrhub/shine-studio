@@ -2,3 +2,4 @@ Frame Description: A product image of just the item described against a seamless
 Prop: {{propName}}
 Physical Characteristics: {{physicalCharacteristics}}
 Visual Style: {{visualStyle}}
+CRITICAL NEGATIVE CONSTRAINTS: Clean studio product photography, absolutely no text, no brand logos, no watermarks, no price tags, no product titles, no typography, no words anywhere in the frame.

@@ -18,9 +18,9 @@ export class DirectorAgent {
     const outline = await storySkeletonAgent.execute({
       title: request.title,
       genre: request.genre,
-      visual_style: request.visual_style || request.visualStyle,
+      visual_style: request.visual_style || '',
       synopsis: request.synopsis,
-      total_episodes: request.total_episodes || request.totalEpisodes || 20,
+      total_episodes: request.total_episodes || 20,
     });
 
     // 2. Compute adaptation strategy
@@ -31,7 +31,7 @@ export class DirectorAgent {
     });
 
     // 3. Generate target episode script
-    const targetEpisode = request.episode_number || request.episodeNumber || 1;
+    const targetEpisode = request.episode_number || 1;
     const scriptItem = await scriptAgent.execute({
       series_id: outline.series_id,
       episode_number: targetEpisode,

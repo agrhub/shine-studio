@@ -45,7 +45,12 @@ COPY client ./client
 COPY server ./server
 
 # Build Client SPA (Vite -> client/dist) and Server (esbuild -> server/dist)
-RUN pnpm run build
+RUN pnpm run build && \
+    mkdir -p server/dist/skills server/dist/prompts skills prompts && \
+    cp -r server/src/skills/. server/dist/skills/ && \
+    cp -r server/src/prompts/. server/dist/prompts/ && \
+    cp -r server/src/skills/. skills/ && \
+    cp -r server/src/prompts/. prompts/
 
 ENV NODE_ENV=production
 

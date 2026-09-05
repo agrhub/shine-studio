@@ -8,6 +8,7 @@ import {
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
+  AntigravityAccountEntity,
   CreditTransactionEntity,
   AssetEntity,
   WorkerHeartbeatEntity,
@@ -155,6 +156,25 @@ const FlowAccountSchema = new mongoose.Schema({
   last_synced_at: { type: Date, default: Date.now }
 });
 
+const AntigravityAccountSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  name: String,
+  avatar: String,
+  access_token: { type: String, required: true },
+  refresh_token: { type: String, required: true },
+  expires_at: Number,
+  project_id: String,
+  tier: String,
+  status: { type: String, default: 'ACTIVE' },
+  error_message: String,
+  rate_limit_reset_at: Number,
+  request_count: { type: Number, default: 0 },
+  last_used_at: Date,
+  created_at: { type: Date, default: Date.now },
+  updated_at: { type: Date, default: Date.now }
+});
+
 const TimelineSnapshotSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   episode_id: { type: String, required: true, index: true },
@@ -238,6 +258,9 @@ const AIAccountSchema = new mongoose.Schema({
   avatar_url: { type: String },
   account_type: { type: String, required: true },
   status: { type: String, default: 'READY' },
+  session_token: { type: String },
+  access_token: { type: String },
+  token_expires_at: { type: Date },
   flow_st: { type: String },
   flow_at: { type: String },
   flow_at_expires_at: { type: Date },
@@ -263,6 +286,7 @@ export const UserModel = mongoose.models.User || mongoose.model('User', UserSche
 export const SeriesModel = mongoose.models.Series || mongoose.model('Series', SeriesSchema);
 export const EpisodeModel = mongoose.models.Episode || mongoose.model('Episode', EpisodeSchema);
 export const FlowAccountModel = mongoose.models.FlowAccount || mongoose.model('FlowAccount', FlowAccountSchema);
+export const AntigravityAccountModel = mongoose.models.AntigravityAccount || mongoose.model('AntigravityAccount', AntigravityAccountSchema);
 export const TimelineSnapshotModel = mongoose.models.TimelineSnapshot || mongoose.model('TimelineSnapshot', TimelineSnapshotSchema);
 export const SystemSettingModel = mongoose.models.SystemSetting || mongoose.model('SystemSetting', SystemSettingSchema);
 export const CreditTransactionModel = mongoose.models.CreditTransaction || mongoose.model('CreditTransaction', CreditTransactionSchema);
@@ -646,6 +670,38 @@ export class MongoDBProvider implements IDatabaseProvider {
     return true;
   }
 
+  async getAntigravityAccounts(status?: string): Promise<AntigravityAccountEntity[]> {
+    if (mongoose.connection.readyState < 1) return [];
+    const filter: any = {};
+    if (status) filter.status = status;
+    return (await AntigravityAccountModel.find(filter).sort({ request_count: 1, updated_at: -1 }).lean()) as any;
+  }
+
+  async upsertAntigravityAccount(account: AntigravityAccountEntity): Promise<AntigravityAccountEntity> {
+    if (mongoose.connection.readyState < 1) return account;
+    const email = (account.email || '').trim();
+    const { id, ...updateFields } = account;
+    const updated = await AntigravityAccountModel.findOneAndUpdate(
+      { email },
+      {
+        $set: { ...updateFields, email, updated_at: new Date() },
+        $setOnInsert: { id: id || nanoid(), created_at: new Date() },
+      },
+      { upsert: true, new: true, returnDocument: 'after' }
+    ).lean();
+    return updated as any;
+  }
+
+  async deleteAntigravityAccount(idOrEmail: string): Promise<boolean> {
+    if (mongoose.connection.readyState < 1) return true;
+    const isObjectId = mongoose.Types.ObjectId.isValid(idOrEmail);
+    const filter = isObjectId
+      ? { $or: [{ _id: idOrEmail }, { id: idOrEmail }, { email: idOrEmail }] }
+      : { $or: [{ id: idOrEmail }, { email: idOrEmail }] };
+    await AntigravityAccountModel.deleteMany(filter);
+    return true;
+  }
+
   async saveTimeline(
     episode_id: string,
     timeline_data: IProject,
@@ -833,29 +889,74 @@ export class MongoDBProvider implements IDatabaseProvider {
     );
   }
 
-  async getWorkerNodes(): Promise<WorkerHeartbeatEntity[]> {
+  async getWorkerNodes(options?: { activeOnly?: boolean }): Promise<WorkerHeartbeatEntity[]> {
     if (mongoose.connection.readyState < 1) return [];
     const docs = await WorkerHeartbeatModel.find({}).lean();
     const now = Date.now();
-    return docs.map((w: any) => {
-      const lastHeartbeatStr = w.last_heartbeat || w.lastHeartbeat ? new Date(w.last_heartbeat || w.lastHeartbeat).toISOString() : new Date().toISOString();
-      const ageMs = now - new Date(lastHeartbeatStr).getTime();
-      const status = ageMs > 120000 ? 'OFFLINE' : (w.status || 'ONLINE');
-      return {
+    const staleIds: any[] = [];
+    const list: WorkerHeartbeatEntity[] = [];
+
+    for (const w of docs as any[]) {
+      const lastHeartbeatStr = w.last_heartbeat || w.lastHeartbeat ? new Date(w.last_heartbeat || w.lastHeartbeat).toISOString() : '';
+      const ageMs = lastHeartbeatStr ? (now - new Date(lastHeartbeatStr).getTime()) : Infinity;
+      const status = ageMs > 90000 ? 'OFFLINE' : (w.status || 'ONLINE');
+
+      if (ageMs > 10 * 60 * 1000) {
+        staleIds.push(w._id);
+      }
+
+      if (options?.activeOnly && status === 'OFFLINE') {
+        continue;
+      }
+
+      list.push({
+        ...w,
         worker_id: w.worker_id || w.workerId,
+        workerId: w.worker_id || w.workerId,
         worker_name: w.worker_name || w.workerName || w.worker_id || w.workerId,
+        workerName: w.worker_name || w.workerName || w.worker_id || w.workerId,
         service_name: w.service_name || w.serviceName || 'shine-render-worker',
+        serviceName: w.service_name || w.serviceName || 'shine-render-worker',
         region: w.region || 'us-central1',
         status,
-        cpu_usage_pct: w.cpu_usage_pct ?? w.cpuUsagePct,
-        memory_usage_mb: w.memory_usage_mb ?? w.memoryUsageMb,
-        active_jobs_count: w.active_jobs_count ?? w.activeJobsCount,
-        completed_jobs_count: w.completed_jobs_count ?? w.completedJobsCount,
-        failed_jobs_count: w.failed_jobs_count ?? w.failedJobsCount,
+        cpu_usage_pct: w.cpu_usage_pct ?? w.cpuUsagePct ?? 0,
+        cpuUsagePct: w.cpu_usage_pct ?? w.cpuUsagePct ?? 0,
+        memory_usage_mb: w.memory_usage_mb ?? w.memoryUsageMb ?? 0,
+        memoryUsageMb: w.memory_usage_mb ?? w.memoryUsageMb ?? 0,
+        active_jobs_count: w.active_jobs_count ?? w.activeJobsCount ?? 0,
+        activeJobsCount: w.active_jobs_count ?? w.activeJobsCount ?? 0,
+        completed_jobs_count: w.completed_jobs_count ?? w.completedJobsCount ?? 0,
+        failed_jobs_count: w.failed_jobs_count ?? w.failedJobsCount ?? 0,
         last_heartbeat: lastHeartbeatStr,
+        lastHeartbeat: lastHeartbeatStr,
         metadata: w.metadata,
-      };
+      });
+    }
+
+    if (staleIds.length > 0) {
+      WorkerHeartbeatModel.deleteMany({ _id: { $in: staleIds } }).catch(() => {});
+    }
+
+    list.sort((a: any, b: any) => {
+      if (a.status !== 'OFFLINE' && b.status === 'OFFLINE') return -1;
+      if (a.status === 'OFFLINE' && b.status !== 'OFFLINE') return 1;
+      return new Date(b.last_heartbeat || 0).getTime() - new Date(a.last_heartbeat || 0).getTime();
     });
+
+    return list;
+  }
+
+  async pruneOfflineWorkers(): Promise<number> {
+    if (mongoose.connection.readyState < 1) return 0;
+    const threshold = new Date(Date.now() - 90000);
+    const res = await WorkerHeartbeatModel.deleteMany({
+      $or: [
+        { last_heartbeat: { $lt: threshold } },
+        { lastHeartbeat: { $lt: threshold } },
+        { status: 'OFFLINE' }
+      ]
+    });
+    return res.deletedCount || 0;
   }
 
   async recordWorkerJob(job: WorkerJobEntity): Promise<void> {

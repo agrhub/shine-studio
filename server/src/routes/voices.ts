@@ -7,7 +7,8 @@ import { CaptionService } from '@/services/CaptionService.js';
 import { SynthIDService } from '@/services/SynthIDService.js';
 import { CreditService } from '@/services/CreditService.js';
 import { getDatabaseProvider } from '@/database/index.js';
-import { CharacterSeriesEntity, SceneDialogue, SceneEntity } from '@/types.js';
+import { TimelineService } from '@/services/TimelineService.js';
+import { CharacterSeriesEntity, SceneDialogue, SceneEntity, AssetVersion } from '@/types.js';
 import { getUserId } from '@/utils/auth.js';
 import { Logger } from '@/utils/logger.js';
 
@@ -43,9 +44,10 @@ export async function generateDialogueVoiceSynthesis(params: {
   pitch?: number;
   episode_id?: string;
   scene_id?: string;
+  scene_index?: number;
   multi_speaker?: any;
 }) {
-  const { dialogue, text: rawText, voice_id, emotion: reqEmotion, intensity, language, speed, pitch, episode_id, multi_speaker } = params;
+  const { dialogue, text: rawText, voice_id, emotion: reqEmotion, intensity, language, speed, pitch, episode_id, scene_id, scene_index, multi_speaker } = params;
   const emotion = reqEmotion || (Array.isArray(dialogue) && dialogue.length > 0 ? (dialogue[0]?.speech_tone || dialogue[0]?.emotion) : undefined);
 
   let multiSpeaker = multi_speaker;
@@ -99,6 +101,10 @@ export async function generateDialogueVoiceSynthesis(params: {
         const matched = seriesChars.find((c: CharacterSeriesEntity) => c.name.toLowerCase() === distinctNames[0].toLowerCase());
         targetVoiceId = matched?.voice_id || (matched?.gender === 'female' ? 'Aoede' : 'Puck');
         multiSpeaker = { enabled: false };
+
+        // Strip single speaker prefix (e.g. "Maya Lin: ...") so TTS speaks clean dialogue
+        const charName = distinctNames[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp(`^\\s*${charName}\\s*:\\s*`, 'i'), '').trim();
       }
     } catch (err: any) {
       Logger.warn(`[voicesRouter] Auto multiSpeaker extraction: ${err.message}`);
@@ -130,7 +136,7 @@ export async function generateDialogueVoiceSynthesis(params: {
     speech_tone: extractedSpeechTone || undefined,
   });
 
-  if (ttsRes?.audioUrl && !ttsRes.audioUrl.includes('default')) {
+  if (ttsRes?.status === 'READY' && ttsRes.audioUrl && !ttsRes.audioUrl.startsWith('/api/assets/file/voice_')) {
     internalUrl = ttsRes.audioUrl;
     s3Key = ttsRes.audioUrl.replace('/api/assets/file/', '');
     audioMimeType = 'audio/mpeg';
@@ -143,6 +149,10 @@ export async function generateDialogueVoiceSynthesis(params: {
       speech_tone: extractedSpeechTone || undefined,
       multiSpeaker,
     });
+
+    if (!generatedAudio?.url) {
+      throw new Error('Voice synthesis failed: Both primary TTS and Gemini Audio fallback could not generate audio.');
+    }
 
     const s3Result = await StorageFactory.uploadMedia(generatedAudio.url, 'audio', 'wav', generatedAudio.mimeType || 'audio/wav');
     s3Key = s3Result.key;
@@ -212,7 +222,7 @@ export async function generateDialogueVoiceSynthesis(params: {
 // POST /api/voices/tts — Real Neural Voice synthesis via TTSService / Gemini Audio
 router.post('/tts', async (req: Request, res: Response) => {
   try {
-    const { voice_id, text, emotion, intensity, language, speed, pitch, multi_speaker, episode_id, scene_id, dialogue } = req.body;
+    const { voice_id, text, emotion, intensity, language, speed, pitch, multi_speaker, episode_id, scene_id, scene_index, dialogue } = req.body;
 
     if (!text && (!dialogue || dialogue.length === 0)) {
       return res.status(400).json({ code: 400, data: null, message: 'text or dialogue is required', error: 'INVALID_PAYLOAD' });
@@ -235,6 +245,7 @@ router.post('/tts', async (req: Request, res: Response) => {
       pitch,
       episode_id,
       scene_id,
+      scene_index,
       multi_speaker,
     });
 
@@ -246,7 +257,7 @@ router.post('/tts', async (req: Request, res: Response) => {
       sceneId: scene_id,
     });
 
-    // Save Asset Version in Database
+    // Save Asset Version in Database & Update Episode Scene
     let savedVoiceAsset: any = null;
     try {
       const db = await getDatabaseProvider();
@@ -282,8 +293,70 @@ router.post('/tts', async (req: Request, res: Response) => {
         synth_id_metadata: synthIdResult.synthIdMetadata,
         created_at: new Date().toISOString(),
       });
+
+      // Update Episode Scene voiceover_url and captions in Database
+      if (episode_id) {
+        const ep = await db.getEpisodeById(episode_id);
+        if (ep && Array.isArray(ep.scenes)) {
+          const targetIndex = Number(scene_index) || (scene_id ? ep.scenes.findIndex((s: SceneEntity) => s.id === scene_id) + 1 : 1);
+          const scIdx = ep.scenes.findIndex((s: SceneEntity) => s.index === targetIndex || s.id === scene_id);
+          if (scIdx !== -1) {
+            const sc = ep.scenes[scIdx];
+            const curVoiceVersions: AssetVersion[] = Array.isArray(sc.voice_versions) ? [...sc.voice_versions] : [];
+            if (curVoiceVersions.length === 0 && sc.voiceover_url && sc.voiceover_url !== ttsResult.url) {
+              curVoiceVersions.push({
+                id: `v1_voice_${targetIndex}`,
+                image_url: sc.voiceover_url,
+                audio_url: sc.voiceover_url,
+                voiceover_url: sc.voiceover_url,
+                url: sc.voiceover_url,
+                created_at: new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newVoiceVer: AssetVersion = {
+              id: `ver_voice_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: ttsResult.url,
+              audio_url: ttsResult.url,
+              voiceover_url: ttsResult.url,
+              url: ttsResult.url,
+              prompt: text,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+              model: voice_id,
+            };
+            sc.voice_versions = [newVoiceVer, ...curVoiceVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
+            sc.voiceover_url = ttsResult.url;
+            sc.voice_start_us = ttsResult.start_us;
+            sc.voice_duration_us = ttsResult.duration_us;
+            if (ttsResult.cues && ttsResult.cues.length > 0) {
+              sc.captions_data = ttsResult.cues;
+            }
+            if (language) {
+              sc.translations = sc.translations || {};
+              sc.translations[language] = {
+                ...(sc.translations[language] || {}),
+                voiceover_url: ttsResult.url,
+                captions_data: ttsResult.cues,
+              };
+            }
+            ep.scenes[scIdx] = sc;
+            await db.updateEpisode(episode_id, { scenes: ep.scenes });
+            Logger.info(`[voicesRouter] Successfully updated episode ${episode_id} scene #${targetIndex} with new voiceover_url: ${ttsResult.url}`);
+
+            // Automatically sync Timeline in Database so GET /timeline returns updated URL immediately
+            const latest = await db.getLatestTimeline(episode_id);
+            if (latest) {
+              const series = ep.series_id ? await db.getSeriesById(ep.series_id) : null;
+              const syncedTimeline = TimelineService.syncTimelineWithScenes(ep, { ...latest }, series);
+              await db.saveTimeline(episode_id, syncedTimeline, { id: 'system', name: 'Studio System' }, `Update voiceover for scene #${targetIndex}`);
+              Logger.info(`[voicesRouter] Synchronized timeline for episode ${episode_id} with updated voiceover clip`);
+            }
+          }
+        }
+      }
     } catch (dbErr: any) {
-      Logger.warn(`[VoicesTTS] Failed to record asset in DB: ${dbErr.message}`);
+      Logger.warn(`[VoicesTTS] Failed to record asset or update episode in DB: ${dbErr.message}`);
     }
 
     res.set(synthIdResult.headers);

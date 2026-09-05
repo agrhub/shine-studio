@@ -6,11 +6,23 @@ export function loadSkill(skillFileName: string): string {
   const normalizedName = skillFileName.endsWith('.md') ? skillFileName : `${skillFileName}.md`;
   
   // Possible locations depending on runtime cwd and dist/src layout
+  const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
   const possiblePaths = [
+    // 1. Production bundle: dist/skills right beside dist/index.js
+    path.join(currentFileDir, 'skills', normalizedName),
+    // 2. Monorepo CWD (/app or workspace root)
+    path.join(process.cwd(), 'server', 'dist', 'skills', normalizedName),
+    path.join(process.cwd(), 'server', 'src', 'skills', normalizedName),
+    path.join(process.cwd(), 'server', 'skills', normalizedName),
+    // 3. Local dev CWD = server directory (tsx / ts-node)
     path.join(process.cwd(), 'src', 'skills', normalizedName),
     path.join(process.cwd(), 'skills', normalizedName),
-    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', normalizedName),
-    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'skills', normalizedName),
+    path.join(process.cwd(), 'dist', 'skills', normalizedName),
+    // 4. Relative to fileURLToPath (dev: src/utils/../skills; prod: dist/../src/skills)
+    path.resolve(currentFileDir, '../skills', normalizedName),
+    path.resolve(currentFileDir, '../src/skills', normalizedName),
+    path.resolve(currentFileDir, '../../server/src/skills', normalizedName),
+    path.resolve(currentFileDir, '../../src/skills', normalizedName),
   ];
 
   for (const p of possiblePaths) {

@@ -1,5 +1,3 @@
-import { GeminiClient } from '../gemini/GeminiClient.js';
-
 export interface MemoryItem {
   id: string;
   role: 'user' | 'assistant';
@@ -18,7 +16,6 @@ export interface KnowledgeGraphNode {
 export class MemoryEngine {
   private static sessionWindows: Map<string, MemoryItem[]> = new Map();
   private static knowledgeGraphs: Map<string, KnowledgeGraphNode[]> = new Map();
-  private static geminiClient: GeminiClient = new GeminiClient();
 
   /**
    * Tier 1: Sliding Window Session Memory (Keep last 20 messages)

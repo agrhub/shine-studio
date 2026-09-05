@@ -168,8 +168,17 @@ export class MasterPlanToolExecutors {
         ? scriptOutput.props.map((p: any) => EntityNormalizer.normalizeProp(p))
         : [];
 
+      const isRawJson = (str?: string) => {
+        const trimmed = (str || '').trim();
+        return trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.startsWith('```\n{') || trimmed.startsWith('```\r\n{');
+      };
+      const cleanScreenplay = (!scriptOutput.screenplay || isRawJson(scriptOutput.screenplay))
+        ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, episode.title)
+        : scriptOutput.screenplay;
+
       await db.updateEpisode(params.episodeId, {
         scenes: normalizedScenes,
+        screenplay: cleanScreenplay,
         reference_assets: {
           character_ids: allChars.map(c => c.id),
           location_ids: updatedLocations.map((l: any) => l.id),
@@ -213,7 +222,14 @@ export class MasterPlanToolExecutors {
       const finalGenre = contextData?.genre || masterPlanObj?.genre;
       const finalSynopsis = contextData?.synopsis || masterPlanObj?.synopsis || masterPlanObj?.storyCore?.coreAttraction || masterPlanObj?.story_core?.core_attraction || 'New dramatic micro-drama series';
       const finalCountry = contextData?.country || masterPlanObj?.country || 'United States';
-      const finalLanguage = contextData?.language || masterPlanObj?.language || 'en-US';
+      const finalLanguage = (contextData?.language || masterPlanObj?.language || 'en-US').trim();
+      if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(finalLanguage)) {
+        return {
+          success: false,
+          message: `Cannot create series: Invalid language code "${finalLanguage}". Must be a valid BCP-47 tag (e.g. "en-US", "vi-VN").`,
+          error: 'Invalid language code',
+        };
+      }
       const finalStyle = contextData?.visualStyle || masterPlanObj?.visual_style || masterPlanObj?.visualStyle || 'realistic';
       const finalStylePrompt = contextData?.visualStylePrompt || masterPlanObj?.visual_style_prompt || masterPlanObj?.visualStylePrompt || '';
       const finalRatio = contextData?.ratio || masterPlanObj?.ratio || '9:16';
@@ -351,7 +367,7 @@ export function createMasterPlanTools(context?: ToolContextParams): FunctionTool
 
     new FunctionTool({
       name: 'create_series',
-      description: 'Create and persist the finalized series into the database. Master plan and project context are automatically loaded from current session. After successful creation, IMMEDIATELY delegate to screenplay_writer_agent to generate the detailed shot-by-shot screenplay for Episode 1.',
+      description: 'CRITICAL CONSTRAINT: Call ONLY when the user EXPLICITLY commands "create series", "confirm series", "start series", "launch series", or "tạo series". FORBIDDEN to call when the user is asking to review, analyze, critique, check, or adjust characters, locations, synopsis, or master plan. If user intent is unclear, DO NOT call this tool; ask for clarification instead.',
       parameters: {
         type: Type.OBJECT,
         properties: {

@@ -3,7 +3,7 @@ import { emailService } from '@/services/EmailService.js';
 import { loadSkill } from '@/utils/SkillLoader.js';
 import { PromptLoader } from '@/utils/PromptLoader.js';
 import axios from 'axios';
-import { geminiClient } from '../ai/gemini/GeminiClient';
+import { aiProviderRouter } from '../ai/router/AIProviderRouter.js';
 import { EnvConfig } from '~/config/env';
 import { DeepResearch, LANGUAGE_NAMES, TrendTopic, MAX_TRENDS } from '~/types';
 
@@ -74,7 +74,7 @@ export class ParallelMCPClient {
     const prompt = PromptLoader.render('trend/trend_query_generator', { region });
 
     try {
-      const response = await geminiClient.generateText({
+      const response = await aiProviderRouter.generateText({
         prompt,
         jsonMode: true,
       });
@@ -114,7 +114,7 @@ export class ParallelMCPClient {
     });
 
     try {
-      const response = await geminiClient.generateText({
+      const response = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: trendSkill,
         jsonMode: true,
@@ -305,7 +305,7 @@ Return 3 concise bullet summaries:
 2. Platform censorship & content redlines in ${cleanCountry}
 3. Cultural sensitivities & taboos in ${cleanCountry}`;
 
-        const gRes = await geminiClient.generateText({
+        const gRes = await aiProviderRouter.generateText({
           prompt: searchPrompt,
           grounding: true,
           temperature: 0.2,

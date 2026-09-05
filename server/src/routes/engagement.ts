@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { requireAuth } from '../middleware/RequireAuth.js';
 import { directorAgent } from '../agents/DirectorAgent.js';
@@ -216,7 +216,7 @@ router.post('/analyze', requireAuth, async (req: Request, res: Response) => {
       commentsSummary,
     });
 
-    const rawResponse = await geminiClient.generateText({
+    const rawResponse = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an Audience Feedback Analysis AI specialized in short-form vertical drama viral retention.',
       jsonMode: true,
@@ -266,10 +266,10 @@ router.post('/feedback-to-script', requireAuth, async (req: Request, res: Respon
     const generatedResult = await directorAgent.runPipeline({
       title: series.title,
       genre: series.genre,
-      visualStyle: series.visual_style || 'realistic',
+      visual_style: series.visual_style || 'realistic',
       synopsis: augmentedSynopsis,
-      episodeNumber: targetEpisodeNumber || 2,
-      totalEpisodes: series.episode_count || 20,
+      episode_number: targetEpisodeNumber || 2,
+      total_episodes: series.episode_count || 20,
     });
 
     return res.json({

@@ -4,21 +4,7 @@ import { PubSubService, RenderJobPayload, RenderProgressEvent } from '@/services
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { Logger } from '@/utils/logger.js';
 import os from 'os';
-
-export interface CloudRunClusterStatus {
-  serviceName: string;
-  region: string;
-  renderUrl: string;
-  status: 'ONLINE' | 'STANDBY' | 'DEGRADED';
-  activeWorkers: number;
-  maxConcurrency: number;
-  queueDepth: number;
-  systemLoad: {
-    cpuCores: number;
-    freeMemoryMb: number;
-    totalMemoryMb: number;
-  };
-}
+import { CloudRunClusterStatus } from '~/types';
 
 export class CloudRunRenderService {
   private static instance: CloudRunRenderService | null = null;
@@ -34,7 +20,7 @@ export class CloudRunRenderService {
   /**
    * Dispatches a batch render job to Google Cloud Run workers via Pub/Sub or Direct Trigger.
    */
-  async dispatchRenderJob(job: RenderJobPayload): Promise<{ jobId: string; status: string; queueType: string }> {
+  async dispatchRenderJob(job: RenderJobPayload): Promise<{ job_id: string; status: string; queue_type: string }> {
     Logger.info(`[CloudRunRenderService] Dispatching render job ${job.jobId} for Episode: ${job.episodeId}`);
 
     // 1. Emit initial queued progress event
@@ -60,9 +46,9 @@ export class CloudRunRenderService {
         });
 
         return {
-          jobId: job.jobId,
+          job_id: job.jobId,
           status: res.data?.status || 'dispatched',
-          queueType: 'cloud_run_worker',
+          queue_type: 'cloud_run_worker',
         };
       } catch (err: any) {
         Logger.warn(`[CloudRunRenderService] Direct Cloud Run call failed (${err.message}), falling back to Pub/Sub queue`);
@@ -76,9 +62,9 @@ export class CloudRunRenderService {
     this.simulateLocalRenderPipeline(job);
 
     return {
-      jobId: job.jobId,
+      job_id: job.jobId,
       status: 'queued',
-      queueType: messageId.startsWith('local') ? 'local_event_queue' : 'gcp_pubsub',
+      queue_type: messageId.startsWith('local') ? 'local_event_queue' : 'gcp_pubsub',
     };
   }
 
@@ -115,9 +101,9 @@ export class CloudRunRenderService {
       region: cloudRunConfig.region || 'us-central1',
       renderUrl: cloudRunConfig.renderUrl || 'Headless OpenVideo Local Compositor',
       status: clusterStatus,
-      activeWorkers,
+      activeWorkers: activeWorkers,
       maxConcurrency: 80,
-      queueDepth,
+      queueDepth: queueDepth,
       systemLoad: {
         cpuCores: os.cpus().length,
         freeMemoryMb: Math.round(freeMem / (1024 * 1024)),

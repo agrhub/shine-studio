@@ -49,7 +49,7 @@ try {
 }
 
 // ─── Google Cloud Storage for Direct-to-GCS Render Upload (No Disk) ───────────
-const gcsBucketName = process.env.GCS_BUCKET || process.env.GOOGLE_CLOUD_STORAGE_BUCKET || process.env.GCP_STORAGE_BUCKET;
+const gcsBucketName = process.env.GCS_BUCKET || process.env.GCS_BUCKET_NAME || process.env.GOOGLE_CLOUD_STORAGE_BUCKET || process.env.GCP_STORAGE_BUCKET || 'shine-studio-media';
 let storage: Storage | null = null;
 
 if (gcsBucketName) {
@@ -77,8 +77,10 @@ let failedJobsCount = 0;
 
 /**
  * Normalizes and sanitizes project timeline data:
- * 1. Automatically resolves relative URLs (/api/...) by prefixing with SHINE_APP_URL
- * 2. Prunes dead clip references from tracks
+ * 1. Strips localhost / 127.0.0.1 prefixes (from dev machines)
+ * 2. Automatically resolves relative URLs (/api/...) by prefixing with SHINE_APP_URL
+ * 3. Preserves all valid cloud URLs (GCS, S3, CDN, signed URLs) untouched
+ * 4. Prunes dead clip references from tracks
  */
 function sanitizeProjectData(projectData: any, baseUrl: string): any {
   if (!projectData || typeof projectData !== 'object') return projectData;
@@ -100,18 +102,11 @@ function sanitizeProjectData(projectData: any, baseUrl: string): any {
           if (localMatch) {
             clip[prop] = `${base}${localMatch[1]}`;
           }
-          // 2. Direct raw GCS storage URLs (e.g. https://storage.googleapis.com/bucket/key) -> worker internal GCS proxy
-          else if (val.startsWith('https://storage.googleapis.com/')) {
-            const gcsMatch = val.match(/^https:\/\/storage\.googleapis\.com\/[^/]+\/(.+)$/);
-            if (gcsMatch && gcsMatch[1]) {
-              const cleanKey = decodeURIComponent(gcsMatch[1].split('?')[0]);
-              clip[prop] = `${base}/api/assets/file/${cleanKey}`;
-            }
-          }
-          // 3. Relative endpoints (/api/...)
+          // 2. Relative endpoints (/api/...)
           else if (val.startsWith('/')) {
             clip[prop] = `${base}${val}`;
           }
+          // 3. Any fully qualified URLs (https://storage.googleapis.com/..., CDN, signed URLs) are kept intact
         }
       }
     }
@@ -363,7 +358,7 @@ app.post('/render', async (req: Request, res: Response) => {
         bitrate: options?.bitrate || 12_000_000,
         audio: options?.audio !== undefined ? options.audio : true,
         prioritizeSpeed: options?.prioritizeSpeed !== undefined ? options.prioritizeSpeed : false,
-        timeout: options?.timeout || 600_000, // 10 minutes
+        timeout: options?.timeout || 300_000, // 5 minutes safety timeout
         backgroundColor: options?.backgroundColor || "#111111",
         videoCodec: options?.videoCodec || (options?.format === "webm" ? "vp09.00.51.08" : "avc1.640033"),
         audioCodec: options?.audioCodec || (options?.format === "webm" ? "opus" : "aac"),

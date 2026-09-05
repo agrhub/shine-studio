@@ -31,7 +31,7 @@ You are generating shots for **Scene {{sceneIndex}} of {{totalScenes}}**:
 
 ### Critical Dialogue & Single-Speaker Mandate (MANDATORY):
 - **SINGLE SPEAKER PER SHOT RULE**: Each shot MUST contain AT MOST ONE dialogue line from EXACTLY ONE character. Multi-character dialogue within the same shot is STRICTLY FORBIDDEN. Conversations between characters MUST be split across separate consecutive shots (e.g. Shot 1: Character A speaks -> Shot 2: Character B reacts and replies).
-- **High Dialogue Density**: At least 75% to 85% of shots MUST have spoken dialogue or narrator voiceover. Never allow shots to remain silent for more than 1.5 seconds without narrative purpose.
+- **High Dialogue Density & Duration Coverage**: Spoken dialogue and voiceover audio MUST span 80% to 90% of total episode duration. At least 85% to 95% of shots MUST have spoken dialogue or voiceover. Each shot's line length must occupy 70%–85% of that shot's duration (~2.0–2.4 words per second; avoid 1-word grunts). Never allow shots to remain silent without deliberate dramatic purpose.
 - **Inner Monologue / Narrator**: When a character is alone, scheming, observing, or in intense action: Use **Inner Monologue** (`character: "[Character Name] (Inner Monologue)"`) or **Narrator Voiceover** (`character: "Narrator"`).
 - **Speech Timestamps**: Specify `speech_start_sec` (e.g. `0.5`) and `speech_end_sec` (e.g. `3.8`) for the spoken line within the shot.
 - **Voice Consistency**: Do NOT invent `voice_id` in dialogue; the system automatically resolves the character's fixed `voice_id` from their Character Profile.

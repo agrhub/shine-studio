@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { nanoid } from 'nanoid';
-import { geminiClient } from '@/integrations/ai/gemini/GeminiClient.js';
 import { aiProviderRouter } from '@/integrations/ai/router/AIProviderRouter.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { SynthIDService } from '@/services/SynthIDService.js';
@@ -8,6 +7,8 @@ import { CreditService } from '@/services/CreditService.js';
 import { SfxService } from '@/services/SfxService.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { getUserId } from '@/utils/auth.js';
+import { Logger } from '@/utils/logger.js';
+import type { AssetVersion, SceneEntity, EpisodeEntity } from '@/types.js';
 
 const router = Router();
 
@@ -226,7 +227,7 @@ router.post('/sfx', async (req: Request, res: Response) => {
 // POST /api/audio/music — Search or generate background music
 router.post('/music', async (req: Request, res: Response) => {
   try {
-    const { prompt, duration, genre, visualStyle } = req.body;
+    const { prompt, duration, genre, visualStyle, episode_id, scene_id, scene_index } = req.body;
     const searchPrompt = prompt || 'dramatic cinematic background music';
     const result = await SfxService.getSceneAudio({
       prompt: searchPrompt,
@@ -234,6 +235,82 @@ router.post('/music', async (req: Request, res: Response) => {
       genre,
       visualStyle,
     });
+
+    if (episode_id) {
+      try {
+        const db = await getDatabaseProvider();
+        const ep = await db.getEpisodeById(episode_id);
+        if (ep) {
+          let updated = false;
+          if (Array.isArray(ep.scenes) && (scene_id || scene_index !== undefined)) {
+            const sIdx = scene_index !== undefined
+              ? ep.scenes.findIndex((s: any) => Number(s.index || s.scene_number) === Number(scene_index))
+              : ep.scenes.findIndex((s: any) => s.id === scene_id);
+            if (sIdx !== -1) {
+              const curBgmVersions = Array.isArray(ep.scenes[sIdx].bgm_versions) ? [...ep.scenes[sIdx].bgm_versions] : [];
+              if (curBgmVersions.length === 0 && ep.scenes[sIdx].bgm_url && ep.scenes[sIdx].bgm_url !== result.audioUrl) {
+                curBgmVersions.push({
+                  id: `v1_bgm_${sIdx + 1}`,
+                  image_url: ep.scenes[sIdx].bgm_url,
+                  audio_url: ep.scenes[sIdx].bgm_url,
+                  bgm_url: ep.scenes[sIdx].bgm_url,
+                  url: ep.scenes[sIdx].bgm_url,
+                  created_at: new Date().toISOString(),
+                  is_selected: false,
+                });
+              }
+              const newBgmVer: AssetVersion = {
+                id: `ver_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                image_url: result.audioUrl,
+                audio_url: result.audioUrl,
+                bgm_url: result.audioUrl,
+                url: result.audioUrl,
+                prompt: searchPrompt,
+                created_at: new Date().toISOString(),
+                is_selected: true,
+              };
+              ep.scenes[sIdx].bgm_versions = [newBgmVer, ...curBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
+              ep.scenes[sIdx].bgm_url = result.audioUrl;
+              updated = true;
+            }
+          }
+          if (!ep.bgm_url || !scene_id) {
+            const curEpBgmVersions: AssetVersion[] = Array.isArray(ep.bgm_versions) ? [...ep.bgm_versions] : [];
+            if (curEpBgmVersions.length === 0 && ep.bgm_url && ep.bgm_url !== result.audioUrl) {
+              curEpBgmVersions.push({
+                id: `v1_ep_bgm_${ep.id}`,
+                image_url: ep.bgm_url,
+                audio_url: ep.bgm_url,
+                bgm_url: ep.bgm_url,
+                url: ep.bgm_url,
+                created_at: new Date().toISOString(),
+                is_selected: false,
+              });
+            }
+            const newEpBgmVer: AssetVersion = {
+              id: `ver_ep_bgm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              image_url: result.audioUrl,
+              audio_url: result.audioUrl,
+              bgm_url: result.audioUrl,
+              url: result.audioUrl,
+              prompt: searchPrompt,
+              created_at: new Date().toISOString(),
+              is_selected: true,
+            };
+            ep.bgm_versions = [newEpBgmVer, ...curEpBgmVersions.map((v: AssetVersion) => ({ ...v, is_selected: false }))];
+            ep.bgm_url = result.audioUrl;
+            updated = true;
+          }
+          if (updated) {
+            await db.updateEpisode(ep.id, { bgm_url: ep.bgm_url, bgm_versions: ep.bgm_versions, scenes: ep.scenes });
+            const { TimelineService } = await import('@/services/TimelineService.js');
+            await TimelineService.getOrBuildEpisodeTimeline(ep.id);
+          }
+        }
+      } catch (epErr: any) {
+        Logger.warn(`[audioRouter.music] Auto-update episode BGM notice: ${epErr.message}`);
+      }
+    }
 
     return res.json({
       code: 200,
@@ -262,7 +339,7 @@ router.post('/transcribe', async (req: Request, res: Response) => {
     }
 
     const prompt = `Listen to this audio track carefully and generate word-by-word or phrase-level subtitle transcription in language "${language || 'en'}". Return JSON with array of { "start_ms": number, "end_ms": number, "text": string }`;
-    const jsonOutput = await geminiClient.generateText({
+    const jsonOutput = await aiProviderRouter.generateText({
       prompt,
       jsonMode: true,
       systemInstruction: 'You are an expert audio transcription and subtitle timing engine.',

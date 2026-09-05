@@ -1,8 +1,9 @@
-import { geminiClient, GEMINI_SUPPORTED_VOICES, GEMINI_MALE_VOICES, GEMINI_FEMALE_VOICES, GEMINI_NEUTRAL_VOICES } from '../integrations/ai/gemini/GeminiClient.js';
+import { GEMINI_SUPPORTED_VOICES, GEMINI_MALE_VOICES, GEMINI_FEMALE_VOICES, GEMINI_NEUTRAL_VOICES } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { loadSkill } from '../utils/SkillLoader.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
-import { getLanguageForCountry } from '@/utils/LanguageMapping.js';
+import { getLanguageInfo, assertValidBCP47 } from '@/utils/LanguageMapping.js';
 import { getVisualStylePrompt } from '@/constants/VisualStyles.js';
 import { MasterPlanSchema, validateAiJson } from '@/schemas/AISchemas.js';
 import { EpisodeSkeleton, MasterPlanOutput, PaywallHook, StorySkeletonInput } from '~/types.js';
@@ -144,7 +145,9 @@ export class StorySkeletonAgent {
     const totalDurationSeconds = Math.min(Math.max(Number(input.episode_duration_seconds), 30), 600);
     const durationDisplay = `${Math.floor(totalDurationSeconds / 60)}m ${totalDurationSeconds % 60 ? `${totalDurationSeconds % 60}s` : ''}`.trim();
     const country = input.country || 'United States';
-    const langInfo = input.language ? getLanguageForCountry(input.language) : getLanguageForCountry(country);
+    const languageCode = input.language || 'en-US';
+    assertValidBCP47(languageCode);
+    const langInfo = getLanguageInfo(languageCode);
     const skillInstruction = loadSkill('script_skeleton');
 
     if (!skillInstruction) {
@@ -200,7 +203,7 @@ export class StorySkeletonAgent {
       episodeScopeInstruction,
     });
 
-    const rawText = await geminiClient.generateText({
+    const rawText = await aiProviderRouter.generateText({
       prompt: corePrompt,
       systemInstruction: `${skillInstruction}\n\nCRITICAL LANGUAGE MANDATE: ${langInfo.promptInstruction}`,
       jsonMode: true,
@@ -263,7 +266,7 @@ export class StorySkeletonAgent {
     masterPlan.total_episodes = totalEpisodes;
     masterPlan.total_duration_seconds = totalDurationSeconds;
     masterPlan.country = country;
-    masterPlan.language = langInfo.name;
+    masterPlan.language = languageCode;
     masterPlan.visual_style = input.visual_style || masterPlan.visual_style || 'realistic';
     masterPlan.visual_style_prompt = input.visual_style_prompt || masterPlan.visual_style_prompt || getVisualStylePrompt(masterPlan.visual_style_prompt);
     masterPlan.ratio = input.ratio || masterPlan.ratio || '9:16';
@@ -407,7 +410,7 @@ export class StorySkeletonAgent {
     });
 
     try {
-      const rawText = await geminiClient.generateText({
+      const rawText = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: `${skillInstruction}\n\n${languageInstruction || ''}`,
         jsonMode: true,

@@ -1,7 +1,8 @@
 Execute a real-time viral micro-drama trend scan for target region: "{{region}}".
 
 TARGET OUTPUT LANGUAGE: {{languageName}} (Locale code: {{lang}}).
-IMPORTANT: All text fields ("topic", "description", "trope", "competitor_hook", "genre") MUST be written fluently in {{languageName}} so the end-user can read the viral trends in their configured interface language.
+IMPORTANT: Text fields ("topic", "description", "trope", "competitor_hook") MUST be written fluently in {{languageName}}.
+The "genre" field MUST NOT be translated; it MUST strictly be one of these 6 IDs: "suspense", "revenge", "romance", "satire", "fantasy", "scifi".
 
 TASK:
 1. Generate and extract exactly {{maxTrends}} distinct, high-converting viral drama trends and micro-drama tropes for "{{region}}" (minimum 16-20 items).

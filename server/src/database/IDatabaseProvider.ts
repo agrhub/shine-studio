@@ -19,6 +19,7 @@ import type {
   AIAccountType,
   IAIAccount,
   FlowAccountEntity,
+  AntigravityAccountEntity,
   TimelineSnapshotEntity,
   CreditTransactionEntity,
   AssetEntity,
@@ -83,6 +84,11 @@ export interface IDatabaseProvider {
   upsertFlowAccount(account: FlowAccountEntity): Promise<FlowAccountEntity>;
   deleteFlowAccount(idOrEmail: string): Promise<boolean>;
 
+  // Antigravity Accounts
+  getAntigravityAccounts(status?: string): Promise<AntigravityAccountEntity[]>;
+  upsertAntigravityAccount(account: AntigravityAccountEntity): Promise<AntigravityAccountEntity>;
+  deleteAntigravityAccount(idOrEmail: string): Promise<boolean>;
+
   // Assets Library & Storage
   saveAsset(asset: AssetEntity): Promise<AssetEntity>;
   getAssets(filter?: { user_id?: string; series_id?: string; episode_id?: string; scene_id?: string; type?: string; character_id?: string; search?: string }): Promise<AssetEntity[]>;
@@ -103,7 +109,8 @@ export interface IDatabaseProvider {
 
   // Worker Telemetry & Cluster Monitoring
   recordWorkerHeartbeat(heartbeat: WorkerHeartbeatEntity): Promise<void>;
-  getWorkerNodes(): Promise<WorkerHeartbeatEntity[]>;
+  getWorkerNodes(options?: { activeOnly?: boolean }): Promise<WorkerHeartbeatEntity[]>;
+  pruneOfflineWorkers?(): Promise<number>;
   recordWorkerJob(job: WorkerJobEntity): Promise<void>;
   getWorkerJobs(filter?: { status?: string; limit?: number }): Promise<WorkerJobEntity[]>;
   getClusterMetrics(): Promise<ClusterMetricsSummary>;

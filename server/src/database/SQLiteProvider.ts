@@ -10,6 +10,7 @@ import {
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
+  AntigravityAccountEntity,
   CreditTransactionEntity,
   AssetEntity,
   WorkerHeartbeatEntity,
@@ -35,6 +36,7 @@ export class SQLiteProvider implements IDatabaseProvider {
   private seriesStore: SeriesEntity[] = [];
   private episodesStore: EpisodeEntity[] = [];
   private flowStore: FlowAccountEntity[] = [];
+  private antigravityStore: AntigravityAccountEntity[] = [];
   private timelineSnapshotsStore: any[] = [];
   private systemSettingsStore: Map<string, any> = new Map();
   private workerHeartbeatsStore: Map<string, WorkerHeartbeatEntity> = new Map();
@@ -140,6 +142,25 @@ export class SQLiteProvider implements IDatabaseProvider {
           status TEXT DEFAULT 'ACTIVE',
           credits_remaining INTEGER DEFAULT 100,
           last_synced_at DATETIME
+        );
+
+        CREATE TABLE IF NOT EXISTS antigravity_accounts (
+          id TEXT PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          name TEXT,
+          avatar TEXT,
+          access_token TEXT NOT NULL,
+          refresh_token TEXT NOT NULL,
+          expires_at INTEGER,
+          project_id TEXT,
+          tier TEXT,
+          status TEXT DEFAULT 'ACTIVE',
+          error_message TEXT,
+          rate_limit_reset_at INTEGER,
+          request_count INTEGER DEFAULT 0,
+          last_used_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS timeline_snapshots (
@@ -1091,6 +1112,98 @@ export class SQLiteProvider implements IDatabaseProvider {
     }
   }
 
+  async getAntigravityAccounts(status?: string): Promise<AntigravityAccountEntity[]> {
+    let list: AntigravityAccountEntity[] = [];
+    if (this.isFallback) {
+      list = status ? this.antigravityStore.filter((f) => f.status === status) : this.antigravityStore;
+    } else {
+      if (status) {
+        list = this.db.prepare('SELECT * FROM antigravity_accounts WHERE status = ? ORDER BY request_count ASC, updated_at DESC').all(status) as AntigravityAccountEntity[];
+      } else {
+        list = this.db.prepare('SELECT * FROM antigravity_accounts ORDER BY updated_at DESC, created_at DESC').all() as AntigravityAccountEntity[];
+      }
+    }
+    const map = new Map<string, AntigravityAccountEntity>();
+    for (const acc of list) {
+      const emailKey = (acc.email || '').trim().toLowerCase();
+      if (!emailKey) continue;
+      if (!map.has(emailKey)) {
+        map.set(emailKey, acc);
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  async upsertAntigravityAccount(account: AntigravityAccountEntity): Promise<AntigravityAccountEntity> {
+    const email = (account.email || '').trim();
+    const id = account.id || nanoid();
+    const preparedAccount: AntigravityAccountEntity = {
+      ...account,
+      id,
+      email,
+      status: account.status || 'ACTIVE',
+      request_count: account.request_count || 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (this.isFallback) {
+      const idx = this.antigravityStore.findIndex((f) => f.email?.toLowerCase() === email.toLowerCase());
+      if (idx >= 0) this.antigravityStore[idx] = { ...this.antigravityStore[idx], ...preparedAccount };
+      else this.antigravityStore.push(preparedAccount);
+      return preparedAccount;
+    }
+
+    this.db.prepare(`
+      INSERT INTO antigravity_accounts (
+        id, email, name, avatar, access_token, refresh_token,
+        expires_at, project_id, tier, status, error_message,
+        rate_limit_reset_at, request_count, last_used_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(email) DO UPDATE SET
+        name = COALESCE(excluded.name, antigravity_accounts.name),
+        avatar = COALESCE(excluded.avatar, antigravity_accounts.avatar),
+        access_token = excluded.access_token,
+        refresh_token = COALESCE(excluded.refresh_token, antigravity_accounts.refresh_token),
+        expires_at = excluded.expires_at,
+        project_id = COALESCE(excluded.project_id, antigravity_accounts.project_id),
+        tier = COALESCE(excluded.tier, antigravity_accounts.tier),
+        status = excluded.status,
+        error_message = excluded.error_message,
+        rate_limit_reset_at = excluded.rate_limit_reset_at,
+        request_count = excluded.request_count,
+        last_used_at = excluded.last_used_at,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      preparedAccount.id,
+      email,
+      preparedAccount.name || null,
+      preparedAccount.avatar || null,
+      preparedAccount.access_token,
+      preparedAccount.refresh_token,
+      preparedAccount.expires_at || null,
+      preparedAccount.project_id || null,
+      preparedAccount.tier || null,
+      preparedAccount.status,
+      preparedAccount.error_message || null,
+      preparedAccount.rate_limit_reset_at || null,
+      preparedAccount.request_count || 0,
+      preparedAccount.last_used_at || null
+    );
+    return preparedAccount;
+  }
+
+  async deleteAntigravityAccount(idOrEmail: string): Promise<boolean> {
+    this.antigravityStore = this.antigravityStore.filter((f) => f.id !== idOrEmail && f.email !== idOrEmail);
+    if (this.isFallback) return true;
+    try {
+      this.db.prepare('DELETE FROM antigravity_accounts WHERE id = ? OR email = ?').run(idOrEmail, idOrEmail);
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
   async saveTimeline(
     episode_id: string,
     timeline_data: IProject,
@@ -1363,14 +1476,66 @@ export class SQLiteProvider implements IDatabaseProvider {
     });
   }
 
-  async getWorkerNodes(): Promise<WorkerHeartbeatEntity[]> {
+  async getWorkerNodes(options?: { activeOnly?: boolean }): Promise<WorkerHeartbeatEntity[]> {
     const now = Date.now();
-    return Array.from(this.workerHeartbeatsStore.values()).map(w => {
-      const last = w.last_heartbeat || (w as any).lastHeartbeat || 0;
-      const ageMs = now - new Date(last).getTime();
-      const status = ageMs > 120000 ? 'OFFLINE' : w.status;
-      return { ...w, status };
+    const result: WorkerHeartbeatEntity[] = [];
+
+    for (const [id, w] of Array.from(this.workerHeartbeatsStore.entries())) {
+      const raw: any = w;
+      const last = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || 0;
+      const ageMs = last ? (now - new Date(last).getTime()) : Infinity;
+      const status = ageMs > 90000 ? 'OFFLINE' : (raw.status || 'ONLINE');
+
+      // Auto-prune dead workers older than 10 minutes
+      if (ageMs > 10 * 60 * 1000) {
+        this.workerHeartbeatsStore.delete(id);
+        continue;
+      }
+
+      if (options?.activeOnly && status === 'OFFLINE') {
+        continue;
+      }
+
+      result.push({
+        ...raw,
+        worker_id: id,
+        workerId: id,
+        worker_name: raw.worker_name || raw.workerName || id,
+        workerName: raw.worker_name || raw.workerName || id,
+        service_name: raw.service_name || raw.serviceName || 'shine-render-worker',
+        serviceName: raw.service_name || raw.serviceName || 'shine-render-worker',
+        cpu_usage_pct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        cpuUsagePct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        memory_usage_mb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        memoryUsageMb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        last_heartbeat: last ? new Date(last).toISOString() : '',
+        lastHeartbeat: last ? new Date(last).toISOString() : '',
+        status,
+      });
+    }
+
+    result.sort((a: any, b: any) => {
+      if (a.status !== 'OFFLINE' && b.status === 'OFFLINE') return -1;
+      if (a.status === 'OFFLINE' && b.status !== 'OFFLINE') return 1;
+      return new Date(b.last_heartbeat || 0).getTime() - new Date(a.last_heartbeat || 0).getTime();
     });
+
+    return result;
+  }
+
+  async pruneOfflineWorkers(): Promise<number> {
+    const now = Date.now();
+    let count = 0;
+    for (const [id, w] of Array.from(this.workerHeartbeatsStore.entries())) {
+      const raw: any = w;
+      const last = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || 0;
+      const ageMs = last ? (now - new Date(last).getTime()) : Infinity;
+      if (ageMs > 90000 || raw.status === 'OFFLINE') {
+        this.workerHeartbeatsStore.delete(id);
+        count++;
+      }
+    }
+    return count;
   }
 
   async recordWorkerJob(job: WorkerJobEntity): Promise<void> {

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 
 export const culturalAdaptRouter = Router();
@@ -15,7 +15,7 @@ culturalAdaptRouter.post('/cultural-adapt', async (req: Request, res: Response) 
       language,
     });
 
-    const raw = await geminiClient.generateText({
+    const raw = await aiProviderRouter.generateText({
       prompt,
       systemInstruction: 'You are an expert Micro-Drama Cultural Localization Engine specializing in adapting Asian web-novel tropes for Western/Global streaming audiences.',
       jsonMode: true,

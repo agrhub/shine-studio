@@ -760,14 +760,35 @@ adminRouter.get('/render-cluster', async (_req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/workers — List all registered worker nodes
-adminRouter.get('/workers', async (_req: Request, res: Response) => {
+// GET /api/admin/workers — List registered worker nodes (supports ?status=online or ?status=all)
+adminRouter.get('/workers', async (req: Request, res: Response) => {
   try {
+    const statusParam = (req.query.status as string || '').toLowerCase();
+    const activeOnly = statusParam === 'online' || statusParam === 'active';
     const db = await getDatabaseProvider();
-    const nodes = await db.getWorkerNodes();
+    let nodes = await db.getWorkerNodes({ activeOnly });
+
+    if (statusParam === 'offline') {
+      nodes = nodes.filter(n => n.status === 'OFFLINE');
+    }
+
     return res.json({ code: 200, data: nodes, message: 'Worker nodes retrieved', error: null });
   } catch (err: any) {
     return res.status(500).json({ code: 500, data: [], message: err.message, error: 'WORKERS_ERROR' });
+  }
+});
+
+// DELETE /api/admin/workers/offline — Clean up stale offline worker heartbeats
+adminRouter.delete('/workers/offline', async (_req: Request, res: Response) => {
+  try {
+    const db = await getDatabaseProvider();
+    let count = 0;
+    if (typeof (db as any).pruneOfflineWorkers === 'function') {
+      count = await (db as any).pruneOfflineWorkers();
+    }
+    return res.json({ code: 200, message: `Cleaned up ${count} offline worker records`, data: { prunedCount: count }, error: null });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, message: err.message, error: 'PRUNE_ERROR' });
   }
 });
 

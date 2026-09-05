@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { geminiClient } from '@/integrations/ai/gemini/GeminiClient.js';
+import { aiProviderRouter } from '@/integrations/ai/router/AIProviderRouter.js';
 import { ttsService } from '@/services/TtsService.js';
 import { DemucsAudioService } from '@/services/DemucsAudioService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
@@ -72,7 +73,7 @@ Respond with a JSON array where each object has:
 - line: string (translated line in ${targetLanguage}, containing ONLY spoken dialogue)
 - speech_tone: string`;
 
-      const raw = await geminiClient.generateText({
+      const raw = await aiProviderRouter.generateText({
         prompt,
         systemInstruction: 'You are an expert film dialogue localization translator. Return ONLY a valid JSON array of SceneDialogue objects without character name prefixes in the line property.',
         jsonMode: true,
@@ -486,22 +487,27 @@ Respond with ONLY a JSON object matching this schema:
           speech_tone: speechTone || undefined,
         });
 
-        if (ttsRes?.audioUrl && !ttsRes.audioUrl.includes('default')) {
+        if (ttsRes?.status === 'READY' && ttsRes.audioUrl && !ttsRes.audioUrl.startsWith('/api/assets/file/voice_')) {
           voiceoverUrl = ttsRes.audioUrl;
           if (ttsRes.durationSeconds && ttsRes.durationSeconds > 0) {
             totalVoiceDurationUs = Math.round(ttsRes.durationSeconds * 1_000_000);
           }
         } else {
           // Fallback to Gemini Audio
+          Logger.info(`[CaptionService] Primary TTS not ready, falling back to Gemini Native Audio for: "${dialogueText.substring(0, 50)}..."`);
           const generated = await geminiClient.generateAudio(dialogueText, targetVoiceId, undefined, {
             speed: speechSpeed,
             emotion: emotion || undefined,
             speech_tone: speechTone || undefined,
           });
-          const s3Res = await StorageFactory.uploadMedia(generated.url, 'audio', 'wav', generated.mimeType || 'audio/wav');
-          voiceoverUrl = `/api/assets/file/${s3Res.key}`;
-          if (generated.durationSeconds && generated.durationSeconds > 0) {
-            totalVoiceDurationUs = Math.round(generated.durationSeconds * 1_000_000);
+          if (generated?.url) {
+            const s3Res = await StorageFactory.uploadMedia(generated.url, 'audio', 'wav', generated.mimeType || 'audio/wav');
+            voiceoverUrl = `/api/assets/file/${s3Res.key}`;
+            if (generated.durationSeconds && generated.durationSeconds > 0) {
+              totalVoiceDurationUs = Math.round(generated.durationSeconds * 1_000_000);
+            }
+          } else {
+            Logger.warn(`[CaptionService] Both primary TTS and Gemini Audio fallback failed for dialogue: "${dialogueText.substring(0, 50)}..."`);
           }
         }
       } catch (e: any) {
@@ -608,15 +614,15 @@ Respond with ONLY a JSON object matching this schema:
     }
 
     return {
-      videoUrl,
-      bgmUrl,
-      voiceoverUrl,
+      videoUrl: videoUrl,
+      bgmUrl: bgmUrl,
+      voiceoverUrl: voiceoverUrl,
       voiceId: targetVoiceId,
       voiceStartUs: speechStartUs,
       voiceDurationUs: totalVoiceDurationUs,
       speechOnsetDetected: hasSpeechActivity,
       words: extractedWords,
-      captionsData,
+      captionsData: captionsData,
     };
   }
 

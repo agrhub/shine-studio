@@ -3,11 +3,24 @@ import { Logger } from '@/utils/logger.js';
 
 // ─── 1. Core Asset Schemas ──────────────────────────────────────────────────
 
+export const AssetVersionSchema = z.object({
+  id: z.string(),
+  image_url: z.string(),
+  prompt: z.string().optional(),
+  negative_prompt: z.string().optional(),
+  created_at: z.string(),
+  is_selected: z.boolean().optional(),
+  aspect_ratio: z.string().optional(),
+  model: z.string().optional(),
+});
+
 export const CharacterWardrobeVariantSchema = z.object({
   variant_id: z.string().min(1, 'Wardrobe variant_id is required'),
   name: z.string().min(1, 'Wardrobe variant name is required'),
   clothing_and_accessories: z.string().min(1, 'Wardrobe clothing_and_accessories is required'),
   image_url: z.string().optional().nullable(),
+  prompt: z.string().optional(),
+  versions: z.array(AssetVersionSchema).optional().default([]),
   associated_scenes: z.array(z.number()).optional().default([]),
 });
 
@@ -36,6 +49,8 @@ export const CharacterSeriesEntitySchema = z.object({
   empathy_elements: z.string().optional().default(''),
   avatar: z.string().optional().nullable(),
   image_url: z.string().optional().nullable(),
+  prompt: z.string().optional(),
+  versions: z.array(AssetVersionSchema).optional().default([]),
   lora_model: z.string().optional().nullable(),
   created_at: z.string().optional(),
 });
@@ -47,6 +62,8 @@ export const LocationAssetSchema = z.object({
   physical_characteristics: z.string().min(1, 'Location physical_characteristics is required'),
   time_of_day: z.string().optional().default('DAY'),
   image_url: z.string().optional().nullable(),
+  prompt: z.string().optional(),
+  versions: z.array(AssetVersionSchema).optional().default([]),
   frame_description: z.string().optional(),
 });
 
@@ -56,6 +73,8 @@ export const PropAssetSchema = z.object({
   name: z.string().min(1, 'Prop name is required'),
   physical_characteristics: z.string().min(1, 'Prop physical_characteristics is required'),
   image_url: z.string().optional().nullable(),
+  prompt: z.string().optional(),
+  versions: z.array(AssetVersionSchema).optional().default([]),
   frame_description: z.string().optional(),
   owner: z.string().optional(),
   status: z.string().optional(),

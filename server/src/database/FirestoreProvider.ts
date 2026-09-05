@@ -8,6 +8,7 @@ import {
   SeriesEntity,
   EpisodeEntity,
   FlowAccountEntity,
+  AntigravityAccountEntity,
   CreditTransactionEntity,
   AssetEntity,
   WorkerHeartbeatEntity,
@@ -789,6 +790,78 @@ export class FirestoreProvider implements IDatabaseProvider {
     return true;
   }
 
+  // ==================== Antigravity Accounts ====================
+  public async getAntigravityAccounts(status?: string): Promise<AntigravityAccountEntity[]> {
+    let query: FirebaseFirestore.Query = this.db.collection('antigravity_accounts');
+    if (status) {
+      query = query.where('status', '==', status);
+    }
+    const snapshot = await query.get();
+    const list = snapshot.docs.map(doc => {
+      const data = doc.data() as AntigravityAccountEntity;
+      return { ...data, id: doc.id || data.id };
+    });
+
+    const map = new Map<string, AntigravityAccountEntity>();
+    for (const acc of list) {
+      const emailKey = (acc.email || '').trim().toLowerCase();
+      if (!emailKey) continue;
+      const existing = map.get(emailKey);
+      if (!existing || new Date(acc.updated_at || 0).getTime() > new Date(existing.updated_at || 0).getTime()) {
+        map.set(emailKey, acc);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => (a.request_count || 0) - (b.request_count || 0));
+  }
+
+  public async upsertAntigravityAccount(account: AntigravityAccountEntity): Promise<AntigravityAccountEntity> {
+    const email = (account.email || '').trim();
+    if (!email) throw new Error('Email is required for Antigravity account');
+
+    const snap = await this.db.collection('antigravity_accounts').where('email', '==', email).get();
+    let docId = account.id;
+
+    if (!snap.empty) {
+      const firstDoc = snap.docs[0];
+      docId = firstDoc.id;
+      if (snap.docs.length > 1) {
+        const batch = this.db.batch();
+        for (let i = 1; i < snap.docs.length; i++) {
+          batch.delete(snap.docs[i].ref);
+        }
+        await batch.commit();
+      }
+    } else if (!docId) {
+      docId = `ag_${email.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    }
+
+    const now = new Date().toISOString();
+    const updated: AntigravityAccountEntity = {
+      ...account,
+      id: docId,
+      email,
+      status: account.status || 'ACTIVE',
+      request_count: account.request_count || 0,
+      updated_at: now,
+    };
+    await this.db.collection('antigravity_accounts').doc(docId).set(updated, { merge: true });
+    return updated;
+  }
+
+  public async deleteAntigravityAccount(idOrEmail: string): Promise<boolean> {
+    const doc = await this.db.collection('antigravity_accounts').doc(idOrEmail).get();
+    if (doc.exists) {
+      await doc.ref.delete();
+    }
+    const snap = await this.db.collection('antigravity_accounts').where('email', '==', idOrEmail).get();
+    if (!snap.empty) {
+      const batch = this.db.batch();
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    return true;
+  }
+
   // ==================== Assets ====================
   public async saveAsset(asset: AssetEntity): Promise<AssetEntity> {
     const id = asset.id || `ast_${nanoid(10)}`;
@@ -857,24 +930,110 @@ export class FirestoreProvider implements IDatabaseProvider {
 
   // ==================== Worker Telemetry & Monitoring ====================
   public async recordWorkerHeartbeat(heartbeat: WorkerHeartbeatEntity): Promise<void> {
-    const id = heartbeat.worker_id || `worker_${nanoid(8)}`;
+    const raw: any = heartbeat;
+    const id = raw.worker_id || raw.workerId || `worker_${nanoid(8)}`;
+    const lastHeartbeat = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || new Date().toISOString();
     const record: WorkerHeartbeatEntity = {
       ...heartbeat,
       worker_id: id,
-      last_heartbeat: heartbeat.last_heartbeat || new Date().toISOString(),
+      worker_name: raw.worker_name || raw.workerName || id,
+      service_name: raw.service_name || raw.serviceName || 'shine-render-worker',
+      region: raw.region || 'us-central1',
+      status: raw.status || 'ONLINE',
+      cpu_usage_pct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+      memory_usage_mb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+      active_jobs_count: raw.active_jobs_count ?? raw.activeJobsCount ?? 0,
+      completed_jobs_count: raw.completed_jobs_count ?? raw.completedJobsCount ?? 0,
+      failed_jobs_count: raw.failed_jobs_count ?? raw.failedJobsCount ?? 0,
+      last_heartbeat: lastHeartbeat,
     };
     await this.db.collection('worker_heartbeats').doc(id).set(record, { merge: true });
   }
 
-  public async getWorkerNodes(): Promise<WorkerHeartbeatEntity[]> {
+  public async getWorkerNodes(options?: { activeOnly?: boolean }): Promise<WorkerHeartbeatEntity[]> {
     const snap = await this.db.collection('worker_heartbeats').get();
     const now = Date.now();
-    return snap.docs.map(doc => {
-      const w = doc.data() as WorkerHeartbeatEntity;
-      const ageMs = now - new Date(w.last_heartbeat || 0).getTime();
-      const status = ageMs > 120000 ? 'OFFLINE' : w.status;
-      return { ...w, status };
+    const staleDocIds: string[] = [];
+    const result: WorkerHeartbeatEntity[] = [];
+
+    for (const doc of snap.docs) {
+      const raw = doc.data() as any;
+      const lastHeartbeatStr = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || '';
+      const ageMs = lastHeartbeatStr ? (now - new Date(lastHeartbeatStr).getTime()) : Infinity;
+      const isDead = ageMs > 90000; // Over 90s without heartbeat is considered OFFLINE
+      const status = isDead ? 'OFFLINE' : (raw.status || 'ONLINE');
+
+      // Auto-prune dead serverless container records older than 10 minutes from Firestore
+      if (ageMs > 10 * 60 * 1000) {
+        staleDocIds.push(doc.id);
+      }
+
+      if (options?.activeOnly && status === 'OFFLINE') {
+        continue;
+      }
+
+      const normalized: any = {
+        ...raw,
+        id: doc.id,
+        worker_id: raw.worker_id || raw.workerId || doc.id,
+        workerId: raw.worker_id || raw.workerId || doc.id,
+        worker_name: raw.worker_name || raw.workerName || doc.id,
+        workerName: raw.worker_name || raw.workerName || doc.id,
+        service_name: raw.service_name || raw.serviceName || 'shine-render-worker',
+        serviceName: raw.service_name || raw.serviceName || 'shine-render-worker',
+        region: raw.region || 'us-central1',
+        status,
+        cpu_usage_pct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        cpuUsagePct: raw.cpu_usage_pct ?? raw.cpuUsagePct ?? 0,
+        memory_usage_mb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        memoryUsageMb: raw.memory_usage_mb ?? raw.memoryUsageMb ?? 0,
+        active_jobs_count: raw.active_jobs_count ?? raw.activeJobsCount ?? 0,
+        activeJobsCount: raw.active_jobs_count ?? raw.activeJobsCount ?? 0,
+        last_heartbeat: lastHeartbeatStr,
+        lastHeartbeat: lastHeartbeatStr,
+      };
+
+      result.push(normalized);
+    }
+
+    // Background clean up stale worker docs older than 10 mins
+    if (staleDocIds.length > 0) {
+      const batch = this.db.batch();
+      staleDocIds.forEach((id) => batch.delete(this.db.collection('worker_heartbeats').doc(id)));
+      batch.commit().catch(() => {});
+    }
+
+    // Sort: Online/Busy nodes first, then by last_heartbeat desc
+    result.sort((a: any, b: any) => {
+      if (a.status !== 'OFFLINE' && b.status === 'OFFLINE') return -1;
+      if (a.status === 'OFFLINE' && b.status !== 'OFFLINE') return 1;
+      return new Date(b.last_heartbeat || 0).getTime() - new Date(a.last_heartbeat || 0).getTime();
     });
+
+    return result;
+  }
+
+  public async pruneOfflineWorkers(): Promise<number> {
+    const snap = await this.db.collection('worker_heartbeats').get();
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    for (const doc of snap.docs) {
+      const raw = doc.data() as any;
+      const last = raw.last_heartbeat || raw.lastHeartbeat || raw.timestamp || '';
+      const ageMs = last ? (now - new Date(last).getTime()) : Infinity;
+      if (ageMs > 90000 || raw.status === 'OFFLINE') {
+        toDelete.push(doc.id);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      const batch = this.db.batch();
+      toDelete.forEach((id) => batch.delete(this.db.collection('worker_heartbeats').doc(id)));
+      await batch.commit();
+    }
+
+    return toDelete.length;
   }
 
   public async recordWorkerJob(job: WorkerJobEntity): Promise<void> {

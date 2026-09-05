@@ -8,6 +8,9 @@ import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import { emailService } from '~/services/EmailService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
+import type { GeminiOmniVideoPreferences, GeminiOmniVideoOptions, GeminiOmniVideoResult } from '@/types.js';
+
+export type { GeminiOmniVideoPreferences, GeminiOmniVideoOptions, GeminiOmniVideoResult };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -242,32 +245,79 @@ export class GeminiClient {
     return GEMINI_SUPPORTED_VOICES.filter((v) => v.language.toLowerCase().startsWith(target) || v.language === 'auto');
   }
 
-  private getClient(modelId?: string): GoogleGenAI {
-    if (this.googleGenAI) return this.googleGenAI;
+  private clientCache: Map<string, GoogleGenAI> = new Map();
 
+  private getClient(modelId?: string): GoogleGenAI {
     const apiKey = this.apiKey || EnvConfig.geminiApiKey || process.env.GEMINI_API_KEY;
     if (apiKey) {
-      return new GoogleGenAI({ apiKey });
+      if (!this.clientCache.has('apikey')) {
+        this.clientCache.set('apikey', new GoogleGenAI({ apiKey }));
+      }
+      return this.clientCache.get('apikey')!;
     }
 
     const projectId = EnvConfig.gcpProjectId || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT_ID;
     const location = GeminiClient.resolveLocationForModel(modelId);
-    if (projectId) {
-      return new GoogleGenAI({ vertexai: true, project: projectId, location });
+    const cacheKey = `vertex_${projectId}_${location}`;
+    if (!this.clientCache.has(cacheKey)) {
+      if (projectId) {
+        this.clientCache.set(cacheKey, new GoogleGenAI({ vertexai: true, project: projectId, location }));
+        Logger.info(`[GeminiClient] Initialized GoogleGenAI client for model "${modelId || 'default'}" at location "${location}" (project: ${projectId})`);
+      } else if (this.googleGenAI) {
+        return this.googleGenAI;
+      } else {
+        this.clientCache.set(cacheKey, new GoogleGenAI({}));
+      }
     }
 
-    return new GoogleGenAI({});
+    return this.clientCache.get(cacheKey) || this.googleGenAI || new GoogleGenAI({});
   }
 
   public async generateText(options: { model?: string; prompt: string; systemInstruction?: string; jsonMode?: boolean; grounding?: boolean; tools?: any[]; temperature?: number }): Promise<string> {
-    const res = await this.generateContent(options.prompt, options.model || EnvConfig.geminiModelText, {
-      systemPrompt: options.systemInstruction,
-      grounding: options.grounding,
-      tools: options.tools,
-      temperature: options.temperature,
-      generationConfig: options.jsonMode && !options.grounding ? { responseMimeType: 'application/json' } : undefined,
-    });
-    return res.text;
+    try {
+      const res = await this.generateContent(options.prompt, options.model || EnvConfig.geminiModelText, {
+        systemPrompt: options.systemInstruction,
+        grounding: options.grounding,
+        tools: options.tools,
+        temperature: options.temperature,
+        generationConfig: options.jsonMode && !options.grounding ? { responseMimeType: 'application/json' } : undefined,
+      });
+      return res.text;
+    } catch (err: any) {
+      const errMsg = String(err?.message || '');
+      const isExhausted =
+        err?.status === 429 ||
+        err?.status === 409 ||
+        err?.code === 429 ||
+        errMsg.includes('429') ||
+        errMsg.includes('409') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('Resource exhausted') ||
+        errMsg.includes('Quota exceeded') ||
+        errMsg.includes('quota');
+
+      if (isExhausted) {
+        try {
+          const { antigravityClient } = await import('@/integrations/ai/antigravity/AntigravityClient.js');
+          const { getDatabaseProvider } = await import('@/database/index.js');
+          const db = await getDatabaseProvider();
+          const agAccounts = await db.getAntigravityAccounts('ACTIVE');
+          if (agAccounts && agAccounts.length > 0) {
+            Logger.warn(`[GeminiClient] Quota exhausted (${errMsg}). Offloading Text generation to Antigravity pool...`, 'GeminiClient');
+            return await antigravityClient.generateText({
+              prompt: options.prompt,
+              model: options.model,
+              systemInstruction: options.systemInstruction,
+              jsonMode: options.jsonMode,
+              temperature: options.temperature,
+            });
+          }
+        } catch (agErr: any) {
+          Logger.warn(`[GeminiClient] Antigravity offload failed: ${agErr.message}. Preserving original error.`, 'GeminiClient');
+        }
+      }
+      throw err;
+    }
   }
 
   public async generateContentStream(options: { model?: string; contents: any[]; config?: any }): Promise<any> {
@@ -471,13 +521,33 @@ export class GeminiClient {
   }
 
   public async generateVideo(prompt: string, modelId: string = EnvConfig.geminiModelVideo, options: any = {}): Promise<{ url?: string; mimeType?: string; sceneId?: string; statusUrl?: string; jobId?: string; status?: string } | null> {
+    // Dispatch to dedicated generateOmniVideo when model is omni
+    if (modelId && modelId.toLowerCase().includes('omni')) {
+      return this.generateOmniVideo(prompt, {
+        modelId,
+        startFrame: options.imageStart || options.image,
+        endFrame: options.imageEnd,
+        referenceImages: options.characterImages || options.characterReferences || options.referenceImages,
+        preferences: {
+          aspectRatio: options.aspectRatio,
+          durationSeconds: Number(options.durationSeconds) > 10 ? 10 : Number(options.durationSeconds),
+          resolution: options.resolution,
+          generateAudio: options.generateAudio,
+          personGeneration: options.personGeneration,
+        },
+        async: options.async,
+      });
+    }
+
     try {
       const client = this.getClient(modelId);
       const genConfig: any = {};
       if (options.aspectRatio) genConfig.aspectRatio = options.aspectRatio;
       if (options.resolution) genConfig.resolution = options.resolution;
-      if (options.durationSeconds) genConfig.durationSeconds = String(options.durationSeconds);
-      if (options.personGeneration) genConfig.personGeneration = options.personGeneration;
+      // Normalize duration: Google Veo strictly supports 4, 6, or 8 seconds as numbers
+      const rawDuration = Number(options.durationSeconds || options.duration) || 6;
+      const normalizedDuration = rawDuration <= 4 ? 4 : rawDuration >= 8 ? 8 : 6;
+      genConfig.durationSeconds = normalizedDuration;
 
       // RESOLVE ALL IMAGES UPFRONT
       const resolvedOptions = { ...options };
@@ -514,27 +584,37 @@ export class GeminiClient {
 
       // Interpolation (lastFrame)
       if (resolvedOptions.imageEnd) {
-        genConfig.lastFrame = resolvedOptions.imageEnd;
+        genConfig.lastFrame = {
+          imageBytes: resolvedOptions.imageEnd.imageBytes || resolvedOptions.imageEnd.mediaBytes,
+          mimeType: resolvedOptions.imageEnd.mimeType || 'image/png',
+        };
       }
 
       // Reference Images (R2V) - Only if not using I2V interpolation (lastFrame)
       if (!genConfig.lastFrame && resolvedOptions.characterImages && Array.isArray(resolvedOptions.characterImages) && resolvedOptions.characterImages.length > 0) {
         genConfig.referenceImages = resolvedOptions.characterImages.map((img: any) => ({
-          image: img,
-          referenceType: 'asset'
+          image: {
+            imageBytes: img.imageBytes || img.mediaBytes,
+            mimeType: img.mimeType || 'image/png',
+          },
+          referenceType: 'asset',
         }));
+      }
+
+      // Build modern source parameter required by Google GenAI SDK
+      const sourceInput: any = { prompt };
+      const startImage = resolvedOptions.imageStart || resolvedOptions.image;
+      if (startImage && (!genConfig.referenceImages || genConfig.referenceImages.length === 0)) {
+        sourceInput.image = {
+          imageBytes: startImage.imageBytes || startImage.mediaBytes,
+          mimeType: startImage.mimeType || 'image/png',
+        };
       }
 
       const generateParams: any = {
         model: modelId,
-        prompt,
-        image: resolvedOptions.imageStart || resolvedOptions.image
+        source: sourceInput,
       };
-
-      // Currently Veo3 doesn't support both image and referenceImages
-      if(genConfig.referenceImages && genConfig.referenceImages.length > 0){
-        delete generateParams.image;
-      }
 
       if (Object.keys(genConfig).length > 0) generateParams.config = genConfig;
 
@@ -556,6 +636,12 @@ export class GeminiClient {
 
       if (!operation.done) throw new Error('Video generation timed out after 10 minutes');
 
+      if (operation.error) {
+        const errorMsg = (operation.error as any).message || JSON.stringify(operation.error);
+        Logger.error(`[GeminiClient] Veo operation failed: ${errorMsg}`);
+        throw new Error(`Veo video generation error: ${errorMsg}`);
+      }
+
       const generatedVideos = operation.response?.generatedVideos || [];
       if (generatedVideos.length === 0) throw new Error('No videos returned from Veo API');
 
@@ -571,6 +657,123 @@ export class GeminiClient {
       throw new Error('No video URI or bytes in Veo response');
     } catch (error: any) {
       Logger.error(`[GeminiClient] generateVideo failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Dedicated Omni Video Generation (gemini-omni-1.1-flash)
+   * Supports prompt tags (<FIRST_FRAME>, <LAST_FRAME>, <IMAGE_REF_0>, ...)
+   * and preferences (aspectRatio, durationSeconds, generateAudio, resolution)
+   * Reference: https://ai.google.dev/gemini-api/docs/omni
+   */
+  public async generateOmniVideo(
+    prompt: string,
+    options: GeminiOmniVideoOptions = {}
+  ): Promise<GeminiOmniVideoResult | null> {
+    try {
+      const modelId = options.modelId || 'gemini-omni-1.1-flash';
+      const client = this.getClient(modelId);
+
+      const prefs = options.preferences || {};
+      const genConfig: any = {
+        aspectRatio: prefs.aspectRatio || '9:16',
+        durationSeconds: String(prefs.durationSeconds || 10),
+        generateAudio: prefs.generateAudio !== false,
+        resolution: prefs.resolution || '720p',
+      };
+      if (prefs.personGeneration) {
+        genConfig.personGeneration = prefs.personGeneration;
+      }
+
+      // Resolve Start Frame (<FIRST_FRAME>)
+      let resolvedStartFrame: any = null;
+      if (options.startFrame) {
+        resolvedStartFrame = await this.resolveToVeoImage(options.startFrame);
+      }
+
+      // Resolve End Frame (<LAST_FRAME>)
+      let resolvedEndFrame: any = null;
+      if (options.endFrame) {
+        resolvedEndFrame = await this.resolveToVeoImage(options.endFrame);
+        genConfig.lastFrame = resolvedEndFrame;
+      }
+
+      // Resolve Reference Images (<IMAGE_REF_0>, <IMAGE_REF_1>, ...)
+      const resolvedReferences: any[] = [];
+      if (Array.isArray(options.referenceImages) && options.referenceImages.length > 0) {
+        for (let i = 0; i < options.referenceImages.length; i++) {
+          const resolved = await this.resolveToVeoImage(options.referenceImages[i]);
+          if (resolved) {
+            resolvedReferences.push({
+              image: resolved,
+              referenceType: 'asset',
+              tag: `<IMAGE_REF_${i}>`,
+            });
+          }
+        }
+      }
+      if (resolvedReferences.length > 0) {
+        genConfig.referenceImages = resolvedReferences;
+      }
+
+      // Assemble tags in prompt if not present
+      let taggedPrompt = prompt;
+      if (resolvedStartFrame && !taggedPrompt.includes('<FIRST_FRAME>')) {
+        taggedPrompt = `<FIRST_FRAME> ${taggedPrompt}`;
+      }
+      if (resolvedEndFrame && !taggedPrompt.includes('<LAST_FRAME>')) {
+        taggedPrompt = `${taggedPrompt} transitioning to <LAST_FRAME>`;
+      }
+      if (resolvedReferences.length > 0 && !taggedPrompt.includes('<IMAGE_REF_')) {
+        const tags = resolvedReferences.map((r) => r.tag).join(', ');
+        taggedPrompt = `${taggedPrompt} [Character References: ${tags}]`;
+      }
+
+      Logger.info(`[GeminiClient.generateOmniVideo] Model: ${modelId}, Prompt: ${taggedPrompt}`, 'GeminiClient');
+
+      const generateParams: any = {
+        model: modelId,
+        prompt: taggedPrompt,
+        config: genConfig,
+      };
+      if (resolvedStartFrame) {
+        generateParams.image = resolvedStartFrame;
+      }
+
+      let operation: any = await GeminiClient.executeWithRetry('generateOmniVideo', async () => {
+        return await (client as any).models.generateVideos(generateParams);
+      });
+
+      if (options.async) {
+        return { jobId: operation.name, status: 'pending' };
+      }
+
+      const maxPolls = 60;
+      let pollCount = 0;
+      while (!operation.done && pollCount < maxPolls) {
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+        operation = await (client as any).operations.getVideosOperation({ operation });
+        pollCount++;
+      }
+
+      if (!operation.done) throw new Error('Omni video generation timed out after 10 minutes');
+
+      const generatedVideos = operation.response?.generatedVideos || [];
+      if (generatedVideos.length === 0) throw new Error('No videos returned from Gemini Omni API');
+
+      const videoFile = generatedVideos[0].video;
+      const videoBytes = videoFile?.videoBytes || generatedVideos[0].videoBytes;
+      const videoUrl = videoFile?.uri || videoFile?.gcsUri || generatedVideos[0].uri || generatedVideos[0].gcsUri;
+
+      if (videoBytes) {
+        return { url: `data:${videoFile?.mimeType || 'video/mp4'};base64,${videoBytes}`, mimeType: videoFile?.mimeType || 'video/mp4' };
+      } else if (videoUrl) {
+        return { url: videoUrl, mimeType: videoFile?.mimeType || 'video/mp4' };
+      }
+      throw new Error('No video URI or bytes in Gemini Omni response');
+    } catch (error: any) {
+      Logger.error(`[GeminiClient] generateOmniVideo failed: ${error.message}`);
       return null;
     }
   }
@@ -596,7 +799,7 @@ export class GeminiClient {
             speakerVoiceConfigs: speakers.map((s: any, idx: number) => ({
               speaker: `Speaker ${idx + 1}`,
               voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: s.voiceId || voiceId },
+                prebuiltVoiceConfig: { voiceName: s.voice_id || s.voiceId || voiceId },
               },
             })),
           },
@@ -612,23 +815,23 @@ export class GeminiClient {
 
         const styleInstructions: string[] = [];
         if (options.emotion) {
-          styleInstructions.push(`Express with strong emotion: ${options.emotion}`);
+          styleInstructions.push(options.emotion);
         }
         if (options.speech_tone) {
-          styleInstructions.push(`Tone of voice & delivery: ${options.speech_tone}`);
+          styleInstructions.push(options.speech_tone);
         }
         if (options.speed && options.speed !== 1.0) {
-          styleInstructions.push(options.speed > 1.0 ? `speak faster at ${options.speed}x speed` : `speak slower at ${options.speed}x speed`);
+          styleInstructions.push(options.speed > 1.0 ? `fast tempo (${options.speed}x)` : `slow tempo (${options.speed}x)`);
         }
         if (options.pitch && options.pitch !== 0) {
-          styleInstructions.push(options.pitch > 0 ? `use a higher pitch (+${options.pitch})` : `use a lower pitch (${options.pitch})`);
+          styleInstructions.push(options.pitch > 0 ? `high pitch (+${options.pitch})` : `low pitch (${options.pitch})`);
         }
         if (styleInstructions.length > 0) {
-          finalText = `[Acting & Vocal Direction]\n${styleInstructions.map(s => `- ${s}`).join('\n')}\n\n[Spoken Dialogue]\n"${text}"`;
+          finalText = `(Tone: ${styleInstructions.join(', ')})\n${text}`;
         }
       }
 
-      const response: any = await GeminiClient.executeWithRetry('generateAudio', async () => {
+      let response: any = await GeminiClient.executeWithRetry('generateAudio', async () => {
         return await (client as any).models.generateContent({
           model: modelId,
           contents: [{ role: 'user', parts: [{ text: finalText }] }],
@@ -636,10 +839,40 @@ export class GeminiClient {
         });
       });
 
-      const part = response.candidates?.[0]?.content?.parts?.[0];
-      let base64 = part?.inlineData?.data;
-      let mimeType = part?.inlineData?.mimeType || 'audio/L16;rate=24000';
-      if (!base64) throw new Error('No audio data returned from Gemini TTS API');
+      let candidate = response?.candidates?.[0];
+      let parts = candidate?.content?.parts || [];
+      let audioPart = parts.find((p: any) => p?.inlineData?.data || p?.inline_data?.data);
+      let base64 = audioPart?.inlineData?.data || audioPart?.inline_data?.data;
+      let mimeType = audioPart?.inlineData?.mimeType || audioPart?.inline_data?.mimeType || 'audio/L16;rate=24000';
+
+      // Fallback: If styled prompt produced no audio (e.g. finishReason OTHER/SAFETY), retry once with clean dialogue text
+      if (!base64 && finalText !== text) {
+        Logger.warn(`[GeminiClient] generateAudio: Styled prompt produced no audio (finishReason: ${candidate?.finishReason}). Retrying with plain dialogue text...`);
+        response = await GeminiClient.executeWithRetry('generateAudio-clean-fallback', async () => {
+          return await (client as any).models.generateContent({
+            model: modelId,
+            contents: [{ role: 'user', parts: [{ text }] }],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: voiceId },
+                },
+              },
+            },
+          });
+        });
+        candidate = response?.candidates?.[0];
+        parts = candidate?.content?.parts || [];
+        audioPart = parts.find((p: any) => p?.inlineData?.data || p?.inline_data?.data);
+        base64 = audioPart?.inlineData?.data || audioPart?.inline_data?.data;
+        mimeType = audioPart?.inlineData?.mimeType || audioPart?.inline_data?.mimeType || 'audio/L16;rate=24000';
+      }
+
+      if (!base64) {
+        Logger.error(`[GeminiClient] generateAudio failed: finishReason=${candidate?.finishReason}, partsCount=${parts.length}, candidate=${JSON.stringify(candidate)}`);
+        throw new Error('No audio data returned from Gemini TTS API');
+      }
 
       let durationSeconds = 0;
 
