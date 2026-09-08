@@ -47,8 +47,15 @@ import { getDatabaseProvider } from './database/index.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Initialize active DB Provider (SQLite or MongoDB with automatic fallback)
-getDatabaseProvider().catch((err) => console.warn('[Database] Provider initialization warning:', err));
+// Initialize active DB Provider and recover any pending deletions
+getDatabaseProvider()
+  .then(async () => {
+    const { SeriesDeletionQueue } = await import('./services/SeriesDeletionQueue.js');
+    SeriesDeletionQueue.recoverPendingDeletions().catch(err => {
+      console.warn('[SeriesDeletionQueue] Recovery warning:', err?.message);
+    });
+  })
+  .catch((err) => console.warn('[Database] Provider initialization warning:', err));
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));

@@ -6,6 +6,7 @@ import { AssetService } from '@/services/AssetService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
 import type { LocationAsset, PropAsset, SceneEntity, EpisodeEntity, AssetJobItem } from '@/types.js';
+import { EnvConfig } from '~/config/env.js';
 
 export class AssetToolExecutors {
   /**
@@ -70,14 +71,12 @@ export class AssetToolExecutors {
         }
 
         const { result } = await executeWithRetry(`Generate Location Concept for "${loc.name}"`, async () => {
-          return await AssetService.generateLocationAsset({
+          return await AssetService.generateLocationSheet({
             series_id: params.seriesId,
-            episode_id: params.episodeId,
             location_id: loc.id,
-            name: loc.name,
             physical_characteristics: loc.physical_characteristics,
             time_of_day: loc.time_of_day,
-            visual_style: series.visual_style,
+            custom_prompt: loc.frame_description,
             user_id: params.userId,
           });
         });
@@ -105,6 +104,15 @@ export class AssetToolExecutors {
       }
 
       await db.updateSeries(params.seriesId, { locations: updatedLocations });
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedSeries = await db.getSeriesById(params.seriesId);
+        if (updatedSeries) {
+          PatchSyncService.broadcast(params.seriesId, 'series:updated', updatedSeries);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[AssetTools] WebSocket broadcast notice: ${wsErr.message}`);
+      }
 
       const generatedCount = results.filter((r) => r.status === 'generated').length;
       return {
@@ -178,14 +186,13 @@ export class AssetToolExecutors {
         }
 
         const { result } = await executeWithRetry(`Generate Prop Concept for "${prop.name}"`, async () => {
-          return await AssetService.generatePropAsset({
+          return await AssetService.generatePropProductShot({
             series_id: params.seriesId,
             episode_id: params.episodeId,
             prop_id: prop.id,
-            name: prop.name,
             physical_characteristics: prop.physical_characteristics,
-            owner: prop.owner,
-            visual_style: series.visual_style,
+            // owner: prop.owner || prop.holder,
+            custom_prompt: prop.frame_description,
             user_id: params.userId,
           });
         });
@@ -213,6 +220,15 @@ export class AssetToolExecutors {
       }
 
       await db.updateSeries(params.seriesId, { props: updatedProps });
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedSeries = await db.getSeriesById(params.seriesId);
+        if (updatedSeries) {
+          PatchSyncService.broadcast(params.seriesId, 'series:updated', updatedSeries);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[AssetTools] WebSocket broadcast notice: ${wsErr.message}`);
+      }
 
       const generatedCount = results.filter((r) => r.status === 'generated').length;
       return {
@@ -333,12 +349,15 @@ export class AssetToolExecutors {
         }
 
         try {
+          // const generate_end_frame = EnvConfig.generateEndFrame;
           const { result } = await executeWithRetry(`Generate Storyboard Frame for Scene #${scIndex}`, async () => {
             return await AssetService.generateStoryboardShot({
               series_id: params.seriesId,
               episode_id: params.episodeId,
               scene_index: scIndex,
-              visual_prompt: params.visualPrompt,
+              // custom_prompt: params.visualPrompt,
+              generate_start_frame: true,
+              generate_end_frame: EnvConfig.generateEndFrame,
               user_id: params.userId,
             });
           });
@@ -395,6 +414,15 @@ export class AssetToolExecutors {
         await TimelineService.getOrBuildEpisodeTimeline(params.episodeId);
       } catch (tlErr: any) {
         Logger.warn(`[AssetTools.generateSceneStoryboard] Timeline sync notice: ${tlErr.message}`);
+      }
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedEp = await db.getEpisodeById(params.episodeId);
+        if (updatedEp) {
+          PatchSyncService.broadcast(params.seriesId, 'episode:updated', updatedEp);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[AssetTools.generateSceneStoryboard] WebSocket broadcast notice: ${wsErr.message}`);
       }
 
       if (hasFailures) {

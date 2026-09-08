@@ -38,3 +38,9 @@ scripts/test_screen.mjs
 scripts/test_slide5.mjs
 scripts/generate_act7_graphic.mjs
 scripts/generate_benefit_graphic.mjs
+scratch/slide_15_preview.png
+scratch/slide_15_web_preview.png
+scratch/test-gemini-tts.mjs
+scripts/export_presentation.mjs
+scripts/generate_mcp_trend_slide.mjs
+services/flow-worker/data/

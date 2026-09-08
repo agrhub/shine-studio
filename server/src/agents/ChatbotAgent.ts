@@ -1,4 +1,5 @@
 import { getDatabaseProvider } from '~/database/index.js';
+import { EntityNormalizer } from '~/utils/EntityNormalizer.js';
 import { Logger } from '~/utils/logger.js';
 import { EnvConfig } from '~/config/env.js';
 import {
@@ -682,6 +683,13 @@ ${cleanUserMsg}
         if (extractedPlan.synopsis) params.context.synopsis = extractedPlan.synopsis;
         if (extractedPlan.country) params.context.country = extractedPlan.country;
         if (extractedPlan.language) params.context.language = extractedPlan.language;
+      }
+
+      // Ensure characters are strictly normalized so wardrobe_variants, frame_description, etc. are guaranteed
+      if (Array.isArray(extractedPlan.characters) && extractedPlan.characters.length > 0) {
+        extractedPlan.characters = extractedPlan.characters
+          .map((c: any) => EntityNormalizer.normalizeCharacter(c))
+          .filter((c: any): c is any => Boolean(c));
       }
 
       // Persist to database ONLY if series is a real persisted series

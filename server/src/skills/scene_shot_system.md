@@ -31,7 +31,7 @@ You are generating shots for **Scene {{sceneIndex}} of {{totalScenes}}**:
 
 ### Critical Dialogue & Single-Speaker Mandate (MANDATORY):
 - **SINGLE SPEAKER PER SHOT RULE**: Each shot MUST contain AT MOST ONE dialogue line from EXACTLY ONE character. Multi-character dialogue within the same shot is STRICTLY FORBIDDEN. Conversations between characters MUST be split across separate consecutive shots (e.g. Shot 1: Character A speaks -> Shot 2: Character B reacts and replies).
-- **High Dialogue Density & Duration Coverage**: Spoken dialogue and voiceover audio MUST span 80% to 90% of total episode duration. At least 85% to 95% of shots MUST have spoken dialogue or voiceover. Each shot's line length must occupy 70%–85% of that shot's duration (~2.0–2.4 words per second; avoid 1-word grunts). Never allow shots to remain silent without deliberate dramatic purpose.
+- **High Dialogue Density & Rapid-Fire Pacing**: Spoken dialogue and voiceover audio MUST span 80% to 90% of total episode duration. Micro-drama characters speak with urgency, speed, and emotional intensity (~3.2–3.8 words per second, speed 1.1x–1.2x). At least 85% to 95% of shots MUST have spoken dialogue or voiceover. Each shot's line length must occupy 75%–85% of that shot's duration (~14–18 words for 5s, ~18–24 words for 6s; avoid 1-2 word grunts). Never allow shots to remain silent without deliberate dramatic purpose.
 - **Inner Monologue / Narrator**: When a character is alone, scheming, observing, or in intense action: Use **Inner Monologue** (`character: "[Character Name] (Inner Monologue)"`) or **Narrator Voiceover** (`character: "Narrator"`).
 - **Speech Timestamps**: Specify `speech_start_sec` (e.g. `0.5`) and `speech_end_sec` (e.g. `3.8`) for the spoken line within the shot.
 - **Voice Consistency**: Do NOT invent `voice_id` in dialogue; the system automatically resolves the character's fixed `voice_id` from their Character Profile.
@@ -53,7 +53,7 @@ You are generating shots for **Scene {{sceneIndex}} of {{totalScenes}}**:
 | `duration_seconds` | Integer 5–8 |
 | `bgm_mood` | Music mood for this specific shot |
 | `sfx_cues` | Array of sound effect cues (e.g. `["Door slam", "Rain intensifies"]`) |
-| `reference_assets` | `{ characters: [names], locations: [name], props: [names] }` (Only physically present characters) |
+| `reference_assets` | `{ characters: [char_id,...], locations: [loc_id,...], props: [prop_id,...] }` (Only exact IDs of physically present assets from context) |
 | `visual_prompt` | Compact AI Start-Frame image prompt (≤60 words) — style, subject, lighting, composition |
 | `end_frame_prompt` | Compact AI End-Frame image prompt (≤50 words) — character's final posture/expression at shot end |
 | `transition_effect` | OpenVideo GLSL transition key (`fade`, `wipeLeft`, `wipeRight`, `cube`, `CrossZoom`, `SimpleZoom`, `DreamyZoom`, `glitchMemories`, `GlitchDisplace`, `dreamy`, `Swirl`, `waterDrop`, `ripple`, `wind`, `LinearBlur`, `Mosaic`, `pixelize`, `circleopen`, `windowslice`, `doorway`, `burn`, `InvertedPageCurl`), or empty `""` for direct cut |

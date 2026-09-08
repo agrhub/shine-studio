@@ -6,6 +6,14 @@ import { scriptAgent } from '@/agents/ScriptAgent.js';
 import { characterService } from '@/services/CharacterService.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { executeWithRetry, withCreditDeduction, getActiveChatContext, type ToolContextParams, type ToolExecutionResult } from './context.js';
+import type {
+  CharacterSeriesEntity,
+  LocationAsset,
+  PropAsset,
+  SceneEntity,
+  CharacterSceneCostumes,
+  CharacterWardrobeVariant,
+} from '@/types.js';
 
 export class ScreenplayToolExecutors {
   /**
@@ -23,18 +31,18 @@ export class ScreenplayToolExecutors {
       const episode = await db.getEpisodeById(params.episodeId);
       if (!episode) return { success: false, message: `Episode ${params.episodeId} not found` };
 
-      const characters = Array.isArray(series.characters) ? series.characters : [];
-      const locations = Array.isArray(series.locations) ? series.locations : [];
-      const props = Array.isArray(series.props) ? series.props : [];
+      const characters: CharacterSeriesEntity[] = Array.isArray(series.characters) ? series.characters : [];
+      const locations: LocationAsset[] = Array.isArray(series.locations) ? series.locations : [];
+      const props: PropAsset[] = Array.isArray(series.props) ? series.props : [];
 
-      const charactersSummary = characters.map((c: any) => ({
+      const charactersSummary = characters.map((c: CharacterSeriesEntity) => ({
         id: c.id,
         name: c.name,
         role: c.role,
         gender: c.gender,
         voice_id: c.voice_id,
         physical_characteristics: c.physical_characteristics,
-        wardrobe_variants: (c.wardrobe_variants || []).map((v: any) => ({
+        wardrobe_variants: (c.wardrobe_variants || []).map((v: CharacterWardrobeVariant) => ({
           variant_id: v.variant_id,
           name: v.name,
           clothing_and_accessories: v.clothing_and_accessories,
@@ -42,7 +50,7 @@ export class ScreenplayToolExecutors {
         })),
       }));
 
-      const locationsSummary = locations.map((l: any) => ({
+      const locationsSummary = locations.map((l: LocationAsset) => ({
         id: l.id,
         name: l.name,
         physical_characteristics: l.physical_characteristics,
@@ -50,7 +58,7 @@ export class ScreenplayToolExecutors {
         frame_description: l.frame_description,
       }));
 
-      const propsSummary = props.map((p: any) => ({
+      const propsSummary = props.map((p: PropAsset) => ({
         id: p.id,
         name: p.name,
         physical_characteristics: p.physical_characteristics,
@@ -100,7 +108,7 @@ export class ScreenplayToolExecutors {
     userId: string;
     seriesId: string;
     episodeId: string;
-    scenes: any[];
+    scenes: Partial<SceneEntity>[];
     screenplay?: string;
   }): Promise<ToolExecutionResult> {
     try {
@@ -111,38 +119,48 @@ export class ScreenplayToolExecutors {
       const episode = await db.getEpisodeById(params.episodeId);
       if (!episode) return { success: false, message: `Episode ${params.episodeId} not found` };
 
-      const characters = Array.isArray(series.characters) ? series.characters : [];
-      const locations = Array.isArray(series.locations) ? series.locations : [];
-      const props = Array.isArray(series.props) ? series.props : [];
+      const characters: CharacterSeriesEntity[] = Array.isArray(series.characters) ? series.characters : [];
+      const locations: LocationAsset[] = Array.isArray(series.locations) ? series.locations : [];
+      const props: PropAsset[] = Array.isArray(series.props) ? series.props : [];
 
       // Normalize scenes using ScriptAgent.flattenAndEnrichShots for canonical output
-      const normalizedScenes = (params.scenes || [])
-        .map((s: any, idx: number) => EntityNormalizer.normalizeScene(s, idx + 1))
-        .filter((s): s is NonNullable<typeof s> => s !== null);
-
+      const rawShots = scriptAgent.flattenAndEnrichShots(params.scenes || [], {
+        characters,
+        locations,
+        props,
+      });
+      const normalizedScenes: SceneEntity[] = rawShots
+        .map((s: Partial<SceneEntity>, idx: number) => EntityNormalizer.normalizeScene(s, idx + 1))
+        .filter((s): s is SceneEntity => s !== null);
+      
       // Compute accurate episode reference_assets from scene data
       const charIdSet = new Set<string>();
       const locIdSet = new Set<string>();
       const propIdSet = new Set<string>();
 
-      const norm = (s: any): string => (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+      const norm = (s: unknown): string =>
+        (typeof s === 'string'
+          ? s
+          : (typeof s === 'object' && s !== null && 'name' in s
+            ? String((s as { name: unknown }).name)
+            : (typeof s === 'object' && s !== null && 'id' in s ? String((s as { id: unknown }).id) : (s != null ? String(s) : '')))).normalize('NFC').toLowerCase().trim();
 
-      normalizedScenes.forEach((sc: any) => {
+      normalizedScenes.forEach((sc: SceneEntity) => {
         // Gather from character_costumes
-        (sc.character_costumes || []).forEach((cc: any) => {
+        (sc.character_costumes || []).forEach((cc: CharacterSceneCostumes) => {
           const charName = norm(cc.character || '');
-          const found = characters.find((c: any) => norm(c.name) === charName || norm(c.id) === charName);
+          const found = characters.find((c: CharacterSeriesEntity) => norm(c.name) === charName || norm(c.id) === charName);
           if (found) charIdSet.add(found.id);
         });
         // Gather from reference_assets (already resolved to IDs by flattenAndEnrichShots)
         (sc.reference_assets?.characters || []).forEach((v: string) => {
-          if (characters.find((c: any) => c.id === v)) charIdSet.add(v);
+          if (characters.find((c: CharacterSeriesEntity) => c.id === v)) charIdSet.add(v);
         });
         (sc.reference_assets?.locations || []).forEach((v: string) => {
-          if (locations.find((l: any) => l.id === v)) locIdSet.add(v);
+          if (locations.find((l: LocationAsset) => l.id === v)) locIdSet.add(v);
         });
         (sc.reference_assets?.props || []).forEach((v: string) => {
-          if (props.find((p: any) => p.id === v)) propIdSet.add(v);
+          if (props.find((p: PropAsset) => p.id === v)) propIdSet.add(v);
         });
       });
 

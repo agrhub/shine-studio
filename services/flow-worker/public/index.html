@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shine Flow AI Worker — Fleet Manager & API Gateway</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #09090b;
+      --bg-surface: #111115;
+      --bg-surface-elevated: #18181f;
+      --bg-glass: rgba(24, 24, 31, 0.7);
+      --border-subtle: #272732;
+      --border-focus: #3b82f6;
+      --text-primary: #f4f4f6;
+      --text-secondary: #9494a6;
+      --text-muted: #5c5c6f;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --primary-glow: rgba(59, 130, 246, 0.35);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.3);
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --accent: #8b5cf6;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      line-height: 1.5;
+      background-image: 
+        radial-gradient(at 15% 10%, rgba(59, 130, 246, 0.08) 0px, transparent 50%),
+        radial-gradient(at 85% 90%, rgba(139, 92, 246, 0.08) 0px, transparent 50%);
+    }
+
+    /* ── Header / Navbar ── */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      background: rgba(9, 9, 11, 0.85);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .nav-container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 18px;
+      color: #fff;
+      box-shadow: 0 0 16px var(--primary-glow);
+    }
+    .brand-title {
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+    .brand-subtitle {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 12px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--success);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success-glow);
+      animation: pulse 2s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* ── Main Container & Navigation Tabs ── */
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 28px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      padding: 10px 18px;
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+    .tab-btn:hover {
+      color: var(--text-primary);
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 600;
+    }
+
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.2s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Metrics Cards ── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .metric-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      opacity: 0.6;
+    }
+    .metric-title {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .metric-val {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .metric-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ── Section Cards ── */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* ── Table Styles ── */
+    .table-responsive {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+    th {
+      padding: 12px 16px;
+      color: var(--text-secondary);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-surface-elevated);
+    }
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    .badge-tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .tag-green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .tag-blue { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+    .tag-purple { background: rgba(139, 92, 246, 0.15); color: #c084fc; }
+    .tag-yellow { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .tag-red { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+    /* ── Step Guide Cards ── */
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .step-box {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 22px;
+      position: relative;
+    }
+    .step-number {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: var(--primary);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 0 12px var(--primary-glow);
+    }
+    .step-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .step-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* ── Code Blocks ── */
+    .code-block {
+      background: #0d0d11;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #e4e4e7;
+      position: relative;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover {
+      color: #fff;
+      border-color: var(--primary);
+    }
+
+    /* ── Action Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 10px var(--primary-glow);
+    }
+    .btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+    .btn-secondary {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      box-shadow: none;
+    }
+    .btn-secondary:hover {
+      background: #272732;
+    }
+    .btn-lg {
+      padding: 14px 26px;
+      font-size: 15px;
+      border-radius: 10px;
+    }
+
+    /* ── Form Controls for Playground ── */
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    .form-textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* ── Alert Callouts ── */
+    .alert {
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .alert-info {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      color: #bfdbfe;
+    }
+    .alert-success {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: #a7f3d0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <header>
+    <div class="nav-container">
+      <a href="#" class="brand">
+        <div class="brand-logo">✨</div>
+        <div>
+          <div class="brand-title">Shine Flow AI Worker</div>
+          <div class="brand-subtitle">Google Flow Automation Gateway & Microservice</div>
+        </div>
+      </a>
+      <div class="nav-actions">
+        <div class="status-pill">
+          <div class="status-dot"></div>
+          <span id="serviceStatusText">Operational</span>
+        </div>
+        <a href="/api/download-extension" class="btn" download="shine-flow-extension.zip">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Extension (.zip)
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Navigation Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('dashboard')">
+        📊 Overview & Fleet
+      </button>
+      <button class="tab-btn" onclick="switchTab('jobs')">
+        🎬 Live Jobs & Assets
+      </button>
+      <button class="tab-btn" onclick="switchTab('install')">
+        🧩 How to Install Extension
+      </button>
+      <button class="tab-btn" onclick="switchTab('config')">
+        ⚙️ Config & Multi-Account
+      </button>
+      <button class="tab-btn" onclick="switchTab('cloudrun')">
+        🚀 Cloud Run & Shine Auto-Deploy
+      </button>
+      <button class="tab-btn" onclick="switchTab('playground')">
+        ⚡ API Playground & OpenAPI / Gemini
+      </button>
+    </div>
+
+    <!-- ══════════════ TAB 1: OVERVIEW & FLEET ══════════════ -->
+    <div id="tab-dashboard" class="tab-content active">
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Active Chrome Extension Workers</div>
+          <div class="metric-val" id="valExtCount">0</div>
+          <div class="metric-desc">Live WebSocket tabs on flow.google.com</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Headless Playwright Accounts</div>
+          <div class="metric-val" id="valHeadlessCount">0</div>
+          <div class="metric-desc">Fallback accounts with synced cookies</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Available Generation Models</div>
+          <div class="metric-val" id="valModelsCount">13</div>
+          <div class="metric-desc">Veo 3.1 (T2V, I2V, R2V) & Gemini Image</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Fleet Execution Mode</div>
+          <div class="metric-val" id="valFleetMode" style="font-size: 20px; margin-top: 6px; color: #60a5fa;">HYBRID</div>
+          <div class="metric-desc" id="valFleetModeDesc">Extension Priority + Headless Fallback</div>
+        </div>
+      </div>
+
+      <!-- Account Fleet Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Google Account Fleet & Status</div>
+            <div class="card-subtitle">Real-time status of connected extensions and synced headless accounts.</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary" onclick="openCreateAccountModal()">
+              ➕ Add New Account
+            </button>
+            <button class="btn btn-secondary" onclick="syncAllAccountsCredits()" title="Trigger credit sync for all active workers" style="color: #10b981; border-color: rgba(16, 185, 129, 0.35);">
+              🔄 Sync All Credits
+            </button>
+            <button class="btn btn-secondary" onclick="loadFleetData()">
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Account ID / Label</th>
+                <th>Worker Type</th>
+                <th>Session Status</th>
+                <th>Project ID</th>
+                <th>Credits / Quota</th>
+                <th>Connected At</th>
+                <th>Last Active</th>
+                <th style="text-align: center;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="fleetTableBody">
+              <tr>
+                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                  No active workers connected yet. Please install and connect the Chrome Extension or click "➕ Add New Account".
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Model Catalog Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Supported AI Model Catalog</div>
+            <div class="card-subtitle">All models exposed via OpenAPI (OpenAI format) and Google Gemini endpoints.</div>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Model Identifier</th>
+                <th>Media Type</th>
+                <th>Capability / Mode</th>
+                <th>Default Aspect Ratio</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody id="modelsTableBody">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Create New Account ID -->
+    <div id="createAccountModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 9999; align-items: center; justify-content: center; padding: 20px;">
+      <div class="card" style="max-width: 520px; width: 100%; margin: 0; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6); border: 1px solid var(--border-subtle);">
+        <div class="card-header" style="margin-bottom: 14px;">
+          <div class="card-title">➕ Create New Account ID / Add Worker</div>
+          <button class="btn btn-secondary" onclick="closeCreateAccountModal()" style="padding: 4px 10px; font-weight: bold;">✕</button>
+        </div>
+        <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+          Register a new Account ID into the Fleet to independently manage and load-balance generation jobs.
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="form-label" style="margin-bottom: 0;">Account ID:</label>
+            <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="generateModalRandomId()">🎲 Generate Random ID</button>
+          </div>
+          <input type="text" id="modalAccountId" class="form-input" placeholder="google_acc_..." />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Display Label:</label>
+          <input type="text" id="modalAccountLabel" class="form-input" placeholder="e.g. Chrome Profile 2 (Marketing)" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Flow Project ID (Optional):</label>
+          <input type="text" id="modalProjectId" class="form-input" placeholder="e.g. 9ff18a62-3cda-4744-8ed3-240e91e881ba" />
+          <small style="color: var(--text-muted); font-size: 11px;">If left empty, the worker will automatically detect or create a new project workspace.</small>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label class="form-label">Worker Type:</label>
+            <select id="modalWorkerType" class="form-select" onchange="toggleModalCookieGroup()">
+              <option value="EXTENSION">EXTENSION (Chrome Profile)</option>
+              <option value="HEADLESS">HEADLESS (Background Server Runner)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Initial Credits:</label>
+            <input type="number" id="modalCredits" class="form-input" value="100" />
+          </div>
+        </div>
+
+        <div id="headlessCookieGroup" class="form-group" style="display: none;">
+          <label class="form-label">Google Cookies JSON (Required for Headless):</label>
+          <textarea id="modalCookies" class="form-textarea" placeholder="Paste cookies JSON array here for Headless mode..."></textarea>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeCreateAccountModal()">Cancel</button>
+          <button type="button" class="btn" id="modalSubmitBtn" onclick="submitCreateAccount()">Save & Create Account</button>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <!-- ══════════════ TAB: LIVE JOBS & MEDIA ASSETS ══════════════ -->
+    <div id="tab-jobs" class="tab-content">
+      <!-- Metrics Grid -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Active Running Jobs</div>
+          <div class="metric-val" id="valRunningJobsCount" style="color: #38bdf8;">0</div>
+          <div class="metric-desc">Prompts currently generating in worker tabs / Playwright</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Queued Jobs</div>
+          <div class="metric-val" id="valQueuedJobsCount" style="color: #f59e0b;">0</div>
+          <div class="metric-desc">Waiting for next available worker in pool</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Total Generated Assets</div>
+          <div class="metric-val" id="valCompletedJobsCount" style="color: #34d399;">0</div>
+          <div class="metric-desc">Saved video & image outputs in persistent history</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Live Polling Status</div>
+          <div class="metric-val" style="font-size: 20px; margin-top: 8px; color: #a855f7;">ACTIVE (4s)</div>
+          <div class="metric-desc">Automatic real-time sync with worker server</div>
+        </div>
+      </div>
+
+      <!-- Live Running & Queued Jobs Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">
+              <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#38bdf8; box-shadow:0 0 8px #38bdf8; margin-right:8px;"></span>
+              Active & Queued Generation Jobs
+            </div>
+            <div class="card-subtitle">Real-time status of prompts currently generating on Google Flow.</div>
+          </div>
+          <div>
+            <button class="btn btn-secondary" onclick="loadJobsData()">🔄 Refresh</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 140px;">Job ID</th>
+                <th style="width: 140px;">Type & Model</th>
+                <th>Prompt & Input Reference</th>
+                <th style="width: 160px;">Assigned Worker</th>
+                <th style="width: 120px;">Elapsed Time</th>
+                <th style="width: 130px; text-align: center;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="runningJobsTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
+                  No active generation jobs running right now.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Generated Media & Assets History Card -->
+      <div class="card">
+        <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">Generated Media & Assets Gallery</div>
+            <div class="card-subtitle">All videos and images produced by the fleet with direct preview players, prompts, and download links.</div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="jobsSearchInput" placeholder="🔍 Search prompt, model, ID..." style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); color: var(--text-primary); padding: 7px 12px; border-radius: 6px; font-size: 13px; width: 220px;" oninput="filterJobsHistory()">
+            <select id="jobsTypeFilter" style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); color: var(--text-primary); padding: 7px 10px; border-radius: 6px; font-size: 13px;" onchange="filterJobsHistory()">
+              <option value="ALL">All Media Types</option>
+              <option value="video">Videos Only</option>
+              <option value="image">Images Only</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadJobsData()">🔄 Refresh</button>
+            <button class="btn btn-secondary" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="clearAllJobsHistory()">🧹 Clear History</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 180px;">Media Asset</th>
+                <th>Prompt & Input Assets</th>
+                <th style="width: 180px;">Model & Specs</th>
+                <th style="width: 150px;">Worker Account</th>
+                <th style="width: 110px;">Duration</th>
+                <th style="width: 160px; text-align: center;">Actions & Links</th>
+              </tr>
+            </thead>
+            <tbody id="completedJobsTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                  No generated media assets recorded yet. Run a prompt in API Playground or Shine Studio to see results here!
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ TAB 2: HOW TO INSTALL EXTENSION ══════════════ -->
+    <div id="tab-install" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Extension Installation Guide (Chrome / Edge / Brave / Arc)</div>
+            <div class="card-subtitle">Install Shine Flow Worker Extension in 60 seconds to automate video & image generation on flow.google.com</div>
+          </div>
+          <a href="/api/download-extension" class="btn btn-lg" download="shine-flow-extension.zip">
+            📥 Download Extension Package (.zip)
+          </a>
+        </div>
+
+        <div class="alert alert-info">
+          <div>💡 <b>Extension Advantage:</b> Runs directly inside your real browser authenticated session without CAPTCHA checkpoints or authentication breakages, supporting both Google Workspace and personal accounts.</div>
+        </div>
+
+        <div class="steps-grid">
+          <div class="step-box">
+            <div class="step-number">1</div>
+            <div class="step-title">Download or Extract Folder</div>
+            <div class="step-text">
+              Click <b>"Download Extension Package (.zip)"</b> above and extract to a permanent folder (e.g. <code>C:\Extensions\shine-flow-extension</code>) or point to the project source directory:
+              <div class="code-block">apps/shine/services/flow-worker/extension</div>
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">2</div>
+            <div class="step-title">Open Extensions Management</div>
+            <div class="step-text">
+              Open a new browser tab in Chrome / Brave / Edge and navigate to:
+              <div class="code-block">chrome://extensions</div>
+              <i>(Or <code>edge://extensions</code> if using Microsoft Edge)</i>.
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">3</div>
+            <div class="step-title">Enable Developer Mode</div>
+            <div class="step-text">
+              Look at the top-right corner of the Extensions page and toggle <b>Developer mode</b> ON.
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">4</div>
+            <div class="step-title">Load Unpacked Extension</div>
+            <div class="step-text">
+              Click <b>"Load unpacked"</b> in the top-left corner, and select the <code>extension</code> folder. The <b>Shine Flow Worker</b> icon will appear in your browser toolbar!
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ TAB 3: CONFIG & MULTI-ACCOUNT ══════════════ -->
+    <div id="tab-config" class="tab-content">
+      <div class="card">
+        <div class="card-title">Connection Configuration & Multi-Account Fleet Operations</div>
+        <div class="card-subtitle" style="margin-bottom: 20px;">Configure WebSocket endpoints, sync cookies for Cloud Run, and operate multiple Google Flow accounts concurrently.</div>
+
+        <div class="steps-grid">
+          <div class="step-box">
+            <div class="step-number">A</div>
+            <div class="step-title">Configure Server WebSocket URL</div>
+            <div class="step-text">
+              Click the Extension icon in your Chrome toolbar:
+              <ul style="margin: 8px 0 8px 20px; font-size: 13px;">
+                <li><b>Local Development:</b> Enter <code>ws://localhost:8088/ws</code></li>
+                <li><b>Cloud Run Deployment:</b> Enter <code>wss://&lt;your-flow-worker-domain&gt;/ws</code></li>
+              </ul>
+              Click <b>"Save & Reconnect"</b>. The status badge will change to <b>Connected (Online)</b> in green.
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">B</div>
+            <div class="step-title">Open Google Flow Tab</div>
+            <div class="step-text">
+              Navigate to <a href="https://flow.google.com" target="_blank" style="color: var(--primary);">https://flow.google.com</a> and sign in with your Google account. Keep this tab open in the background to automatically process incoming generation tasks.
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">C</div>
+            <div class="step-title">Sync Cookies (For Headless Standby)</div>
+            <div class="step-text">
+              In the extension popup, click <b>"Sync Cookies"</b>. The Flow session authentication will be securely synchronized to the Flow Worker server to run Headless Playwright fallbacks even if Chrome is closed!
+            </div>
+          </div>
+
+          <div class="step-box">
+            <div class="step-number">D</div>
+            <div class="step-title">Parallel Multi-Account Fleet (Multi-Profile)</div>
+            <div class="step-text">
+              Want to scale generation throughput 5x to 10x?
+              <ol style="margin: 8px 0 8px 20px; font-size: 12px; line-height: 1.6;">
+                <li>Open Chrome ➔ Click your user avatar at the top right ➔ Select <b>"Add Profile"</b>.</li>
+                <li>Sign in with your second Google account on <a href="https://flow.google.com" target="_blank" style="color: var(--primary);">flow.google.com</a>.</li>
+                <li>Install the Shine Flow Worker extension in the new profile.</li>
+                <li>In the extension popup, click <b>"+ New ID"</b> (or assign a custom name like <code>acc_pro_02</code>), then click <b>"Save & Reconnect"</b>.</li>
+                <li>All accounts will appear in the Fleet table. The server will automatically balance generation jobs across accounts!</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ TAB 4: CLOUD RUN & AUTO-INTEGRATION ══════════════ -->
+    <div id="tab-cloudrun" class="tab-content">
+      <div class="card">
+        <div class="card-title">Cloud Run Deployment & Shine Studio Integration</div>
+        <div class="card-subtitle" style="margin-bottom: 20px;">Flow Worker is standardized following the exact same architecture as <code>demucs-worker</code> and <code>render-worker</code>.</div>
+
+        <div class="alert alert-success">
+          <div>🚀 <b>Automated 1-Click Deployment:</b> Running Shine's Cloud Run deployment script automatically builds & deploys <code>shine-flow-worker</code>, captures its Service URL, and provisions the <code>FLOW_WORKER_URL</code> environment variable into <code>shine-app</code>!</div>
+        </div>
+
+        <h4 style="margin: 20px 0 10px; font-size: 15px;">1. Deploy Full Ecosystem (Main App + Demucs + Render + Flow Worker):</h4>
+        
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 6px;">Linux / macOS / Cloud Shell (Bash):</p>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          ./scripts/deploy-cloudrun.sh
+        </div>
+
+        <p style="font-size: 13px; color: var(--text-secondary); margin: 16px 0 6px;">Windows (PowerShell):</p>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          .\scripts\deploy-cloudrun.ps1
+        </div>
+
+        <h4 style="margin: 24px 0 10px; font-size: 15px;">2. Deploy Flow Worker Independently:</h4>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 6px;">Bash:</p>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          cd services/flow-worker && ./deploy.sh
+        </div>
+
+        <p style="font-size: 13px; color: var(--text-secondary); margin: 16px 0 6px;">PowerShell:</p>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          cd services/flow-worker; .\deploy.ps1
+        </div>
+
+        <h4 style="margin: 24px 0 10px; font-size: 15px;">3. Environment Variable Configuration on Shine Server:</h4>
+        <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          FLOW_WORKER_URL=https://shine-flow-worker-xxxx-uc.a.run.app
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ TAB 5: API PLAYGROUND & OPENAPI / GEMINI ══════════════ -->
+    <div id="tab-playground" class="tab-content">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+        <!-- Left: Interactive Generator -->
+        <div class="card">
+          <div class="card-title">Live Test Generator</div>
+          <div class="card-subtitle" style="margin-bottom: 16px;">Dispatch image/video generation requests directly to Flow Worker to test live execution.</div>
+
+          <div class="form-group">
+            <label class="form-label">Select Model:</label>
+            <select id="pgModel" class="form-select" onchange="syncModelWithRatio()">
+              <optgroup label="⚡ Omni Flash (Fast Multimodal Video)">
+                <option value="omni_portrait">Omni Flash Portrait (9:16)</option>
+                <option value="omni">Omni Flash Landscape (16:9)</option>
+              </optgroup>
+              <optgroup label="🎬 Veo 3.1 Text to Video (T2V)">
+                <option value="veo_3_1_t2v_fast_portrait" selected>Veo 3.1 T2V Fast (Portrait 9:16)</option>
+                <option value="veo_3_1_t2v_fast_landscape">Veo 3.1 T2V Fast (Landscape 16:9)</option>
+                <option value="veo_3_1_t2v_fast_4s">Veo 3.1 T2V Fast 4s (Auto)</option>
+                <option value="veo_3_1_t2v_fast_6s">Veo 3.1 T2V Fast 6s (Auto)</option>
+                <option value="veo_3_1_t2v_fast_8s">Veo 3.1 T2V Fast 8s (Auto)</option>
+                <option value="veo_3_1_t2v_fast_ultra">Veo 3.1 T2V Fast Ultra Quality</option>
+                <option value="veo_3_1_t2v_4k">Veo 3.1 T2V 4K Ultra HD</option>
+                <option value="veo_3_1_t2v_1080p">Veo 3.1 T2V 1080P HD</option>
+              </optgroup>
+              <optgroup label="🖼️ Veo 3.1 Image to Video (I2V)">
+                <option value="veo_3_1_i2v_s_fast_portrait_fl">Veo 3.1 I2V Fast (Start Frame 9:16)</option>
+                <option value="veo_3_1_i2v_s_fast_fl">Veo 3.1 I2V Fast (Start Frame 16:9)</option>
+                <option value="veo_3_1_i2v_s_fast_4s_fl">Veo 3.1 I2V Fast 4s</option>
+                <option value="veo_3_1_i2v_s_fast_6s_fl">Veo 3.1 I2V Fast 6s</option>
+                <option value="veo_3_1_i2v_s_fast_8s_fl">Veo 3.1 I2V Fast 8s</option>
+                <option value="veo_3_1_i2v_s_4k">Veo 3.1 I2V 4K</option>
+              </optgroup>
+              <optgroup label="🎞️ Veo 3.1 Interpolation & Reference (R2V)">
+                <option value="veo_3_1_interpolation_lite_portrait">Veo 3.1 Interpolation (Start & End 9:16)</option>
+                <option value="veo_3_1_interpolation_lite_landscape">Veo 3.1 Interpolation (Start & End 16:9)</option>
+                <option value="veo_3_1_r2v_fast_portrait">Veo 3.1 Reference Images R2V (Portrait 9:16)</option>
+                <option value="veo_3_1_r2v_fast_landscape">Veo 3.1 Reference Images R2V (Landscape 16:9)</option>
+                <option value="veo_3_1_extend">Veo 3.1 Video Continuation / Extend</option>
+              </optgroup>
+              <optgroup label="🎨 Google Flow Image Generation">
+                <option value="gemini-3.1-flash-image-portrait">Gemini 3.1 Flash Image (Portrait 9:16)</option>
+                <option value="gemini-3.1-flash-image-landscape">Gemini 3.1 Flash Image (Landscape 16:9)</option>
+                <option value="gemini-3.0-pro-image">Gemini 3.0 Pro Image (GEM_PIX_2)</option>
+                <option value="imagen-4.0-generate-preview">Imagen 4.0 Generate Preview (IMAGEN_3_5)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Prompt:</label>
+            <textarea id="pgPrompt" class="form-textarea" placeholder="Enter your prompt here (e.g. A futuristic cyberpunk city at night with neon lights...)">A cinematic shot of a futuristic flying car cruising through neon-lit skyscrapers at rain night, photorealistic 4k</textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Reference Image URL (Optional - For I2V / R2V):</label>
+            <input type="text" id="pgRefImg" class="form-input" placeholder="https://example.com/character-or-startframe.jpg" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Aspect Ratio:</label>
+            <select id="pgRatio" class="form-select" onchange="syncRatioWithModel()">
+              <option value="9:16">Portrait (9:16)</option>
+              <option value="16:9">Landscape (16:9)</option>
+              <option value="1:1">Square (1:1)</option>
+            </select>
+          </div>
+
+          <button id="pgSubmitBtn" class="btn btn-lg" style="width: 100%; justify-content: center;" onclick="runPlaygroundTest()">
+            🚀 Execute Generation Job
+          </button>
+
+          <div id="pgOutputBox" style="margin-top: 16px; display: none;">
+            <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Result Output:</div>
+            <div id="pgResultMedia" style="margin-bottom: 12px;"></div>
+            <div class="code-block" id="pgResultJson" style="max-height: 200px;"></div>
+          </div>
+        </div>
+
+        <!-- Right: Code Examples (OpenAPI & Gemini) -->
+        <div>
+          <div class="card">
+            <div class="card-title">OpenAPI Standard (/v1/chat/completions)</div>
+            <div class="card-subtitle">Standard OpenAI format fully compatible with all LLM SDKs and AI clients.</div>
+            <div class="code-block">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+curl http://localhost:8088/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "veo_3_1_r2v_fast_portrait",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Cyberpunk warrior walking down rainy Tokyo alley" },
+          { "type": "image_url", "image_url": { "url": "https://example.com/character.jpg" } }
+        ]
+      }
+    ]
+  }'
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Google Gemini Standard (/models/{model}:generateContent)</div>
+            <div class="card-subtitle">Standard Google AI Studio & Vertex AI multi-modal format.</div>
+            <div class="code-block">
+              <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+curl http://localhost:8088/v1beta/models/veo_3_1_t2v_fast_portrait:generateContent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          { "text": "Golden hour drone shot over tropical mountains" },
+          { "fileData": { "fileUri": "https://example.com/ref.jpg" } }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "imageConfig": { "aspectRatio": "9:16" }
+    }
+  }'
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Tab switching
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+      if (tabId === 'jobs') {
+        loadJobsData();
+      } else if (tabId === 'dashboard') {
+        loadFleetData();
+      }
+    }
+
+    // Copy to clipboard
+    function copyCode(btn) {
+      const block = btn.parentElement;
+      const text = block.innerText.replace('Copy', '').trim();
+      navigator.clipboard.writeText(text);
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    }
+
+    // Load models
+    async function loadModels() {
+      try {
+        const res = await fetch('/v1/models');
+        const data = await res.json();
+        const tbody = document.getElementById('modelsTableBody');
+        tbody.innerHTML = '';
+        if (data.data) {
+          document.getElementById('valModelsCount').textContent = data.data.length;
+          data.data.forEach(m => {
+            const tr = document.createElement('tr');
+            const typeBadge = m.type === 'video' ? '<span class="badge-tag tag-purple">VIDEO</span>' : '<span class="badge-tag tag-blue">IMAGE</span>';
+            const isOmni = m.id.includes('omni');
+            const modeBadge = isOmni ? '<span class="badge-tag tag-green">Omni Flash</span>' : `<span class="badge-tag tag-green">${(m.mode || 't2v').toUpperCase()}</span>`;
+            const ratioBadge = `<span class="badge-tag tag-yellow">${m.ratio || (m.id.includes('landscape') ? '16:9' : m.id.includes('square') ? '1:1' : '9:16')}</span>`;
+            tr.innerHTML = `
+              <td><code style="color: #60a5fa; font-weight: 600;">${m.id}</code></td>
+              <td>${typeBadge}</td>
+              <td>${modeBadge}</td>
+              <td>${ratioBadge}</td>
+              <td style="color: var(--text-secondary);">${m.description || '--'}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load models:', err);
+      }
+    }
+
+    // Load fleet data
+    async function loadFleetData() {
+      try {
+        const res = await fetch('/v1/accounts');
+        const data = await res.json();
+        const tbody = document.getElementById('fleetTableBody');
+        tbody.innerHTML = '';
+
+        let extCount = 0;
+        let headlessCount = 0;
+
+        if (data.accounts && data.accounts.length > 0) {
+          data.accounts.forEach(acc => {
+            const isOnline = acc.status === 'READY' || acc.status === 'BUSY';
+            if (acc.workerType === 'EXTENSION' && isOnline) extCount++;
+            if (acc.workerType === 'HEADLESS' && isOnline) headlessCount++;
+
+            const typeClass = acc.workerType === 'EXTENSION' ? 'tag-purple' : 'tag-blue';
+
+            let statusBadge = '';
+            if (acc.status === 'READY') {
+              statusBadge = `<span class="badge-tag tag-green">🟢 ONLINE</span>`;
+            } else if (acc.status === 'BUSY') {
+              statusBadge = `<span class="badge-tag tag-yellow">⏳ BUSY</span>`;
+            } else if (acc.status === 'QUOTA_EXCEEDED') {
+              statusBadge = `<span class="badge-tag tag-red">⚠️ NO CREDITS</span>`;
+            } else if (acc.workerType === 'EXTENSION' && !acc.isExtensionConnected) {
+              statusBadge = `<span class="badge-tag tag-red" title="Extension WebSocket not connected">🔴 DISCONNECTED</span>`;
+            } else {
+              statusBadge = `<span class="badge-tag tag-red">🔴 OFFLINE</span>`;
+            }
+
+            const formatTime = (ts) => {
+              if (!ts) return 'Just now';
+              const d = new Date(ts);
+              return isNaN(d.getTime()) ? 'Just now' : d.toLocaleTimeString();
+            };
+
+            const tr = document.createElement('tr');
+            const isVerified = acc.isVerified;
+            const projectDisplay = acc.projectId && acc.projectId !== '--'
+              ? `<a href="${acc.projectUrl || 'https://flow.google.com/project/' + acc.projectId}" target="_blank" style="color:#60a5fa; text-decoration:none; font-family:monospace; font-size:12px;">🔗 ${acc.projectId.slice(0, 12)}...</a>${isVerified ? ' <span title="Headless login verified" style="color:#22c55e; font-size:11px;">(Verified ✅)</span>' : ''}`
+              : (isVerified ? `<span style="color:#22c55e; font-size:12px;">Default Studio ✅</span>` : `<span style="color:var(--text-muted); font-size:12px;">Auto / New</span>`);
+
+            let creditBadge = '';
+            if (acc.isQuotaExceeded || acc.status === 'QUOTA_EXCEEDED') {
+              creditBadge = `<span class="badge-tag tag-red">⚠️ Out of Credits (0)</span>`;
+            } else if (acc.credits !== undefined && acc.credits !== '--') {
+              creditBadge = `<span class="badge-tag tag-green">${acc.credits} credits</span>`;
+            } else {
+              creditBadge = `<span class="badge-tag tag-blue">Unlimited / Active</span>`;
+            }
+
+            tr.innerHTML = `
+              <td><b>${acc.label || acc.accountId}</b><br><small style="color:var(--text-muted);">${acc.accountId}</small></td>
+              <td><span class="badge-tag ${typeClass}">${acc.workerType}</span></td>
+              <td>${statusBadge}</td>
+              <td>${projectDisplay}</td>
+              <td>${creditBadge}</td>
+              <td>${formatTime(acc.connectedAt || acc.lastActiveAt)}</td>
+              <td>${formatTime(acc.lastActiveAt || acc.lastActive)}</td>
+              <td style="text-align: center; white-space: nowrap;">
+                <button id="btnSync_${acc.accountId}" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; margin-right: 4px; color: #10b981; border-color: rgba(16, 185, 129, 0.35);" onclick="syncAccountCredits('${acc.accountId}')" title="Trigger Flow tab to check & sync real-time credits">🔄 Check Credit</button>
+                <button id="btnVerify_${acc.accountId}" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; margin-right: 4px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);" onclick="verifyAccount('${acc.accountId}')" title="Test Headless Playwright login with saved cookies">⚡ Verify</button>
+                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="deleteAccount('${acc.accountId}')" title="Delete account from fleet">🗑️ Delete</button>
+              </td>
+            `;
+            tbody.appendChild(tr);
+          });
+        } else {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                No active workers connected yet. Connect Chrome with the Shine Flow Extension, or click "➕ Add New Account".
+              </td>
+            </tr>
+          `;
+        }
+
+        document.getElementById('valExtCount').textContent = extCount;
+        document.getElementById('valHeadlessCount').textContent = headlessCount;
+
+        // Update Fleet Mode display from health endpoint
+        try {
+          const hRes = await fetch('/health');
+          const hData = await hRes.json();
+          const modeVal = document.getElementById('valFleetMode');
+          const modeDesc = document.getElementById('valFleetModeDesc');
+          if (modeVal && modeDesc && hData) {
+            if (hData.headlessEnabled) {
+              modeVal.textContent = 'HYBRID';
+              modeVal.style.color = '#60a5fa';
+              modeDesc.textContent = 'Extension Priority + Headless Fallback';
+            } else {
+              modeVal.textContent = 'EXTENSION ONLY';
+              modeVal.style.color = '#a78bfa';
+              modeDesc.textContent = 'Headless Disabled (Fast Error on 0 Workers)';
+            }
+          }
+        } catch (_) {}
+      } catch (err) {
+        console.error('Failed to load fleet data:', err);
+      }
+    }
+
+    // Modal handlers for Account creation
+    function openCreateAccountModal() {
+      const modal = document.getElementById('createAccountModal');
+      modal.style.display = 'flex';
+      generateModalRandomId();
+    }
+
+    function closeCreateAccountModal() {
+      const modal = document.getElementById('createAccountModal');
+      modal.style.display = 'none';
+    }
+
+    function generateModalRandomId() {
+      const hex = Math.random().toString(16).slice(2, 10);
+      document.getElementById('modalAccountId').value = `google_acc_${hex}`;
+      if (!document.getElementById('modalAccountLabel').value) {
+        document.getElementById('modalAccountLabel').value = `Chrome Profile (${hex.slice(0, 4).toUpperCase()})`;
+      }
+    }
+
+    function toggleModalCookieGroup() {
+      const type = document.getElementById('modalWorkerType').value;
+      const grp = document.getElementById('headlessCookieGroup');
+      grp.style.display = type === 'HEADLESS' ? 'block' : 'none';
+    }
+
+    async function submitCreateAccount() {
+      const accountId = document.getElementById('modalAccountId').value.trim();
+      const label = document.getElementById('modalAccountLabel').value.trim();
+      const projectId = document.getElementById('modalProjectId').value.trim();
+      const workerType = document.getElementById('modalWorkerType').value;
+      const credits = parseInt(document.getElementById('modalCredits').value, 10) || 100;
+      const cookiesRaw = document.getElementById('modalCookies').value.trim();
+
+      if (!accountId) {
+        alert('Please enter an Account ID.');
+        return;
+      }
+
+      let cookies = [];
+      if (workerType === 'HEADLESS' && cookiesRaw) {
+        try {
+          cookies = JSON.parse(cookiesRaw);
+          if (!Array.isArray(cookies)) throw new Error('Cookies JSON must be an array.');
+        } catch (e) {
+          alert('Invalid Cookies JSON: ' + e.message);
+          return;
+        }
+      }
+
+      const btn = document.getElementById('modalSubmitBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      try {
+        const res = await fetch('/v1/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId,
+            label,
+            projectId: projectId || undefined,
+            workerType,
+            credits,
+            cookies: cookies.length > 0 ? cookies : undefined,
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          closeCreateAccountModal();
+          await loadFleetData();
+          alert(`Account ${accountId} created successfully! You can connect a Chrome profile or extension using this ID.`);
+        } else {
+          alert('Failed to create account: ' + (data.error || data.message || 'Unknown'));
+        }
+      } catch (err) {
+        alert('Connection error: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save & Create Account';
+      }
+    }
+
+    async function deleteAccount(accountId) {
+      if (!confirm(`Are you sure you want to delete account ${accountId} from the fleet?`)) return;
+      try {
+        const res = await fetch(`/v1/accounts/${accountId}`, { method: 'DELETE' });
+        if (res.ok) {
+          await loadFleetData();
+        } else {
+          const data = await res.json();
+          alert('Failed to delete: ' + (data.error || data.message));
+        }
+      } catch (err) {
+        alert('Connection error: ' + err.message);
+      }
+    }
+
+    async function verifyAccount(accountId) {
+      const btn = document.getElementById(`btnVerify_${accountId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Verifying...';
+      }
+      try {
+        const res = await fetch(`/v1/accounts/${accountId}/verify`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ Headless Login Verified!\n\nAccount: ${accountId}\nProject ID: ${data.data?.projectId || 'Default Studio'}\nStatus: Flow Workspace accessible!`);
+          await loadFleetData();
+        } else {
+          alert(`❌ Verification Failed for ${accountId}:\n${data.error || 'Could not access Flow workspace.'}`);
+          await loadFleetData();
+        }
+      } catch (err) {
+        alert('Verification request error: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '⚡ Verify';
+        }
+      }
+    }
+
+    async function syncAccountCredits(accountId) {
+      const btn = document.getElementById(`btnSync_${accountId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Checking...';
+      }
+      try {
+        const res = await fetch(`/v1/accounts/${encodeURIComponent(accountId)}/sync-credits`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await res.json();
+        if (res.ok && (data.code === 200 || data.success)) {
+          const credits = data.credits !== undefined ? data.credits : data.data?.credits;
+          alert(`✅ Credits Synced for ${accountId}:\nBalance: ${credits} credits\nQuota Exceeded: ${data.isQuotaExceeded ? 'YES (0 Credits)' : 'NO'}`);
+          await loadFleetData();
+        } else {
+          alert(`❌ Credit Check Failed for ${accountId}:\n${data.error || data.message || 'Worker did not respond'}`);
+          await loadFleetData();
+        }
+      } catch (err) {
+        alert('Credit sync request error: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '🔄 Check Credit';
+        }
+      }
+    }
+
+    async function syncAllAccountsCredits() {
+      try {
+        const res = await fetch('/v1/accounts');
+        const data = await res.json();
+        const accounts = data.accounts || [];
+        if (accounts.length === 0) {
+          alert('No accounts currently in fleet.');
+          return;
+        }
+        let synced = 0;
+        for (const acc of accounts) {
+          try {
+            const r = await fetch(`/v1/accounts/${encodeURIComponent(acc.accountId)}/sync-credits`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            if (r.ok) synced++;
+          } catch (_) {}
+        }
+        await loadFleetData();
+        alert(`Finished credit sync run: ${synced}/${accounts.length} account(s) updated.`);
+      } catch (err) {
+        alert('Sync error: ' + err.message);
+      }
+    }
+
+    function syncModelWithRatio() {
+      const model = document.getElementById('pgModel').value;
+      const ratioSelect = document.getElementById('pgRatio');
+      if (model.includes('landscape')) {
+        ratioSelect.value = '16:9';
+      } else if (model.includes('square')) {
+        ratioSelect.value = '1:1';
+      } else {
+        ratioSelect.value = '9:16';
+      }
+    }
+
+    function syncRatioWithModel() {
+      const ratio = document.getElementById('pgRatio').value;
+      const modelSelect = document.getElementById('pgModel');
+      const current = modelSelect.value;
+      const isImage = current.includes('image');
+
+      if (ratio === '16:9') {
+        modelSelect.value = isImage ? 'gemini-3.1-flash-image-landscape' : 'veo_3_1_t2v_fast_landscape';
+      } else if (ratio === '9:16') {
+        modelSelect.value = isImage ? 'gemini-3.1-flash-image-portrait' : 'veo_3_1_t2v_fast_portrait';
+      }
+    }
+
+    // Playground test executor
+    async function runPlaygroundTest() {
+      const btn = document.getElementById('pgSubmitBtn');
+      const prompt = document.getElementById('pgPrompt').value.trim();
+      const model = document.getElementById('pgModel').value;
+      const refImg = document.getElementById('pgRefImg').value.trim();
+      const ratio = document.getElementById('pgRatio').value;
+      const outBox = document.getElementById('pgOutputBox');
+      const mediaBox = document.getElementById('pgResultMedia');
+      const jsonBox = document.getElementById('pgResultJson');
+
+      if (!prompt) {
+        alert('Please enter a prompt');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating media...';
+      outBox.style.display = 'block';
+      mediaBox.innerHTML = '<div style="color: var(--warning);">Dispatching job to worker and waiting for Flow output (30-90s)...</div>';
+      jsonBox.textContent = 'Waiting for worker response...';
+
+      try {
+        const payload = {
+          model,
+          prompt,
+          aspectRatio: ratio,
+          referenceImages: refImg ? [refImg] : undefined,
+          imageStart: refImg || undefined,
+        };
+
+        const res = await fetch('/v1/video/generations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        jsonBox.textContent = JSON.stringify(data, null, 2);
+
+        if (data.mediaUrl) {
+          if (data.mediaUrl.endsWith('.mp4') || model.startsWith('veo_')) {
+            mediaBox.innerHTML = `<video controls autoplay loop style="width: 100%; max-height: 360px; border-radius: 8px;" src="${data.mediaUrl}"></video>`;
+          } else {
+            mediaBox.innerHTML = `<img src="${data.mediaUrl}" style="width: 100%; max-height: 360px; object-fit: contain; border-radius: 8px;" />`;
+          }
+        } else if (data.error) {
+          mediaBox.innerHTML = `<div style="color: var(--danger);">Error: ${data.error.message || data.error}</div>`;
+        }
+      } catch (err) {
+        mediaBox.innerHTML = `<div style="color: var(--danger);">Request failed: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 Execute Generation Job';
+      }
+    }
+
+    // ── Job Manager & Assets Logic ──────────────────────────────────────────
+
+    let cachedJobsHistory = [];
+
+    function copyText(str) {
+      if (!str) return;
+      navigator.clipboard.writeText(str).then(() => {
+        alert('Copied to clipboard: ' + (str.length > 50 ? str.slice(0, 50) + '...' : str));
+      }).catch(() => {
+        prompt('Copy text:', str);
+      });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    async function loadJobsData() {
+      try {
+        const res = await fetch('/v1/jobs');
+        const data = await res.json();
+        if (data.data) {
+          const { running, queued, history } = data.data;
+          cachedJobsHistory = history || [];
+
+          const runCountEl = document.getElementById('valRunningJobsCount');
+          const queueCountEl = document.getElementById('valQueuedJobsCount');
+          const compCountEl = document.getElementById('valCompletedJobsCount');
+          if (runCountEl) runCountEl.textContent = running?.length || 0;
+          if (queueCountEl) queueCountEl.textContent = queued?.length || 0;
+          if (compCountEl) compCountEl.textContent = cachedJobsHistory.length || 0;
+
+          renderRunningJobs(running || [], queued || []);
+          filterJobsHistory();
+        }
+      } catch (err) {
+        console.error('Failed to load jobs data:', err);
+      }
+    }
+
+    function renderRunningJobs(running, queued) {
+      const tbody = document.getElementById('runningJobsTableBody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      const totalActive = running.length + queued.length;
+      if (totalActive === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
+              No active generation jobs running right now.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      // Render running
+      running.forEach(item => {
+        const tr = document.createElement('tr');
+        const elapsedSec = Math.round((item.durationMs || 0) / 1000);
+        tr.innerHTML = `
+          <td><code style="color: #38bdf8; font-size: 11px;">${escapeHtml(item.jobId)}</code></td>
+          <td>
+            <span class="badge-tag ${item.type === 'video' ? 'tag-purple' : 'tag-blue'}">${(item.type || 'video').toUpperCase()}</span><br>
+            <small style="color: var(--text-secondary); font-family: monospace; font-size: 11px;">${escapeHtml(item.model || '--')}</small>
+          </td>
+          <td>
+            <div style="max-height: 60px; overflow-y: auto; font-size: 12px; line-height: 1.4; white-space: pre-wrap;">${escapeHtml(item.prompt)}</div>
+          </td>
+          <td>
+            <b>${escapeHtml(item.accountLabel || item.accountId || '--')}</b><br>
+            <small style="color: var(--text-muted); font-size: 11px;">${escapeHtml(item.accountId || '')}</small>
+          </td>
+          <td>
+            <span style="font-family: monospace; color: #38bdf8; font-weight: 600;">${elapsedSec}s</span>
+          </td>
+          <td style="text-align: center;">
+            <span class="badge-tag tag-yellow">⏳ RUNNING</span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // Render queued
+      queued.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><code style="color: #f59e0b; font-size: 11px;">${escapeHtml(item.jobId)}</code></td>
+          <td>
+            <span class="badge-tag ${item.type === 'video' ? 'tag-purple' : 'tag-blue'}">${(item.type || 'video').toUpperCase()}</span><br>
+            <small style="color: var(--text-secondary); font-family: monospace; font-size: 11px;">${escapeHtml(item.model || '--')}</small>
+          </td>
+          <td>
+            <div style="max-height: 60px; overflow-y: auto; font-size: 12px; line-height: 1.4; white-space: pre-wrap;">${escapeHtml(item.prompt)}</div>
+          </td>
+          <td>
+            <span style="color: var(--text-muted); font-size: 12px;">Waiting in pool</span>
+          </td>
+          <td>
+            <span style="color: var(--text-muted); font-size: 12px;">Queued</span>
+          </td>
+          <td style="text-align: center;">
+            <span class="badge-tag tag-blue">⏳ QUEUED</span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderCompletedJobs(list) {
+      const tbody = document.getElementById('completedJobsTableBody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      if (!list || list.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+              No generated media assets matching criteria. Run a prompt in API Playground or Shine Studio to see results here!
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      list.forEach(item => {
+        const tr = document.createElement('tr');
+        const isVideo = item.type === 'video' || (item.mediaUrl && (item.mediaUrl.endsWith('.mp4') || item.mediaUrl.includes('video')));
+
+        let mediaPreview = '';
+        if (item.status === 'FAILED') {
+          mediaPreview = `<div style="color: #ef4444; font-size: 11px; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.2);">❌ ${escapeHtml(item.error || 'Generation Failed')}</div>`;
+        } else if (isVideo && item.mediaUrl) {
+          mediaPreview = `
+            <div style="position: relative; width: 160px; border-radius: 6px; overflow: hidden; background: #000; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
+              <video src="${item.mediaUrl}" controls preload="metadata" style="width: 100%; max-height: 100px; display: block; object-fit: cover;"></video>
+            </div>
+          `;
+        } else if (item.mediaUrl || item.base64Data) {
+          const imgSrc = item.mediaUrl || item.base64Data;
+          mediaPreview = `
+            <a href="${imgSrc}" target="_blank">
+              <img src="${imgSrc}" style="width: 160px; max-height: 100px; border-radius: 6px; object-fit: cover; display: block; box-shadow: 0 2px 8px rgba(0,0,0,0.5);" />
+            </a>
+          `;
+        } else {
+          mediaPreview = `<span style="color: var(--text-muted); font-size: 11px;">No media link</span>`;
+        }
+
+        // Input references
+        let inputAssetsHtml = '';
+        if (item.referenceImages && item.referenceImages.length > 0) {
+          inputAssetsHtml = `
+            <div style="margin-top: 6px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
+              <span style="font-size: 10px; color: var(--text-muted);">Refs:</span>
+              ${item.referenceImages.map(img => `<a href="${img}" target="_blank"><img src="${img}" style="width: 22px; height: 22px; border-radius: 4px; object-fit: cover; border: 1px solid var(--border-subtle);" /></a>`).join('')}
+            </div>
+          `;
+        }
+
+        const safePrompt = escapeHtml(item.prompt);
+        const promptBlock = `
+          <div style="max-height: 75px; overflow-y: auto; font-size: 12px; line-height: 1.4; color: var(--text-primary); white-space: pre-wrap;">${safePrompt}</div>
+          ${inputAssetsHtml}
+          <div style="margin-top: 5px;">
+            <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px;" onclick="copyText('${escapeHtml(item.prompt).replace(/'/g, "\\'")}')">📋 Copy Prompt</button>
+          </div>
+        `;
+
+        const specsBlock = `
+          <span class="badge-tag ${item.type === 'video' ? 'tag-purple' : 'tag-blue'}">${escapeHtml(item.model || '--')}</span><br>
+          <div style="margin-top: 4px; display: flex; gap: 4px;">
+            <span class="badge-tag tag-yellow">${item.aspectRatio || 'Auto'}</span>
+            <span class="badge-tag tag-green">${(item.mode || item.type || 't2v').toUpperCase()}</span>
+          </div>
+        `;
+
+        const accountBlock = `
+          <b>${escapeHtml(item.accountLabel || item.accountId || '--')}</b><br>
+          <small style="color: var(--text-muted); font-size: 11px;">${escapeHtml(item.accountId || '')}</small>
+        `;
+
+        const durationSec = item.durationMs ? `${(item.durationMs / 1000).toFixed(1)}s` : '--';
+        const formattedTime = item.completedAt ? new Date(item.completedAt).toLocaleTimeString() : (item.createdAt ? new Date(item.createdAt).toLocaleTimeString() : 'Just now');
+
+        let actionsHtml = '';
+        if (item.mediaUrl) {
+          actionsHtml = `
+            <div style="display: flex; flex-direction: column; gap: 4px; align-items: center;">
+              <a href="${item.mediaUrl}" target="_blank" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px; width: 100px; justify-content: center; color: #38bdf8; text-decoration: none;">🔗 Open Media</a>
+              <a href="${item.mediaUrl}" download target="_blank" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px; width: 100px; justify-content: center; text-decoration: none;">📥 Download</a>
+              <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px; width: 100px; justify-content: center;" onclick="copyText('${item.mediaUrl}')">📋 Copy URL</button>
+            </div>
+          `;
+        } else {
+          actionsHtml = `<span style="color: var(--text-muted); font-size: 11px;">--</span>`;
+        }
+
+        tr.innerHTML = `
+          <td>${mediaPreview}</td>
+          <td>${promptBlock}</td>
+          <td>${specsBlock}</td>
+          <td>${accountBlock}</td>
+          <td>
+            <span style="font-weight: 600; font-size: 12px; color: #34d399;">${durationSec}</span><br>
+            <small style="color: var(--text-muted); font-size: 11px;">${formattedTime}</small>
+          </td>
+          <td style="text-align: center;">${actionsHtml}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterJobsHistory() {
+      const query = (document.getElementById('jobsSearchInput')?.value || '').toLowerCase().trim();
+      const typeFilter = document.getElementById('jobsTypeFilter')?.value || 'ALL';
+
+      const filtered = cachedJobsHistory.filter(item => {
+        if (typeFilter !== 'ALL' && item.type !== typeFilter) return false;
+        if (!query) return true;
+        const matchPrompt = (item.prompt || '').toLowerCase().includes(query);
+        const matchModel = (item.model || '').toLowerCase().includes(query);
+        const matchId = (item.jobId || '').toLowerCase().includes(query);
+        const matchAcc = (item.accountId || '').toLowerCase().includes(query) || (item.accountLabel || '').toLowerCase().includes(query);
+        return matchPrompt || matchModel || matchId || matchAcc;
+      });
+
+      renderCompletedJobs(filtered);
+    }
+
+    async function clearAllJobsHistory() {
+      if (!confirm('Are you sure you want to clear all completed job history and media asset records?')) return;
+      try {
+        await fetch('/v1/jobs', { method: 'DELETE' });
+        await loadJobsData();
+      } catch (err) {
+        alert('Failed to clear history: ' + err.message);
+      }
+    }
+
+    // Initialize
+    loadModels();
+    loadFleetData();
+    loadJobsData();
+    setInterval(() => {
+      loadFleetData();
+      loadJobsData();
+    }, 4000);
+  </script>
+</body>
+</html>

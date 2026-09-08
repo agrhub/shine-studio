@@ -68,8 +68,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   public async exists(key: string): Promise<boolean> {
-    const filePath = path.join(this.uploadDir, key);
-    return fs.existsSync(filePath);
+    return this.getLocalFilePath(key) !== null;
   }
 
   public async listFiles(

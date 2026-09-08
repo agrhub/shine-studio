@@ -12,6 +12,7 @@ import {
   PropAsset,
   CharacterSeriesEntity,
   CharacterWardrobeVariant,
+  CharacterSceneCostumes,
   ScriptAgentInput,
   ScriptShot,
   ScriptScene,
@@ -368,7 +369,7 @@ export class ScriptAgent {
 
   // ── 4. SCENE & SHOT FLATTENING AND NORMALIZATION ─────────────────────────
 
-  private resolveAssetIds(
+  public resolveAssetIds(
     charNames: string[],
     locationNames: string[],
     propNames: string[],
@@ -376,48 +377,110 @@ export class ScriptAgent {
     localLocations: LocationAsset[],
     localProps: PropAsset[]
   ): { character_ids: string[]; location_ids: string[]; prop_ids: string[] } {
-    const norm = (s: any): string => (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const norm = (s: string | { name?: string; id?: string } | null | undefined): string =>
+      (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const foldDiacritics = (s: string): string =>
+      s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').normalize('NFC');
+    const toAlphaNum = (s: string): string =>
+      s.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
     const uniqueCharIds = Array.from(new Set(
       (Array.isArray(charNames) ? charNames : []).map(n => {
         const nn = norm(n);
         if (!nn) return null;
+        const nClean = nn.replace(/^(char_|ch_)/i, '');
+        const nToken = toAlphaNum(nClean);
+        const nFolded = toAlphaNum(foldDiacritics(nClean));
+
         const found = localCharacters.find(c => {
           const cn = norm(c.name);
           const cid = norm(c.id);
-          return cn === nn || cid === nn || (cn && nn && (cn.includes(nn) || nn.includes(cn)));
+          const cidClean = cid.replace(/^(char_|ch_)/i, '');
+          const cToken = toAlphaNum(cn);
+          const cidToken = toAlphaNum(cidClean);
+          const cFolded = toAlphaNum(foldDiacritics(cn));
+
+          return (
+            cn === nn ||
+            cid === nn ||
+            cidToken === nToken ||
+            cToken === nToken ||
+            (nToken.length >= 2 && (cidToken.includes(nToken) || cToken.includes(nToken))) ||
+            (nToken.length >= 2 && (nToken.includes(cidToken) || nToken.includes(cToken))) ||
+            (nFolded.length >= 2 && (cidToken.includes(nFolded) || cFolded.includes(nFolded))) ||
+            (nFolded.length >= 2 && (nFolded.includes(cidToken) || nFolded.includes(cFolded))) ||
+            (cn && nn && (cn.includes(nn) || nn.includes(cn)))
+          );
         });
         return found?.id || null;
       }).filter(Boolean)
     )) as string[];
+
     const uniqueLocIds = Array.from(new Set(
       (Array.isArray(locationNames) ? locationNames : []).map(n => {
         const nn = norm(n);
         if (!nn) return null;
+        const nClean = nn.replace(/^(loc_|location_)/i, '').replace(/^(int|ext)[\.\s]+/i, '');
+        const nToken = toAlphaNum(nClean);
+        const nFolded = toAlphaNum(foldDiacritics(nClean));
+
         const found = localLocations.find(l => {
           const ln = norm(l.name);
           const lid = norm(l.id);
-          return ln === nn || lid === nn || (ln && nn && (ln.includes(nn) || nn.includes(ln)));
+          const lidClean = lid.replace(/^(loc_|location_)/i, '');
+          const lToken = toAlphaNum(ln);
+          const lidToken = toAlphaNum(lidClean);
+          const lFolded = toAlphaNum(foldDiacritics(ln));
+
+          return (
+            ln === nn ||
+            lid === nn ||
+            lidToken === nToken ||
+            lToken === nToken ||
+            (nToken.length >= 3 && (lidToken.includes(nToken) || lToken.includes(nToken))) ||
+            (nToken.length >= 3 && (nToken.includes(lidToken) || nToken.includes(lToken))) ||
+            (nFolded.length >= 3 && (lidToken.includes(nFolded) || lFolded.includes(nFolded))) ||
+            (nFolded.length >= 3 && (nFolded.includes(lidToken) || nFolded.includes(lFolded))) ||
+            (ln && nn && (ln.includes(nn) || nn.includes(ln)))
+          );
         });
         return found?.id || null;
       }).filter(Boolean)
     )) as string[];
+
     const uniquePropIds = Array.from(new Set(
       (Array.isArray(propNames) ? propNames : []).map(n => {
         const nn = norm(n);
         if (!nn) return null;
+        const nClean = nn.replace(/^(prop_|pr_)/i, '');
+        const nToken = toAlphaNum(nClean);
+
         const found = localProps.find(p => {
           const pn = norm(p.name);
           const pid = norm(p.id);
-          return pn === nn || pid === nn || (pn && nn && (pn.includes(nn) || nn.includes(pn)));
+          const pidClean = pid.replace(/^(prop_|pr_)/i, '');
+          const pToken = toAlphaNum(pn);
+          const pidToken = toAlphaNum(pidClean);
+
+          return (
+            pn === nn ||
+            pid === nn ||
+            pidToken === nToken ||
+            pToken === nToken ||
+            (nToken.length >= 3 && (pidToken.includes(nToken) || pToken.includes(nToken))) ||
+            (nToken.length >= 3 && (nToken.includes(pidToken) || nToken.includes(pToken))) ||
+            (pn && nn && (pn.includes(nn) || nn.includes(pn)))
+          );
         });
         return found?.id || null;
       }).filter(Boolean)
     )) as string[];
+
     return { character_ids: uniqueCharIds, location_ids: uniqueLocIds, prop_ids: uniquePropIds };
   }
 
   public normalizeCharacterCostumes(
-    rawCostumes: any[],
+    rawCostumes: CharacterSceneCostumes[],
     charNames: string[],
     sceneNumber: number,
     localCharacters: CharacterSeriesEntity[]
@@ -426,14 +489,39 @@ export class ScriptAgent {
     const processedChars = new Set<string>();
     const costumesArr = Array.isArray(rawCostumes) ? rawCostumes : [];
 
-    const norm = (s: any): string => (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const norm = (s: string | { name?: string; id?: string } | null | undefined): string =>
+      (typeof s === 'string' ? s : (s?.name ?? s?.id ?? (s != null ? String(s) : ''))).normalize('NFC').toLowerCase().trim();
+    const foldDiacritics = (s: string): string =>
+      s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').normalize('NFC');
+    const toAlphaNum = (s: string): string =>
+      s.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
     const findCharDef = (name: string) => {
       const n = norm(name);
       if (!n) return undefined;
+      const nClean = n.replace(/^(char_|ch_)/i, '');
+      const nToken = toAlphaNum(nClean);
+      const nFolded = toAlphaNum(foldDiacritics(nClean));
+
       return localCharacters.find(c => {
         const cn = norm(c.name);
         const cid = norm(c.id);
-        return cn === n || cid === n || (cn && n && (cn.includes(n) || n.includes(cn)));
+        const cidClean = cid.replace(/^(char_|ch_)/i, '');
+        const cToken = toAlphaNum(cn);
+        const cidToken = toAlphaNum(cidClean);
+        const cFolded = toAlphaNum(foldDiacritics(cn));
+
+        return (
+          cn === n ||
+          cid === n ||
+          cidToken === nToken ||
+          cToken === nToken ||
+          (nToken.length >= 2 && (cidToken.includes(nToken) || cToken.includes(nToken))) ||
+          (nToken.length >= 2 && (nToken.includes(cidToken) || nToken.includes(cToken))) ||
+          (nFolded.length >= 2 && (cidToken.includes(nFolded) || cFolded.includes(nFolded))) ||
+          (nFolded.length >= 2 && (nFolded.includes(cidToken) || nFolded.includes(cFolded))) ||
+          (cn && n && (cn.includes(n) || n.includes(cn)))
+        );
       });
     };
 
@@ -449,8 +537,8 @@ export class ScriptAgent {
 
       const variants = Array.isArray(charDef?.wardrobe_variants) ? charDef.wardrobe_variants : [];
 
-      let matchedVariant: any = null;
-      const costVariantId = norm(cost.variant_id || cost.variantId || '');
+      let matchedVariant: CharacterWardrobeVariant | undefined = undefined;
+      const costVariantId = norm(cost.variant_id || '');
       const costWardrobe = norm(cost.wardrobe || '');
 
       // 1. Match by variant_id exact or substring
@@ -835,35 +923,39 @@ export class ScriptAgent {
           props,
         });
 
-        const shots = await this.enrichShotsWithDramaDialogue(rawShots, {
-          screenplay: parsedJson.screenplay || input.synopsis || epTitle,
-          title: epTitle,
-          characters,
-          langInfo,
-          targetDurationSeconds: targetDuration,
-        });
+        const rawDur = rawShots.reduce((sum: number, s: any) => sum + (s.duration_seconds || 6), 0);
+        // Only accept direct parsed scenes if they meet the minimum shot count and target duration
+        if (rawShots.length >= minShots && rawDur >= targetDuration * 0.85) {
+          const shots = await this.enrichShotsWithDramaDialogue(rawShots, {
+            screenplay: parsedJson.screenplay || input.synopsis || epTitle,
+            title: epTitle,
+            characters,
+            langInfo,
+            targetDurationSeconds: targetDuration,
+          });
 
-        let screenplay = parsedJson.screenplay;
-        if (!screenplay || this.isRawJson(screenplay)) {
-          screenplay = this.assembleMarkdownScreenplay(shots, epTitle);
+          let screenplay = parsedJson.screenplay;
+          if (!screenplay || this.isRawJson(screenplay)) {
+            screenplay = this.assembleMarkdownScreenplay(shots, epTitle);
+          }
+          const totalDuration = shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || 6), 0);
+
+          return {
+            episode: epStr,
+            episode_number: epNum,
+            title: parsedJson?.title || epTitle,
+            synopsis: parsedJson?.synopsis || input.synopsis || '',
+            screenplay,
+            scene_core: parsedJson?.scene_core || parsedJson?.sceneCore || input.scene_core,
+            conflict_escalation: parsedJson?.conflict_escalation || parsedJson?.conflictEscalation || input.conflict_escalation,
+            cliffhanger_hook: parsedJson?.cliffhanger_hook || parsedJson?.cliffhangerHook || input.cliffhanger_hook,
+            total_duration_seconds: totalDuration,
+            scenes: shots,
+            characters,
+            locations,
+            props,
+          };
         }
-        const totalDuration = shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
-
-        return {
-          episode: epStr,
-          episode_number: epNum,
-          title: parsedJson?.title || epTitle,
-          synopsis: parsedJson?.synopsis || input.synopsis || '',
-          screenplay,
-          scene_core: parsedJson?.scene_core || parsedJson?.sceneCore || input.scene_core,
-          conflict_escalation: parsedJson?.conflict_escalation || parsedJson?.conflictEscalation || input.conflict_escalation,
-          cliffhanger_hook: parsedJson?.cliffhanger_hook || parsedJson?.cliffhangerHook || input.cliffhanger_hook,
-          total_duration_seconds: totalDuration,
-          scenes: shots,
-          characters,
-          locations,
-          props,
-        };
       }
 
       // 2. Delegate raw screenplay text to analyzeAndBreakdownScreenplay if scenes were not provided
@@ -1131,7 +1223,7 @@ export class ScriptAgent {
 
   /**
    * Estimates spoken audio duration in seconds from dialogue entries.
-   * Rates: ~2.3 words/sec for Latin/Vietnamese; ~3.8 chars/sec for CJK.
+   * Rates: ~3.4 words/sec for micro-drama rapid delivery (Latin/Vietnamese); ~5.5 chars/sec for CJK.
    */
   public estimateShotDialogueDuration(dialogue: any[]): number {
     if (!Array.isArray(dialogue) || dialogue.length === 0) return 0;
@@ -1139,12 +1231,13 @@ export class ScriptAgent {
     for (const d of dialogue) {
       const text = (d.line || d.text || '').trim();
       if (!text) continue;
+      const speed = typeof d.speed === 'number' && d.speed > 0 ? d.speed : 1.15;
       // CJK characters check: Chinese / Japanese / Korean
       if (/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(text)) {
-        durationSec += text.replace(/\s+/g, '').length / 3.8;
+        durationSec += (text.replace(/\s+/g, '').length / 5.5) / speed;
       } else {
         const words = text.split(/\s+/).filter(Boolean).length;
-        durationSec += words / 2.3;
+        durationSec += (words / 3.4) / speed;
       }
     }
     return durationSec;
@@ -1152,7 +1245,8 @@ export class ScriptAgent {
 
   /**
    * Enriches shot sequence with authentic micro-drama dialogues and inner voiceovers
-   * to ensure high retention (≥ 80%–90% dialogue duration coverage & ≥ 85% shot density).
+   * to ensure high retention (≥ 75%–85% dialogue duration coverage & ≥ 85% shot density).
+   * Note: Total duration is strictly governed by actual video shot durations.
    */
   public async enrichShotsWithDramaDialogue(
     shots: ScriptShot[],
@@ -1166,11 +1260,9 @@ export class ScriptAgent {
   ): Promise<ScriptShot[]> {
     if (!Array.isArray(shots) || shots.length === 0) return shots;
 
-    const totalEpisodeDuration = (context.targetDurationSeconds && context.targetDurationSeconds > 0)
-      ? context.targetDurationSeconds
-      : shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || s.durationSeconds || 6), 0);
-
-    const targetSpokenDuration = Math.round(totalEpisodeDuration * 0.85); // 85% target duration
+    // Actual video duration is strictly the sum of all shot duration_seconds!
+    const actualVideoDuration = shots.reduce((sum: number, s: any) => sum + (s.duration_seconds || (s as any).durationSeconds || 6), 0);
+    const targetSpokenDuration = Math.round(actualVideoDuration * 0.80); // 80% target spoken audio duration
     const minRequiredShots = Math.max(1, Math.ceil(shots.length * 0.85));
 
     let currentTotalSpoken = 0;
@@ -1183,21 +1275,21 @@ export class ScriptAgent {
       }
     }
 
-    const currentCoverageRatio = totalEpisodeDuration > 0 ? (currentTotalSpoken / totalEpisodeDuration) : 0;
+    const currentCoverageRatio = actualVideoDuration > 0 ? (currentTotalSpoken / actualVideoDuration) : 0;
     const currentShotRatio = shots.length > 0 ? (dialogueCount / shots.length) : 0;
 
-    // If already meets both duration coverage (≥ 80%) AND shot density (≥ 85%), return directly
-    if (currentCoverageRatio >= 0.80 && currentShotRatio >= 0.85) {
+    // If already meets both duration coverage (≥ 75%) AND shot density (≥ 85%), return directly
+    if (currentCoverageRatio >= 0.75 && currentShotRatio >= 0.85) {
       Logger.info(
         `[ScriptAgent.enrichShotsWithDramaDialogue] Dialogue already meets micro-drama standards: ` +
-        `${Math.round(currentTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round(currentCoverageRatio * 100)}% spoken duration), ` +
+        `${Math.round(currentTotalSpoken)}s spoken / ${actualVideoDuration}s video (${Math.round(currentCoverageRatio * 100)}% audio coverage), ` +
         `${dialogueCount}/${shots.length} shots (${Math.round(currentShotRatio * 100)}% density).`
       );
       return shots;
     }
 
     Logger.info(
-      `[ScriptAgent.enrichShotsWithDramaDialogue] Current spoken duration is ${Math.round(currentTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round(currentCoverageRatio * 100)}%, target ≥ 80%), ` +
+      `[ScriptAgent.enrichShotsWithDramaDialogue] Current spoken audio is ${Math.round(currentTotalSpoken)}s/${actualVideoDuration}s video (${Math.round(currentCoverageRatio * 100)}%, target ≥ 80%), ` +
       `dialogue density is ${dialogueCount}/${shots.length} shots (${Math.round(currentShotRatio * 100)}%, target ≥ 85%). ` +
       `Enriching with micro-drama dialogues & voiceovers in ${context.langInfo.name}...`
     );
@@ -1225,7 +1317,7 @@ export class ScriptAgent {
     const enrichPrompt = PromptLoader.render('screenplay/enrich_dialogue', {
       title: context.title || 'Episode',
       screenplay: context.screenplay,
-      totalEpisodeDuration,
+      totalEpisodeDuration: actualVideoDuration,
       targetSpokenDuration,
       charactersList: this.formatCharactersContext(context.characters) || 'None specified',
       languageName: context.langInfo.name,
@@ -1241,8 +1333,9 @@ export class ScriptAgent {
         { scenes: [] },
         {
           systemInstruction: `You are an expert Micro-Drama Dialogue Doctor. In micro-drama, audio dialogue and voiceover are the primary viewer retention engines. ` +
-            `Ensure cumulative spoken dialogue duration reaches 80% to 90% of total episode duration (${targetSpokenDuration}s / ${totalEpisodeDuration}s), ` +
+            `Ensure cumulative spoken dialogue duration reaches 75% to 85% of total video duration (${targetSpokenDuration}s speech / ${actualVideoDuration}s video), ` +
             `and at least 85% to 95% of shots contain dialogue/VO in ${context.langInfo.name}. ` +
+            `CRITICAL: Every shot's dialogue MUST strictly fit within that shot's individual duration and word budget. Never overflow! ` +
             `Return JSON with updated dialogue for each shot.`,
         }
       );
@@ -1291,8 +1384,8 @@ export class ScriptAgent {
         const newCount = updated.filter(s => Array.isArray(s.dialogue) && s.dialogue.length > 0).length;
         const newTotalSpoken = updated.reduce((sum, s) => sum + this.estimateShotDialogueDuration(s.dialogue), 0);
         Logger.info(
-          `[ScriptAgent.enrichShotsWithDramaDialogue] Successfully enriched dialogue: ` +
-          `${Math.round(newTotalSpoken)}s/${totalEpisodeDuration}s (${Math.round((newTotalSpoken / totalEpisodeDuration) * 100)}% duration), ` +
+          `[ScriptAgent.enrichShotsWithDramaDialogue] Spoken audio: ` +
+          `${Math.round(newTotalSpoken)}s/${actualVideoDuration}s video (${Math.round((newTotalSpoken / actualVideoDuration) * 100)}% coverage), ` +
           `${newCount}/${shots.length} shots (${Math.round((newCount / shots.length) * 100)}% density).`
         );
         return updated;
@@ -1435,6 +1528,19 @@ export class ScriptAgent {
               action: scene.action
             };
           });
+          const correctionIssues: string[] = [];
+          if (parsedShots.length < minShots) {
+            correctionIssues.push(`- SHOT COUNT TOO LOW: You generated ${parsedShots.length} shots, but target duration of ${targetDuration}s requires at least ${minShots} shots (average 5s to 6s each). You MUST break down EACH dramatic scene heading into 2 to 4 sequential cinematic shots (e.g. establishing wide shot, action beat, close-up reaction).`);
+          }
+          const curDur = parsedShots.reduce((sum, s) => sum + (s.duration_seconds || 6), 0);
+          if (curDur < targetDuration * 0.85) {
+            correctionIssues.push(`- DURATION TOO SHORT: Total duration is only ${curDur}s out of ${targetDuration}s. Add more sequential shots covering every beat to reach ~${targetDuration}s.`);
+          }
+          const hasOverflow = parsedShots.some(s => this.estimateShotDialogueDuration(s.dialogue) > (s.duration_seconds || 6) * 1.05);
+          if (hasOverflow) {
+            correctionIssues.push(`- DIALOGUE OVERFLOW: Some shots contain long dialogue lines that cannot fit into a 5s-6s shot. Limit each shot's dialogue to at most 12-14 words; split longer dialogues across multiple consecutive shots.`);
+          }
+
           const enrichPrompt = PromptLoader.render('screenplay/breakdown_screenplay_expand', {
             currentShotsCount: parsedShots.length,
             targetDuration,
@@ -1446,18 +1552,18 @@ export class ScriptAgent {
             locationsList: this.formatLocationsContext(locations) || 'None specified',
             propsList: this.formatPropsContext(props) || 'None specified',
             languageInstruction: langInfo.dialogueInstruction,
-          });
+          }) + (correctionIssues.length > 0 ? `\n\n## CRITICAL CORRECTION REQUIRED:\n${correctionIssues.join('\n')}\nYou MUST produce between ${minShots} and ${maxShots} shots totaling ~${targetDuration}s.` : '');
 
           const rawRetry = await aiProviderRouter.generateJSON<{ scenes: any[] }>(
             enrichPrompt,
             { scenes: [] },
             breakdownSkill
-              ? { systemInstruction: `${breakdownSkill}\n${langInfo.dialogueInstruction}\nCRITICAL: Must generate ${minShots}-${maxShots} shots.` }
-              : { systemInstruction: `${langInfo.dialogueInstruction}\nCRITICAL: Must generate ${minShots}-${maxShots} shots.` }
+              ? { systemInstruction: `${breakdownSkill}\n${langInfo.dialogueInstruction}\nCRITICAL: Must generate ${minShots}-${maxShots} shots totaling ~${targetDuration}s.` }
+              : { systemInstruction: `${langInfo.dialogueInstruction}\nCRITICAL: Must generate ${minShots}-${maxShots} shots totaling ~${targetDuration}s.` }
           );
           if (rawRetry && Array.isArray(rawRetry.scenes) && rawRetry.scenes.length > 0) {
             const retryShots = this.flattenAndEnrichShots(rawRetry.scenes, { characters, locations, props });
-            if (retryShots.length > parsedShots.length) {
+            if (retryShots.length > parsedShots.length || retryShots.reduce((sum, s) => sum + (s.duration_seconds || 6), 0) > curDur) {
               Logger.info(`[ScriptAgent.analyzeAndBreakdownScreenplay] LLM expansion produced ${retryShots.length} shots (was ${parsedShots.length}).`);
               parsedShots = retryShots;
             }
@@ -1470,7 +1576,7 @@ export class ScriptAgent {
       Logger.error(`[ScriptAgent.analyzeAndBreakdownScreenplay] Breakdown error: ${e.message}`);
     }
 
-    // 6. Dialogue Duration & Density Check for Micro-Drama (Target ≥ 80% duration, ≥ 85% shots)
+    // 6. Dialogue Duration & Density Check for Micro-Drama (Target ≥ 75% coverage, ≥ 85% shots)
     parsedShots = await this.enrichShotsWithDramaDialogue(parsedShots, {
       screenplay,
       title: detectedScenesList || 'Screenplay Episode',

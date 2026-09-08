@@ -6,7 +6,7 @@ import { PromptLoader } from '@/utils/PromptLoader.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { CreditService } from '@/services/CreditService.js';
-import type { CharacterSeriesEntity, AssetVersion } from '@/types.js';
+import type { CharacterSeriesEntity, AssetVersion, CharacterWardrobeVariant } from '@/types.js';
 
 // export interface CharacterPersona {
 //   id: string;
@@ -82,6 +82,15 @@ export class CharacterService {
           characters.push(normalized);
         }
         await db.updateSeries(seriesId, { characters });
+        try {
+          const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+          const updatedSeries = await db.getSeriesById(seriesId);
+          if (updatedSeries) {
+            PatchSyncService.broadcast(seriesId, 'series:updated', updatedSeries);
+          }
+        } catch (wsErr: any) {
+          Logger.warn(`[CharacterService.createCharacter] WebSocket broadcast notice: ${wsErr.message}`);
+        }
       }
     }
 
@@ -94,60 +103,90 @@ export class CharacterService {
   async generatePortrait(params: {
     series_id?: string;
     character_id?: string;
-    name?: string;
-    age?: number;
-    gender?: string;
-    nationality?: string;
-    visual_traits?: string;
-    prompt?: string;
-    style?: string;
-    visual_style?: string;
-    visual_style_prompt?: string;
-    aspect_ratio?: string;
+    // name?: string;
+    // age?: number;
+    // gender?: string;
+    // nationality?: string;
+    // visual_traits?: string;
+    // clothing_and_accessories?: string;
+    custom_prompt?: string;
+    // style?: string;
+    // visual_style?: string;
+    // visual_style_prompt?: string;
+    // aspect_ratio?: string;
     user_id?: string;
-  }): Promise<{ avatar_url: string; character: CharacterSeriesEntity }> {
+    reference_image_url?: string;
+  }): Promise<{ image_url: string; character: CharacterSeriesEntity, prompt: string, version: AssetVersion }> {
     const db = await getDatabaseProvider();
-    let { series_id, character_id, name, age, gender, nationality, visual_traits, prompt, style, visual_style, visual_style_prompt, aspect_ratio, user_id } = params;
+    let { series_id, character_id, custom_prompt, user_id } = params;
 
-    let targetSeries: any = null;
-    let dbChar: any = null;
-
-    if (series_id) {
-      targetSeries = await db.getSeriesById(series_id);
-      const chars = targetSeries?.characters || [];
-      dbChar = chars.find((c: any) => c.id === character_id || c.name === name);
-      if (dbChar) {
-        name = dbChar.name || name;
-        visual_traits = dbChar.visual_traits || dbChar.traits || visual_traits;
-        age = dbChar.age || age;
-        gender = dbChar.gender || gender;
-        nationality = dbChar.nationality || nationality;
-      }
+    if(!series_id){
+      throw new Error('Series ID is required');
     }
 
-    const resolvedStyle = visual_style || targetSeries?.visual_style || 'realistic';
-    const resolvedStylePrompt = visual_style_prompt || targetSeries?.visual_style_prompt || getVisualStylePrompt(resolvedStyle);
-    const targetAspect: '9:16' | '1:1' | '16:9' | '4:3' = (aspect_ratio === '1:1' || aspect_ratio === '16:9' || aspect_ratio === '4:3') ? aspect_ratio : '9:16';
-
-    const charName = name || dbChar?.name || 'Character';
-    const charTraits = visual_traits || dbChar?.visual_traits || dbChar?.traits || 'Cinematic character portrait';
-    const ageTag = age ? `age: ${age}-year-old` : '';
-    const genderTag = gender && gender !== 'neutral' ? `gender: ${gender}` : '';
-    const nationalityTag = nationality ? `nationality: ${nationality}` : '';
-    const fullPrompt =
-      prompt ||
-      `${resolvedStylePrompt}, portrait of ${charName}, ${ageTag}, ${genderTag}, ${nationalityTag}, ${charTraits}, ${style || 'cinematic lighting'}, age-accurate facial features, character continuity reference.`;
-
-    if (user_id) {
-      try {
-        await CreditService.deductUserCredits(user_id, 'characterAnchors', 'Character Portrait Generation', `Generated portrait for character ${charName}`);
-      } catch (cErr: any) {
-        Logger.warn(`[CharacterService] Credit deduction notice: ${cErr.message}`);
-      }
+    if(!user_id || !character_id){
+      throw new Error('User ID and Character ID are required');
     }
 
-    const imgResult = await aiProviderRouter.generateImage(fullPrompt, {
-      aspectRatio: targetAspect,
+    const user = await db.getUserById(user_id);
+    if (!user) {
+      throw new Error(`User with ID ${user_id} not found`);
+    }
+    
+    let targetSeries = await db.getSeriesById(series_id);
+    if(!targetSeries){
+      throw new Error(`Series with ID ${series_id} not found`);
+    }
+
+    const chars = targetSeries.characters || [];
+    let char = chars.find((c: any) => c.id === character_id || c.name === character_id);
+    if(!char){
+      throw new Error(`Character with ID ${character_id} not found`);
+    }
+    const charName = char.name;
+    const deductionResult = await CreditService.deductUserCredits(user_id, 'characterAnchors', 'Character Portrait Generation', `Generated portrait for character ${charName}`);
+    if (!deductionResult.success) {
+      throw new Error("Insufficient credits. Please subscribe to a plan or purchase credits.");
+    }
+    
+    const resolvedStyle = targetSeries?.visual_style || 'realistic';
+    const resolvedStylePrompt = targetSeries?.visual_style_prompt || getVisualStylePrompt(resolvedStyle);
+    
+    const appearance = char.appearance;
+    const charTraits = char.visual_traits || char.traits || '';
+    const ageTag = `age: ${char.age}-year-old`;
+    const genderTag = char.gender;
+    const nationalityTag = char.nationality;
+    const clothing_desc = char.clothing_and_accessories;
+    
+    const avatarPrompt = PromptLoader.render('assets/character_portrait', {
+      characterName: charName,
+      age: ageTag,
+      gender: genderTag,
+      nationality: nationalityTag,
+      visualTraits: charTraits,
+      clothingAndAccessories: clothing_desc,
+      appearance: appearance,
+      visualStyle: resolvedStylePrompt,
+      referenceImageUrl: params.reference_image_url,
+      customPrompt: custom_prompt
+    });
+
+    // const resolvedStyle = visual_style || targetSeries?.visual_style || 'realistic';
+    // const resolvedStylePrompt = visual_style_prompt || targetSeries?.visual_style_prompt || getVisualStylePrompt(resolvedStyle);
+    // const targetAspect: '9:16' | '1:1' | '16:9' | '4:3' = (aspect_ratio === '1:1' || aspect_ratio === '16:9' || aspect_ratio === '4:3') ? aspect_ratio : '9:16';
+
+    // const charName = name || dbChar?.name || 'Character';
+    // const charTraits = visual_traits || dbChar?.visual_traits || dbChar?.traits || 'Cinematic character portrait';
+    // const ageTag = age ? `age: ${age}-year-old` : '';
+    // const genderTag = gender && gender !== 'neutral' ? `gender: ${gender}` : '';
+    // const nationalityTag = nationality ? `nationality: ${nationality}` : '';
+    // const fullPrompt =
+    //   `${resolvedStylePrompt}, portrait of ${charName}, ${ageTag}, ${genderTag}, ${nationalityTag}, ${charTraits}, ${clothing_and_accessories}, ${style || 'cinematic lighting'} ${custom_prompt ? ', ' + custom_prompt : ''}, age-accurate facial features, character continuity reference.`;
+
+    const imgResult = await aiProviderRouter.generateImage(avatarPrompt, {
+      aspectRatio: "9:16",
+      imageInputs: params.reference_image_url ? [params.reference_image_url] : undefined
     });
 
     if (!imgResult || !imgResult.url) {
@@ -155,39 +194,33 @@ export class CharacterService {
     }
 
     const s3 = await StorageFactory.uploadMedia(imgResult.url, 'images', 'png', imgResult.mimeType || 'image/png');
-    const avatarUrl = `/api/assets/file/${s3.key}`;
+    const avatar_url = `/api/assets/file/${s3.key}`;
 
+    const storePrompt = custom_prompt || char?.visual_traits || char?.traits || char?.physical_characteristics || char?.clothing_and_accessories || '';
     const newVersion: AssetVersion = {
       id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      image_url: avatarUrl,
-      prompt: fullPrompt,
+      image_url: avatar_url,
+      prompt: storePrompt,
       created_at: new Date().toISOString(),
       is_selected: true,
-      aspect_ratio: targetAspect,
+      aspect_ratio: '9:16',
     };
 
-    const existingVersions: AssetVersion[] = Array.isArray(dbChar?.versions) ? [...dbChar.versions] : [];
-    if (existingVersions.length === 0 && (dbChar?.avatar || dbChar?.image_url) && dbChar.avatar !== avatarUrl && dbChar.image_url !== avatarUrl) {
+    const existingVersions: AssetVersion[] = Array.isArray(char?.versions) ? [...char.versions] : [];
+    if (existingVersions.length === 0 && char?.avatar && char.avatar !== avatar_url) {
       existingVersions.push({
-        id: `v1_char_${dbChar.id || character_id}`,
-        image_url: dbChar.avatar || dbChar.image_url,
-        created_at: dbChar.created_at || new Date().toISOString(),
+        id: `v1_char_${char.id || character_id}`,
+        image_url: char.avatar,
+        created_at: char.created_at || new Date().toISOString(),
         is_selected: false,
       });
     }
     const charVersions = [newVersion, ...existingVersions.map(v => ({ ...v, is_selected: false }))];
 
     const normalizedChar = EntityNormalizer.normalizeCharacter({
-      ...(dbChar || {}),
-      id: character_id || dbChar?.id || `char_${Date.now()}`,
-      name: charName,
-      age,
-      gender,
-      nationality,
-      visual_traits: charTraits,
-      avatar: avatarUrl,
-      image_url: avatarUrl,
-      versions: charVersions,
+      ...char,
+      avatar: avatar_url,
+      versions: charVersions
     });
 
     if (!normalizedChar) {
@@ -198,14 +231,23 @@ export class CharacterService {
       const chars = Array.isArray(targetSeries.characters) ? [...targetSeries.characters] : [];
       const matchIdx = chars.findIndex((c: any) => c.id === normalizedChar.id || c.name === normalizedChar.name);
       if (matchIdx >= 0) {
-        chars[matchIdx] = { ...chars[matchIdx], ...normalizedChar, avatar: avatarUrl, image_url: avatarUrl, versions: charVersions };
+        chars[matchIdx] = { ...chars[matchIdx], ...normalizedChar, avatar: avatar_url, versions: charVersions };
       } else {
         chars.push(normalizedChar);
       }
       await db.updateSeries(series_id, { characters: chars });
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedSeries = await db.getSeriesById(series_id);
+        if (updatedSeries) {
+          PatchSyncService.broadcast(series_id, 'series:updated', updatedSeries);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[CharacterService.generatePortrait] WebSocket broadcast notice: ${wsErr.message}`);
+      }
     }
 
-    return { avatar_url: avatarUrl, character: normalizedChar };
+    return { image_url: avatar_url, character: normalizedChar, prompt: storePrompt, version: newVersion };
   }
 
   private getAnchorDefinitions(charName: string, desc: string = '', age?: number, gender?: string, wardrobeDesc?: string, visualStyle?: string, visualStylePrompt?: string) {
@@ -403,73 +445,130 @@ export class CharacterService {
   }
 
   async generateWardrobeLookbook(params: {
+    // series_id: string;
+    // character_id: string;
+    // variant_id?: string;
+    user_id: string;
+    series_id: string;
     character_id: string;
-    variant_id?: string;
-    variant_name?: string;
-    char_name: string;
+    variant_id: string;
+    // char_name: string;
     clothing_desc: string;
-    char_traits?: string;
-    age?: number;
-    gender?: string;
-    nationality?: string;
+    // char_traits?: string;
+    // age?: number;
+    // gender?: string;
+    // nationality?: string;
     reference_avatar_url?: string;
-    visual_style?: string;
-    visual_style_prompt?: string;
-    user_id?: string;
+    // visual_style?: string;
+    // visual_style_prompt?: string;
+    custom_prompt?: string;
   }): Promise<{ image_url: string; prompt: string; version: AssetVersion }> {
-    const { char_name, clothing_desc, char_traits, age, gender, nationality, reference_avatar_url, visual_style, visual_style_prompt, user_id } = params;
-    const styleModifier = visual_style_prompt || getVisualStylePrompt(visual_style || 'realistic');
-    const ageTag = age ? `${age}-year-old ` : '';
-    const genderTag = gender && gender !== 'neutral' ? `${gender} ` : '';
-    const natTag = nationality ? `${nationality} ` : '';
+    const db = await getDatabaseProvider();
+    let { series_id, character_id, user_id, custom_prompt, reference_avatar_url } = params;
 
-    const physicalCharacteristics = [
-      natTag,
-      ageTag,
-      genderTag,
-      char_traits || '',
-    ].filter(Boolean).join(' ').trim() || 'Authentic cinematic character';
-
-    const wardrobePrompt = PromptLoader.render('assets/character_sheet', {
-      characterName: char_name,
-      physicalCharacteristics,
-      clothingAndAccessories: clothing_desc || 'Signature character wardrobe outfit',
-      visualStyle: styleModifier,
-      referenceImageUrl: reference_avatar_url,
-    });
-
-    if (user_id) {
-      try {
-        await CreditService.deductUserCredits(user_id, 'characterAnchors', 'Wardrobe Lookbook Generation', `Generated 16:9 2-in-1 wardrobe sheet for ${char_name}`);
-      } catch (cErr: any) {
-        Logger.warn(`[CharacterService] Credit deduction notice: ${cErr.message}`);
-      }
+    if(!series_id){
+      throw new Error('Series ID is required');
     }
 
-    const refPool = reference_avatar_url ? [reference_avatar_url] : [];
+    if(!user_id || !character_id){
+      throw new Error('User ID and Character ID are required');
+    }
+
+    if(!params.variant_id){
+      throw new Error(`Variant ID is required`);
+    }
+
+    const user = await db.getUserById(user_id);
+    if (!user) {
+      throw new Error(`User with ID ${user_id} not found`);
+    }
+    
+    let targetSeries = await db.getSeriesById(series_id);
+    if(!targetSeries){
+      throw new Error(`Series with ID ${series_id} not found`);
+    }
+
+    const chars = targetSeries.characters || [];
+    let char = chars.find((c: CharacterSeriesEntity) => c.id === character_id || c.name === character_id);
+    if(!char){
+      throw new Error(`Character with ID ${character_id} not found`);
+    }
+
+    let wardrobe_variants = char.wardrobe_variants || [];
+    const variant = wardrobe_variants.find((v: CharacterWardrobeVariant) => v.variant_id === params.variant_id || v.name === params.variant_id);
+    if (!variant) {
+      throw new Error(`Variant with ID ${params.variant_id} not found`);
+    }
+    
+    const resolvedStyle = targetSeries?.visual_style || 'realistic';
+    const resolvedStylePrompt = targetSeries?.visual_style_prompt || getVisualStylePrompt(resolvedStyle);
+
+    const charName = char.name;
+    const charTraits = char.visual_traits || char.traits;
+    const ageTag = `age: ${char.age}-year-old`;
+    const genderTag = char.gender;
+    const nationalityTag = char.nationality;
+    const clothing_desc = params.clothing_desc || char.clothing_and_accessories;
+    const deductionResult = await CreditService.deductUserCredits(user_id, 'characterAnchors', 'Wardrobe Lookbook Generation', `Generated 16:9 2-in-1 wardrobe sheet for ${charName}`);
+    if (!deductionResult.success) {
+      throw new Error("Insufficient credits. Please subscribe to a plan or purchase credits.");
+    }
+
+    //
+    // const styleModifier = getVisualStylePrompt(targetSeries.visual_style || 'realistic');
+    //
+    // const physicalCharacteristics = [
+    //   charName,
+    //   nationalityTag,
+    //   ageTag,
+    //   genderTag,
+    //   charTraits,
+    // ].filter(Boolean).join(' ').trim() || 'Authentic cinematic character';
+
+    const wardrobePrompt = PromptLoader.render('assets/character_sheet', {
+      characterName: charName,
+      age: ageTag,
+      gender: genderTag,
+      nationality: nationalityTag,
+      visualTraits: charTraits,
+      clothingAndAccessories: clothing_desc,
+      visualStyle: resolvedStylePrompt,
+      referenceImageUrl: reference_avatar_url || char.avatar || '',
+      customPrompt: custom_prompt
+    });
+
+    // if (user_id) {
+    //   try {
+    //     await CreditService.deductUserCredits(user_id, 'characterAnchors', 'Wardrobe Lookbook Generation', `Generated 16:9 2-in-1 wardrobe sheet for ${char_name}`);
+    //   } catch (cErr: any) {
+    //     Logger.warn(`[CharacterService] Credit deduction notice: ${cErr.message}`);
+    //   }
+    // }
+
+    const refPool = reference_avatar_url ? [reference_avatar_url] : (char.avatar ? [char.avatar] : []);
     const res = await aiProviderRouter.generateImage(wardrobePrompt, {
       aspectRatio: '16:9',
-      characterReferences: refPool,
+      // characterReferences: refPool,
       imageInputs: refPool,
     });
 
     if (!res || !res.url) {
-      throw new Error(`Failed to generate 16:9 wardrobe lookbook for ${char_name}`);
+      throw new Error(`Failed to generate 16:9 wardrobe lookbook for ${char.name}`);
     }
 
     const s3 = await StorageFactory.uploadMedia(res.url, 'images', 'png', res.mimeType || 'image/png');
     const finalUrl = `/api/assets/file/${s3.key}`;
 
+    const storePrompt = params.clothing_desc || char.clothing_and_accessories;
     const version: AssetVersion = {
       id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       image_url: finalUrl,
-      prompt: wardrobePrompt,
+      prompt: storePrompt,
       created_at: new Date().toISOString(),
       is_selected: true,
       aspect_ratio: '16:9',
     };
-
-    return { image_url: finalUrl, prompt: wardrobePrompt, version };
+    return { image_url: finalUrl, prompt: storePrompt, version };
   }
 }
 

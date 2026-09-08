@@ -3,4 +3,7 @@ Location: {{locationName}}
 Time of Day: {{timeOfDay}}
 Physical Characteristics: {{physicalCharacteristics}}
 Visual Style: {{visualStyle}}
+{{#if customPrompt}}
+Customize conditions: {{customPrompt}}
+{{/if}}
 CRITICAL NEGATIVE CONSTRAINTS: Clean architectural photography, absolutely no text, no captions, no location labels, no watermarks, no titles, no subtitles, no words written anywhere in the scene.

@@ -1,8 +1,9 @@
 # Automated End-to-End Google Cloud Run Deployment for Shine Studio Ecosystem
 param(
-  [switch]$SkipWorkers = $false,       # Skip building and deploying both workers (Demucs and Render)
+  [switch]$SkipWorkers = $false,       # Skip building and deploying all workers (Demucs, Render, Flow)
   [switch]$SkipDemucs = $false,        # Skip Demucs AI Worker only
   [switch]$SkipRender = $false,        # Skip Video Render Worker only
+  [switch]$SkipFlow = $false,          # Skip Shine Flow AI Worker only
   [switch]$SkipInfra = $false,         # Skip GCP APIs, Storage bucket and Firestore setup
   [switch]$ForceWorkers = $false,      # Force rebuild and deploy workers
   [string]$Region = ""
@@ -57,6 +58,7 @@ if (-not $ProjectId -or $ProjectId -like "*ERROR*") {
 $DeployInfra = if ($SkipInfra) { $false } elseif ($EnvMap.ContainsKey("DEPLOY_INFRA") -and $EnvMap["DEPLOY_INFRA"] -match "^(false|0)$") { $false } else { $true }
 $DeployDemucs = if ($ForceWorkers) { $true } elseif ($SkipWorkers -or $SkipDemucs) { $false } elseif ($EnvMap.ContainsKey("DEPLOY_DEMUCS") -and $EnvMap["DEPLOY_DEMUCS"] -match "^(false|0)$") { $false } elseif ($EnvMap.ContainsKey("DEPLOY_WORKERS") -and $EnvMap["DEPLOY_WORKERS"] -match "^(false|0)$") { $false } else { $true }
 $DeployRender = if ($ForceWorkers) { $true } elseif ($SkipWorkers -or $SkipRender) { $false } elseif ($EnvMap.ContainsKey("DEPLOY_RENDER") -and $EnvMap["DEPLOY_RENDER"] -match "^(false|0)$") { $false } elseif ($EnvMap.ContainsKey("DEPLOY_WORKERS") -and $EnvMap["DEPLOY_WORKERS"] -match "^(false|0)$") { $false } else { $true }
+$DeployFlow = if ($ForceWorkers) { $true } elseif ($SkipWorkers -or $SkipFlow) { $false } elseif ($EnvMap.ContainsKey("DEPLOY_FLOW") -and $EnvMap["DEPLOY_FLOW"] -match "^(false|0)$") { $false } elseif ($EnvMap.ContainsKey("DEPLOY_WORKERS") -and $EnvMap["DEPLOY_WORKERS"] -match "^(false|0)$") { $false } else { $true }
 
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host " Deploying Shine Studio Ecosystem to Google Cloud Run" -ForegroundColor Cyan
@@ -66,6 +68,7 @@ Write-Host " Root Dir:         $RootDir" -ForegroundColor Yellow
 Write-Host " Auto Deploy Infra: $(if ($DeployInfra) { 'YES' } else { 'NO (Skipped)' })" -ForegroundColor White
 Write-Host " Deploy Demucs:    $(if ($DeployDemucs) { 'YES' } else { 'NO (Reuse existing)' })" -ForegroundColor White
 Write-Host " Deploy Render:    $(if ($DeployRender) { 'YES' } else { 'NO (Reuse existing)' })" -ForegroundColor White
+Write-Host " Deploy Flow AI:   $(if ($DeployFlow) { 'YES' } else { 'NO (Reuse existing)' })" -ForegroundColor White
 Write-Host "=========================================================" -ForegroundColor Cyan
 
 # --- 1. Check and Auto-Enable Required Google Cloud APIs ----------------------
@@ -336,17 +339,58 @@ if ($DeployRender) {
   }
 }
 
-# --- 5. Deploy Main Shine Application (Full .env Synchronization) -------------
+# --- 5. Build and Deploy Shine Flow AI Worker (From Source or Reuse) -----------
+$FlowUrl = ""
+if ($DeployFlow) {
+  $FlowCpu = if ($EnvMap.ContainsKey("FLOW_WORKER_CPU") -and $EnvMap["FLOW_WORKER_CPU"]) { $EnvMap["FLOW_WORKER_CPU"] } else { "2" }
+  $FlowMem = if ($EnvMap.ContainsKey("FLOW_WORKER_MEMORY") -and $EnvMap["FLOW_WORKER_MEMORY"]) { $EnvMap["FLOW_WORKER_MEMORY"] } else { "4Gi" }
+  $FlowTimeout = if ($EnvMap.ContainsKey("FLOW_WORKER_TIMEOUT") -and $EnvMap["FLOW_WORKER_TIMEOUT"]) { $EnvMap["FLOW_WORKER_TIMEOUT"] } else { "600" }
+  $FlowMin = if ($EnvMap.ContainsKey("FLOW_WORKER_MIN_INSTANCES") -and $EnvMap["FLOW_WORKER_MIN_INSTANCES"]) { $EnvMap["FLOW_WORKER_MIN_INSTANCES"] } else { "0" }
+  $FlowMax = if ($EnvMap.ContainsKey("FLOW_WORKER_MAX_INSTANCES") -and $EnvMap["FLOW_WORKER_MAX_INSTANCES"]) { $EnvMap["FLOW_WORKER_MAX_INSTANCES"] } else { "3" }
+
+  Write-Host "`n[Step 5/7] Building and Deploying Shine Flow AI Worker (CPU: $FlowCpu, Mem: $FlowMem, Timeout: ${FlowTimeout}s, Max Instances: $FlowMax)..." -ForegroundColor Yellow
+  Push-Location (Join-Path $RootDir "services/flow-worker")
+  gcloud run deploy shine-flow-worker `
+    --source . `
+    --region $Region `
+    --memory $FlowMem `
+    --cpu $FlowCpu `
+    --timeout $FlowTimeout `
+    --min-instances $FlowMin `
+    --max-instances $FlowMax `
+    --allow-unauthenticated `
+    --set-env-vars "GOOGLE_CLOUD_PROJECT=$ProjectId,GCP_REGION=$Region,NODE_ENV=production" `
+    --quiet
+  $FlowUrl = (gcloud run services describe shine-flow-worker --region $Region --format "value(status.url)" 2>$null).Trim()
+  Pop-Location
+  Write-Host "Flow Worker Deployed: $FlowUrl" -ForegroundColor Green
+} else {
+  Write-Host "`n[Step 5/7] Skipping Flow Worker build (Reusing existing service)..." -ForegroundColor DarkGray
+  try {
+    $FlowUrl = (gcloud run services describe shine-flow-worker --region $Region --format "value(status.url)" 2>$null).Trim()
+  } catch {}
+  if (-not $FlowUrl -and $EnvMap.ContainsKey("FLOW_WORKER_URL")) {
+    $FlowUrl = $EnvMap["FLOW_WORKER_URL"]
+  }
+  if ($FlowUrl) {
+    Write-Host "Reusing Active Flow Worker: $FlowUrl" -ForegroundColor Green
+  } else {
+    Write-Host "Notice: Flow worker URL not found on GCP or in .env." -ForegroundColor DarkYellow
+  }
+}
+
+# --- 6. Deploy Main Shine Application (Full .env Synchronization) -------------
 $AppCpu = if ($EnvMap.ContainsKey("APP_CPU") -and $EnvMap["APP_CPU"]) { $EnvMap["APP_CPU"] } else { "2" }
 $AppMem = if ($EnvMap.ContainsKey("APP_MEMORY") -and $EnvMap["APP_MEMORY"]) { $EnvMap["APP_MEMORY"] } else { "4Gi" }
 $AppTimeout = if ($EnvMap.ContainsKey("APP_TIMEOUT") -and $EnvMap["APP_TIMEOUT"]) { $EnvMap["APP_TIMEOUT"] } else { "300" }
 $AppMin = if ($EnvMap.ContainsKey("APP_MIN_INSTANCES") -and $EnvMap["APP_MIN_INSTANCES"]) { $EnvMap["APP_MIN_INSTANCES"] } else { "0" }
 $AppMax = if ($EnvMap.ContainsKey("APP_MAX_INSTANCES") -and $EnvMap["APP_MAX_INSTANCES"]) { $EnvMap["APP_MAX_INSTANCES"] } else { "3" }
 
-Write-Host "`n[Step 5/6] Building and Deploying Main Shine App (CPU: $AppCpu, Mem: $AppMem, Timeout: ${AppTimeout}s, Max Instances: $AppMax)..." -ForegroundColor Yellow
+Write-Host "`n[Step 6/7] Building and Deploying Main Shine App (CPU: $AppCpu, Mem: $AppMem, Timeout: ${AppTimeout}s, Max Instances: $AppMax)..." -ForegroundColor Yellow
 
 if ($DemucsUrl) { $EnvMap["DEMUCS_SERVICE_URL"] = $DemucsUrl }
 if ($RenderUrl) { $EnvMap["RENDER_WORKER_URL"] = $RenderUrl }
+if ($FlowUrl) { $EnvMap["FLOW_WORKER_URL"] = $FlowUrl }
 $EnvMap["GOOGLE_CLOUD_PROJECT"] = $ProjectId
 $EnvMap["GOOGLE_CLOUD_LOCATION"] = "global"
 $EnvMap["GOOGLE_GENAI_USE_VERTEXAI"] = "1"
@@ -394,10 +438,11 @@ try {
   Write-Host "Updating workers default redirect target to: $ShineAppUrl..." -ForegroundColor Gray
   gcloud run services update demucs-worker --update-env-vars "SHINE_APP_URL=$ShineAppUrl" --region $Region --quiet 2>$null
   gcloud run services update shine-render-worker --update-env-vars "SHINE_APP_URL=$ShineAppUrl" --region $Region --quiet 2>$null
+  gcloud run services update shine-flow-worker --update-env-vars "SHINE_APP_URL=$ShineAppUrl" --region $Region --quiet 2>$null
 } catch {}
 
-# --- 6. Configure Cloud Scheduler for Periodic Flow Token Sync Heartbeat ------
-Write-Host "`n[Step 6/6] Configuring Google Cloud Scheduler for Flow Token Sync..." -ForegroundColor Yellow
+# --- 7. Configure Cloud Scheduler for Periodic Flow Token Sync Heartbeat ------
+Write-Host "`n[Step 7/7] Configuring Google Cloud Scheduler for Flow Token Sync..." -ForegroundColor Yellow
 
 $JobName = "shine-flow-token-sync"
 $SyncUri = "$ShineAppUrl/api/flow-accounts/sync"

@@ -8,6 +8,7 @@ import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import { emailService } from '~/services/EmailService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
+import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import type { GeminiOmniVideoPreferences, GeminiOmniVideoOptions, GeminiOmniVideoResult } from '@/types.js';
 
 export type { GeminiOmniVideoPreferences, GeminiOmniVideoOptions, GeminiOmniVideoResult };
@@ -116,7 +117,8 @@ export class GeminiClient {
       try {
         return await fn();
       } catch (err: any) {
-        const errMsg = String(err?.message || err?.statusText || '');
+        const causeDetail = err?.cause ? ` (Cause: ${err.cause.message || err.cause.code || err.cause})` : '';
+        const errMsg = String(err?.message || err?.statusText || '') + causeDetail;
         const isRateLimit =
           err?.status === 429 ||
           err?.code === 429 ||
@@ -127,17 +129,33 @@ export class GeminiClient {
           errMsg.includes('Quota exceeded') ||
           errMsg.includes('quota');
 
-        if (isRateLimit && attempt <= maxRetries) {
+        const isNetworkError =
+          errMsg.includes('fetch failed') ||
+          errMsg.includes('ECONNRESET') ||
+          errMsg.includes('ETIMEDOUT') ||
+          errMsg.includes('ENOTFOUND') ||
+          errMsg.includes('EAI_AGAIN') ||
+          errMsg.includes('UND_ERR') ||
+          err?.cause?.code === 'ECONNRESET' ||
+          err?.cause?.code === 'ETIMEDOUT' ||
+          err?.cause?.code === 'ENOTFOUND' ||
+          err?.status === 502 ||
+          err?.status === 503 ||
+          err?.status === 504;
+
+        const isRetryable = isRateLimit || isNetworkError;
+
+        if (isRetryable && attempt <= maxRetries) {
           const jitter = Math.floor(Math.random() * 500);
           const backoff = initialBackoffMs * Math.pow(2, attempt - 1) + jitter;
           Logger.warn(
-            `[GeminiClient] Rate limit hit on ${operationName} (Attempt ${attempt}/${maxRetries}). Backing off for ${backoff}ms...`
+            `[GeminiClient] ${isRateLimit ? 'Rate limit' : 'Network/transient error'} hit on ${operationName} (Attempt ${attempt}/${maxRetries}): ${errMsg}. Backing off for ${backoff}ms...`
           );
           await new Promise((resolve) => setTimeout(resolve, backoff));
           continue;
         }
 
-        if (attempt > maxRetries || !isRateLimit) {
+        if (attempt > maxRetries || !isRetryable) {
           Logger.error(`[GeminiClient] ${operationName} failed: ${errMsg}`);
           GeminiClient.sendThrottledAlert(operationName, errMsg, err?.stack);
         }
@@ -285,7 +303,7 @@ export class GeminiClient {
       return res.text;
     } catch (err: any) {
       const errMsg = String(err?.message || '');
-      const isExhausted =
+      const isExhaustedOrNetwork =
         err?.status === 429 ||
         err?.status === 409 ||
         err?.code === 429 ||
@@ -294,16 +312,20 @@ export class GeminiClient {
         errMsg.includes('RESOURCE_EXHAUSTED') ||
         errMsg.includes('Resource exhausted') ||
         errMsg.includes('Quota exceeded') ||
-        errMsg.includes('quota');
+        errMsg.includes('quota') ||
+        errMsg.includes('fetch failed') ||
+        errMsg.includes('ECONNRESET') ||
+        errMsg.includes('ETIMEDOUT') ||
+        errMsg.includes('ENOTFOUND');
 
-      if (isExhausted) {
+      if (isExhaustedOrNetwork) {
         try {
           const { antigravityClient } = await import('@/integrations/ai/antigravity/AntigravityClient.js');
           const { getDatabaseProvider } = await import('@/database/index.js');
           const db = await getDatabaseProvider();
           const agAccounts = await db.getAntigravityAccounts('ACTIVE');
           if (agAccounts && agAccounts.length > 0) {
-            Logger.warn(`[GeminiClient] Quota exhausted (${errMsg}). Offloading Text generation to Antigravity pool...`, 'GeminiClient');
+            Logger.warn(`[GeminiClient] Gemini call failed (${errMsg}). Offloading Text generation to Antigravity pool...`, 'GeminiClient');
             return await antigravityClient.generateText({
               prompt: options.prompt,
               model: options.model,
@@ -446,6 +468,22 @@ export class GeminiClient {
     }
   }
 
+  /**
+   * Adaptive Image Extractor:
+   * Delegates to EntityNormalizer.extractImageFromResponse for unified handling across providers
+   */
+  public extractImageFromGeminiResponse(response: any): { url: string; mimeType: string; buffer?: Buffer } | null {
+    return EntityNormalizer.extractImageFromResponse(response);
+  }
+
+  /**
+   * Adaptive Video Extractor:
+   * Delegates to EntityNormalizer.extractVideoFromResponse for unified handling across providers
+   */
+  public extractVideoFromGeminiResponse(response: any): { url: string; mimeType: string; buffer?: Buffer } | null {
+    return EntityNormalizer.extractVideoFromResponse(response);
+  }
+
   public async generateImage(
     promptOrOptions: string | { prompt: string; model?: string; aspectRatio?: '1:1' | '9:16' | '16:9'; imageInputs?: string[]; characterReferences?: string[]; referenceImages?: string[]; characterImages?: string[]; image?: string; imageStart?: string; parameters?: any },
     modelId?: string,
@@ -490,30 +528,37 @@ export class GeminiClient {
         Logger.info(`[GeminiClient] Successfully resolved ${resolvedImages.length} reference images.`);
       }
 
+      let imageResult: { url: string; mimeType: string } | null = null;
+
       // 2. Multimodal Image Generation via Gemini generateContent API
-      Logger.info(`[GeminiClient] Using generateContent() for image generation (${targetModel}) with ${resolvedImages.length} reference images`);
+      try {
+        Logger.info(`[GeminiClient] Using generateContent() for image generation (${targetModel}) with ${resolvedImages.length} reference images`);
 
-      const parts: any[] = [
-        ...resolvedImages,
-        ...(Array.isArray(prompt) ? prompt : [{ text: String(prompt) }]),
-      ];
+        const parts: any[] = [
+          ...resolvedImages,
+          ...(Array.isArray(prompt) ? prompt : [{ text: String(prompt) }]),
+        ];
 
-      const response = await GeminiClient.executeWithRetry('generateImage', async () => {
-        return await client.models.generateContent({
-          model: targetModel,
-          contents: [{ role: 'user', parts }],
-          config: { responseModalities: ['IMAGE'] },
+        const response = await GeminiClient.executeWithRetry('generateContent:IMAGE', async () => {
+          return await client.models.generateContent({
+            model: targetModel,
+            contents: [{ role: 'user', parts }],
+            config: { responseModalities: ['IMAGE'] },
+          });
         });
-      });
 
-      const responseParts = response?.candidates?.[0]?.content?.parts || [];
-      for (const part of responseParts) {
-        if (part?.inlineData?.data) {
-          const mimeType = part.inlineData.mimeType || 'image/png';
-          return { url: `data:${mimeType};base64,${part.inlineData.data}`, mimeType };
+        imageResult = this.extractImageFromGeminiResponse(response);
+
+        if (imageResult) {
+          return imageResult;
         }
+
+        const responseParts = response?.candidates?.[0]?.content?.parts || [];
+        const textMsg = responseParts.map((p: any) => p.text).filter(Boolean).join(' ');
+        throw new Error(`No image data in Gemini response (received text: "${textMsg.slice(0, 150)}")`);
+      } catch (contentErr: any) {
+        throw contentErr;
       }
-      throw new Error('No image data in Gemini response');
     } catch (error: any) {
       Logger.error(`[GeminiClient] generateImage failed: ${error.message}`);
       return null;
@@ -642,17 +687,12 @@ export class GeminiClient {
         throw new Error(`Veo video generation error: ${errorMsg}`);
       }
 
-      const generatedVideos = operation.response?.generatedVideos || [];
-      if (generatedVideos.length === 0) throw new Error('No videos returned from Veo API');
-
-      const videoFile = generatedVideos[0].video;
-      const videoBytes = videoFile?.videoBytes || generatedVideos[0].videoBytes;
-      const videoUrl = videoFile?.uri || videoFile?.gcsUri || generatedVideos[0].uri || generatedVideos[0].gcsUri;
-
-      if (videoBytes) {
-        return { url: `data:${videoFile?.mimeType || 'video/mp4'};base64,${videoBytes}`, mimeType: videoFile?.mimeType || 'video/mp4' };
-      } else if (videoUrl) {
-        return { url: videoUrl, mimeType: videoFile?.mimeType || 'video/mp4' };
+      const extractedVideo = EntityNormalizer.extractVideoFromResponse(operation?.response || operation);
+      if (extractedVideo) {
+        return {
+          url: extractedVideo.url,
+          mimeType: extractedVideo.mimeType || 'video/mp4',
+        };
       }
       throw new Error('No video URI or bytes in Veo response');
     } catch (error: any) {
@@ -759,17 +799,12 @@ export class GeminiClient {
 
       if (!operation.done) throw new Error('Omni video generation timed out after 10 minutes');
 
-      const generatedVideos = operation.response?.generatedVideos || [];
-      if (generatedVideos.length === 0) throw new Error('No videos returned from Gemini Omni API');
-
-      const videoFile = generatedVideos[0].video;
-      const videoBytes = videoFile?.videoBytes || generatedVideos[0].videoBytes;
-      const videoUrl = videoFile?.uri || videoFile?.gcsUri || generatedVideos[0].uri || generatedVideos[0].gcsUri;
-
-      if (videoBytes) {
-        return { url: `data:${videoFile?.mimeType || 'video/mp4'};base64,${videoBytes}`, mimeType: videoFile?.mimeType || 'video/mp4' };
-      } else if (videoUrl) {
-        return { url: videoUrl, mimeType: videoFile?.mimeType || 'video/mp4' };
+      const extractedVideo = EntityNormalizer.extractVideoFromResponse(operation?.response || operation);
+      if (extractedVideo) {
+        return {
+          url: extractedVideo.url,
+          mimeType: extractedVideo.mimeType || 'video/mp4',
+        };
       }
       throw new Error('No video URI or bytes in Gemini Omni response');
     } catch (error: any) {

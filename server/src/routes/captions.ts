@@ -215,38 +215,95 @@ captionsRouter.post('/translate', async (req: Request, res: Response) => {
 });
 
 // POST /api/captions/apply-style
-captionsRouter.post('/apply-style', (req: Request, res: Response) => {
-  const { episode_id, preset_id, custom_style } = req.body;
-  const preset = CAPTION_PRESETS.find((p) => p.id === preset_id) || CAPTION_PRESETS[0];
+captionsRouter.post('/apply-style', async (req: Request, res: Response) => {
+  try {
+    const { episode_id, preset_id, custom_style } = req.body;
+    const preset = CAPTION_PRESETS.find((p) => p.id === preset_id) || CAPTION_PRESETS[0];
+    const combinedStyle = { ...preset.style, ...(custom_style || {}) };
 
-  res.json({
-    code: 200,
-    data: {
-      episode_id,
-      applied_preset: preset.id,
-      style: { ...preset.style, ...(custom_style || {}) },
-      updated_at: new Date().toISOString(),
-    },
-    message: 'Subtitle styling preset applied successfully',
-    error: null,
-  });
+    const db = await getDatabaseProvider();
+    if (episode_id) {
+      const episode = await db.getEpisodeById(episode_id);
+      if (episode) {
+        const captionSettings = {
+          ...(episode.caption_settings || {}),
+          preset_id: preset.id,
+          font_family: combinedStyle.fontFamily || episode.caption_settings?.font_family,
+          font_size: combinedStyle.fontSize || episode.caption_settings?.font_size,
+          text_color: combinedStyle.color || episode.caption_settings?.text_color,
+          word_highlight_color: combinedStyle.activeColor || episode.caption_settings?.word_highlight_color,
+          outline_weight: combinedStyle.stroke?.width || episode.caption_settings?.outline_weight,
+          outline_color: combinedStyle.stroke?.color || episode.caption_settings?.outline_color,
+          text_align: combinedStyle.align || episode.caption_settings?.text_align,
+        };
+        await db.updateEpisode(episode_id, { caption_settings: captionSettings });
+        const series = episode.series_id ? await db.getSeriesById(episode.series_id) : null;
+        const currentTimeline = await db.getLatestTimeline(episode_id);
+        if (currentTimeline) {
+          const synced = TimelineService.syncTimelineWithScenes({ ...episode, caption_settings: captionSettings }, currentTimeline, series);
+          await db.saveTimeline(episode_id, synced, { id: 'system', name: 'Studio System' }, 'Updated caption style preset');
+        }
+        PatchSyncService.broadcast(episode.series_id || 'all', 'episode:updated', { ...episode, caption_settings: captionSettings });
+      }
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        episode_id,
+        applied_preset: preset.id,
+        style: combinedStyle,
+        updated_at: new Date().toISOString(),
+      },
+      message: 'Subtitle styling preset applied and synchronized successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SERVER_ERROR' });
+  }
 });
 
 // POST /api/captions/kinetic-style
-captionsRouter.post('/kinetic-style', (req: Request, res: Response) => {
-  const { episode_id, style, highlight_color = '#FFD700', enable_emoji = true } = req.body;
+captionsRouter.post('/kinetic-style', async (req: Request, res: Response) => {
+  try {
+    const { episode_id, style, highlight_color = '#FFD700', enable_emoji = true } = req.body;
+    const appliedStyle = style || { preset: 'kinetic_pop', highlight_color, enable_emoji, bass_sync: true };
 
-  res.json({
-    code: 200,
-    data: {
-      episode_id: episode_id || 'ep-001',
-      applied_style: style || { preset: 'kinetic_pop', highlight_color, enable_emoji, bass_sync: true },
-      css_animation: 'keyframe-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-      updated_at: new Date().toISOString(),
-    },
-    message: 'Kinetic caption style applied successfully',
-    error: null,
-  });
+    const db = await getDatabaseProvider();
+    if (episode_id) {
+      const episode = await db.getEpisodeById(episode_id);
+      if (episode) {
+        const captionSettings = {
+          ...(episode.caption_settings || {}),
+          word_highlight_color: highlight_color || episode.caption_settings?.word_highlight_color,
+          enable_animation: true,
+          animation_type: appliedStyle.preset || 'kinetic_pop',
+        };
+        await db.updateEpisode(episode_id, { caption_settings: captionSettings });
+        const series = episode.series_id ? await db.getSeriesById(episode.series_id) : null;
+        const currentTimeline = await db.getLatestTimeline(episode_id);
+        if (currentTimeline) {
+          const synced = TimelineService.syncTimelineWithScenes({ ...episode, caption_settings: captionSettings }, currentTimeline, series);
+          await db.saveTimeline(episode_id, synced, { id: 'system', name: 'Studio System' }, 'Updated kinetic caption style');
+        }
+        PatchSyncService.broadcast(episode.series_id || 'all', 'episode:updated', { ...episode, caption_settings: captionSettings });
+      }
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        episode_id: episode_id || 'ep-001',
+        applied_style: appliedStyle,
+        css_animation: 'keyframe-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+        updated_at: new Date().toISOString(),
+      },
+      message: 'Kinetic caption style applied and synchronized successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SERVER_ERROR' });
+  }
 });
 
 // POST /api/captions/batch-translate

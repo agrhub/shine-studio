@@ -500,6 +500,32 @@ export class MongoDBProvider implements IDatabaseProvider {
     return { success: true, balance: newBalance, transaction: tx };
   }
 
+  async refundCredits(userId: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      return { success: false, balance: 0, error: 'User not found' };
+    }
+
+    const currentCredits = user.credits ?? 0;
+    const newBalance = currentCredits + amount;
+    user.credits = newBalance;
+    await this.updateUser(user);
+
+    const tx: CreditTransactionEntity = {
+      id: `tx_${nanoid(10)}`,
+      user_id: userId,
+      activity: activity.startsWith('Refund') ? activity : `Refund: ${activity}`,
+      details: details || '',
+      amount: amount,
+      balance_after: newBalance,
+      status: 'Success',
+      created_at: new Date().toISOString(),
+    };
+
+    await this.recordCreditTransaction(tx);
+    return { success: true, balance: newBalance, transaction: tx };
+  }
+
   async getCreditHistory(userId?: string, limit = 50): Promise<CreditTransactionEntity[]> {
     const filter: any = {};
     if (userId) filter.user_id = userId;
@@ -531,7 +557,11 @@ export class MongoDBProvider implements IDatabaseProvider {
     };
     if (userId) filter.user_id = userId;
     if (search) filter.title = { $regex: search, $options: 'i' };
-    if (status) filter.status = status;
+    if (status) {
+      filter.status = status;
+    } else {
+      filter.status = { $ne: 'DELETING' };
+    }
     return (await SeriesModel.find(filter).sort({ created_at: -1 }).lean()) as any;
   }
 

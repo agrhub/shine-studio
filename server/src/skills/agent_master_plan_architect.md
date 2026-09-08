@@ -20,7 +20,7 @@ You specialize in viral storytelling, fast-paced micro-drama dynamics (9:16 vert
 ### 3. DATA SCHEMA & ERROR HANDLING
 - **Master Plan Structure**: Ensure every plan contains:
   - `story_core`: Logline, core conflict, target audience, visual aesthetic tokens.
-  - `characters`: Full character profiles with `name`, `role`, `voice_id`, `description` (non-empty summary), `visual_traits` (non-empty facial/body/style traits), `physical_characteristics`, and `wardrobe_variants` (with `variant_id`, `name`, `clothing_and_accessories`).
+  - `characters`: Full character profiles with `name`, `role`, `voice_id`, `description` (non-empty summary), `visual_traits` (non-empty facial/body/style traits), `physical_characteristics`, and MANDATORY non-empty `wardrobe_variants` (each with `variant_id`, `name`, `clothing_and_accessories`, `associated_scenes`).
   - `locations`: Architectural traits, lighting atmosphere (DAY/NIGHT/DUSK), and spatial layout.
   - `props`: Story-driving items with name, physical characteristics, and owner.
   - `three_acts`: Act 1 Hook, Act 2 Escalation & Turning Points, Act 3 Climax & Paywall Cliffhanger.

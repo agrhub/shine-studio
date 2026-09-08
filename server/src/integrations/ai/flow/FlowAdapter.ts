@@ -4,6 +4,8 @@ import { IAIAccount, AIModelType, FlowOmniVideoOptions, FlowOmniVideoResult } fr
 import { captchaService } from './CaptchaService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
 import { flowSyncService } from './FlowSyncService.js';
+import { flowServiceClient } from './FlowServiceClient.js';
+import { EntityNormalizer } from '@/utils/EntityNormalizer.js';
 import { Logger } from '@/utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -316,6 +318,35 @@ export class FlowAdapter {
      * Generate image using Google Flow
      */
     public async generateImage(account: IAIAccount, prompt: string, modelName: string, config: any = {}) {
+        const refImages = [
+            ...(config.imageInputs || []),
+            ...(config.referenceImages || []),
+            config.image
+        ].filter(Boolean);
+
+        // 1. Fast-path: Check if standalone Flow Worker is online and has active workers
+        const isWorkerOnline = await flowServiceClient.hasActiveWorkers();
+        if (isWorkerOnline) {
+            Logger.info(`[FlowAdapter] Routing image generation through standalone Flow Worker (References: ${refImages.length})...`);
+            const ratio = (config.ratio || config.aspectRatio || '9:16') as '9:16' | '16:9' | '1:1';
+            const workerResult = await flowServiceClient.generateImage({
+                prompt,
+                aspectRatio: ratio,
+                model: modelName,
+                images: refImages,
+                referenceImages: refImages,
+                namedReferences: config.namedReferences,
+                accountId: config.accountId || ((account?.id === 'flow-worker' || account?.email === 'flow-worker-fleet') ? undefined : (account?.email || account?.id)),
+            });
+            if (workerResult.mediaUrl) {
+                return {
+                    url: workerResult.mediaUrl,
+                    mediaId: workerResult.jobId,
+                    prompt,
+                };
+            }
+        }
+
         await this.syncFlowAccount(account, config);
         let projectId = account.project_id;
         if (!projectId) {
@@ -398,34 +429,15 @@ export class FlowAdapter {
                 Logger.info(`[FlowAdapter] [generateImage] targetURL: ${url}`);
 
                 const response = await axios.post(url, payload, { headers });
-            
-                // Search for image in the response payload
-                // Google may return it in `data.media`, `data.results`, or `data.requests[0].media`
-                let imageBytes = null;
-                let fifeUrl = null;
 
-                if (response.data.media?.[0]?.image?.imageBytes) {
-                    imageBytes = response.data.media[0].image.imageBytes;
-                } else if (response.data.results?.[0]?.image?.imageBytes) {
-                    imageBytes = response.data.results[0].image.imageBytes;
-                } else if (response.data.media?.[0]?.image?.generatedImage?.fifeUrl) {
-                    fifeUrl = response.data.media[0].image.generatedImage.fifeUrl;
-                }
-
-                // Ignore reCAPTCHA evaluation failed
-                retry = 0;
-
-                if (imageBytes) {
+                // Extract image using unified EntityNormalizer
+                const extracted = EntityNormalizer.extractImageFromResponse(response.data);
+                if (extracted) {
+                    retry = 0;
                     return {
-                        buffer: Buffer.from(imageBytes, 'base64'),
-                        mimeType: 'image/png'
-                    };
-                }
-
-                if (fifeUrl) {
-                    return {
-                        url: fifeUrl,
-                        mimeType: 'image/jpeg'
+                        buffer: extracted.buffer || (extracted.url.startsWith('data:') ? Buffer.from(extracted.url.split(',')[1], 'base64') : undefined),
+                        url: extracted.url,
+                        mimeType: extracted.mimeType,
                     };
                 }
 
@@ -463,6 +475,41 @@ export class FlowAdapter {
      * Generate video using Google Flow (Veo)
      */
     public async generateVideo(account: IAIAccount, prompt: string, modelName: string, config: any = {}) {
+        const rawImages = [
+            ...(config.imageInputs || []),
+            ...(config.referenceImages || []),
+            ...(config.characterImages || []),
+            ...(config.characterReferences || []),
+            config.imageStart,
+            config.imageEnd,
+            config.image
+        ].filter(Boolean);
+
+        // Fast-path: Check if standalone Flow Worker is online and has active workers
+        const isWorkerOnline = await flowServiceClient.hasActiveWorkers();
+        if (isWorkerOnline) {
+            Logger.info(`[FlowAdapter] Routing video generation through standalone Flow Worker (References: ${rawImages.length})...`);
+            const ratio = (config.ratio || config.aspectRatio || '9:16') as '9:16' | '16:9' | '1:1';
+            const workerResult = await flowServiceClient.generateVideo({
+                prompt,
+                aspectRatio: ratio,
+                duration: config.durationSeconds || 5,
+                model: modelName,
+                imageStart: config.imageStart || config.startFrame || config.start_frame_url || undefined,
+                imageEnd: config.imageEnd || config.endFrame || config.end_frame_url || undefined,
+                referenceImages: rawImages.slice(0, 3),
+                characterReferences: config.characterReferences || config.characterImages,
+                accountId: config.accountId || ((account?.id === 'flow-worker' || account?.email === 'flow-worker-fleet') ? undefined : (account?.email || account?.id)),
+            });
+            if (workerResult.mediaUrl) {
+                return {
+                    url: workerResult.mediaUrl,
+                    mediaId: workerResult.jobId,
+                    prompt,
+                };
+            }
+        }
+
         // Dispatch to dedicated generateOmniVideo when model is omni or abra
         if (modelName && (modelName.toLowerCase().includes('omni') || modelName.toLowerCase().includes('abra'))) {
             const rawImages = [
@@ -492,16 +539,7 @@ export class FlowAdapter {
         }
 
         // 1. Resolve inputs (upload if necessary)
-        // Combine all potential sources into a unified reference pool
-        const rawImages = [
-            ...(config.imageInputs || []),
-            ...(config.referenceImages || []),
-            ...(config.characterImages || []),
-            ...(config.characterReferences || []),
-            config.imageStart,
-            config.imageEnd,
-            config.image
-        ].filter(img => !!img);
+        // Deduplicate and resolve
 
         // Deduplicate and resolve
         const uniqueImages = [...new Set(rawImages)];
@@ -851,23 +889,30 @@ export class FlowAdapter {
                         // 1. First priority: Get real video download redirect URL via trpc media.getMediaUrlRedirect
                         let videoUri = await this.getMediaUrlRedirect(account, mediaName);
 
-                        // 2. Fallback to fifeUrl or uri if present in status response
+                        // 2. Fallback: Extract video from status response / opResult / mediaItem via EntityNormalizer
                         if (!videoUri) {
-                            videoUri = opResult.metadata?.video?.fifeUrl
-                                || mediaItem.video?.generatedVideo?.fifeUrl
-                                || mediaItem.video?.fifeUrl
-                                || mediaItem.video?.uri;
+                            const extractedFromStatus = EntityNormalizer.extractVideoFromResponse(response.data);
+                            if (extractedFromStatus?.url && !extractedFromStatus.url.startsWith('data:')) {
+                                videoUri = extractedFromStatus.url;
+                            } else if (extractedFromStatus?.buffer) {
+                                results = { buffer: extractedFromStatus.buffer, mimeType: extractedFromStatus.mimeType || 'video/mp4' };
+                                break;
+                            }
                         }
 
                         // 3. Fallback: query /media/{name}
-                        if (!videoUri) {
+                        if (!videoUri && !results) {
                             try {
                                 const mediaRes = await axios.get(`${this.apiBaseUrl}/media/${mediaName}`, { headers });
-                                videoUri = mediaRes.data.video?.fifeUrl || mediaRes.data.video?.uri;
-                                if (!videoUri && mediaRes.data.video?.encodedVideo) {
-                                    const buffer = Buffer.from(mediaRes.data.video.encodedVideo, 'base64');
-                                    results = { buffer, mimeType: 'video/mp4' };
-                                    break;
+                                const extractedFromMedia = EntityNormalizer.extractVideoFromResponse(mediaRes.data);
+                                if (extractedFromMedia) {
+                                    if (extractedFromMedia.buffer) {
+                                        results = { buffer: extractedFromMedia.buffer, mimeType: extractedFromMedia.mimeType || 'video/mp4' };
+                                        break;
+                                    }
+                                    if (extractedFromMedia.url) {
+                                        videoUri = extractedFromMedia.url;
+                                    }
                                 }
                             } catch (mErr) {
                                 Logger.warn(`[FlowAdapter] Failed to fetch media detail for ${mediaName}: ${mErr}`);
@@ -885,12 +930,13 @@ export class FlowAdapter {
                     const data = response.data;
 
                     if (data.done || data.state === 'SUCCEEDED') {
-                        const result = data.media?.[0] || data.results?.[0] || data.response?.results?.[0];
-                        if (result?.image?.imageBytes) {
-                            results = { buffer: Buffer.from(result.image.imageBytes, 'base64'), mimeType: 'image/png' };
-                        }
-                        if (result?.image?.generatedImage?.fifeUrl) {
-                            results = { url: result.image.generatedImage.fifeUrl, mimeType: 'image/jpeg' };
+                        const extracted = EntityNormalizer.extractImageFromResponse(data);
+                        if (extracted) {
+                            results = {
+                                buffer: extracted.buffer || (extracted.url.startsWith('data:') ? Buffer.from(extracted.url.split(',')[1], 'base64') : undefined),
+                                url: extracted.url,
+                                mimeType: extracted.mimeType,
+                            };
                         }
                         break;
                     }

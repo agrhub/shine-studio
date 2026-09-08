@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>Flow Agent — Worker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --card: #ffffff;
+      --card-alt: #f1f5f9;
+      --border: #e2e8f0;
+      --border-focus: rgba(255, 55, 95, 0.4);
+      --accent: #ff375f;
+      --accent-soft: #ff5e82;
+      --accent-bg: rgba(255, 55, 95, 0.08);
+      --green: #10b981;
+      --green-bg: rgba(16, 185, 129, 0.1);
+      --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.1);
+      --yellow: #f59e0b;
+      --yellow-bg: rgba(245, 158, 11, 0.1);
+      --blue: #3b82f6;
+      --text: #0f172a;
+      --text-dim: #475569;
+      --muted: #94a3b8;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: 'JetBrains Mono', 'SF Mono', monospace;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      min-width: 320px;
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────────── */
+    header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+
+    .logo-container {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(255, 55, 95, 0.25);
+      flex-shrink: 0;
+    }
+
+    .logo-img {
+      width: 22px;
+      height: 22px;
+      object-fit: contain;
+    }
+
+    .header-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .header-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .header-sub {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .header-badges {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .header-badge .label {
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    .header-badge .val {
+      color: var(--text);
+      font-family: var(--mono);
+      font-weight: 700;
+    }
+
+    .header-badge.credits .val {
+      color: var(--accent);
+    }
+
+    .header-badge.credits.interactive {
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.18s ease;
+    }
+
+    .header-badge.credits.interactive:hover {
+      background: #eff6ff;
+      border-color: #93c5fd;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+    }
+
+    .header-badge.credits.interactive:active {
+      transform: translateY(0);
+    }
+
+    .header-badge.credits .sync-icon {
+      font-size: 9px;
+      margin-left: 2px;
+      opacity: 0.65;
+      display: inline-block;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+
+    .header-badge.credits.interactive:hover .sync-icon {
+      opacity: 1;
+    }
+
+    .header-badge.credits.syncing .sync-icon,
+    .spinning {
+      display: inline-block;
+      animation: badge-spin 0.8s linear infinite;
+    }
+
+    @keyframes badge-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Tabs Navigation ────────────────────────────────── */
+    nav.tabs {
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      padding: 6px 10px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 7px 4px;
+      background: transparent;
+      color: var(--muted);
+      font: 700 11px var(--font);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+      position: relative;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      background: #f1f5f9;
+    }
+
+    .tab-btn.active {
+      color: var(--accent);
+      background: var(--accent-bg);
+      font-weight: 800;
+    }
+
+    .tab-badge {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      display: none;
+    }
+
+    .tab-btn.has-running .tab-badge {
+      display: block;
+      animation: pulse 1.5s infinite;
+    }
+
+    /* ── Main Content Area ──────────────────────────────── */
+    main#content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 12px;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    /* ── Card Styles ────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* ── Monitor Status Row ─────────────────────────────── */
+    .monitor-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: all 0.2s;
+    }
+
+    .status-dot.online {
+      background: var(--green);
+      box-shadow: 0 0 0 3px var(--green-bg);
+    }
+
+    .status-dot.offline {
+      background: var(--red);
+    }
+
+    .status-dot.busy {
+      background: var(--yellow);
+      box-shadow: 0 0 0 3px var(--yellow-bg);
+      animation: pulse 1s infinite;
+    }
+
+    .toggle-switch {
+      border: 0;
+      border-radius: 999px;
+      padding: 4px 12px;
+      background: #334155;
+      color: #fff;
+      font: 800 10px var(--font);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .toggle-switch.on {
+      background: var(--green);
+    }
+
+    /* ── Metrics Grid ───────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .metric-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 8px 4px;
+      text-align: center;
+    }
+
+    .metric-val {
+      display: block;
+      font-size: 16px;
+      font-weight: 800;
+      font-family: var(--mono);
+      line-height: 1.2;
+      color: var(--text);
+    }
+
+    .metric-lbl {
+      font-size: 8px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    /* ── Task Cards (Parallel Running) ─────────────────── */
+    .task-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      position: relative;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+
+    .task-card.running {
+      border-left: 3px solid var(--yellow);
+      background: linear-gradient(90deg, rgba(245, 158, 11, 0.04) 0%, #fff 40%);
+    }
+
+    .task-card.success {
+      border-left: 3px solid var(--green);
+    }
+
+    .task-card.failed {
+      border-left: 3px solid var(--red);
+      background: linear-gradient(90deg, rgba(239, 68, 68, 0.03) 0%, #fff 40%);
+    }
+
+    .task-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .task-meta-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .task-id {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-image { background: #e0f2fe; color: #0284c7; }
+    .badge-video { background: #fae8ff; color: #a855f7; }
+    .badge-running { background: var(--yellow-bg); color: #d97706; }
+    .badge-success { background: var(--green-bg); color: var(--green); }
+    .badge-failed { background: var(--red-bg); color: var(--red); }
+    .badge-queued { background: #f1f5f9; color: var(--muted); }
+
+    .task-timer {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    .task-prompt {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+
+    .task-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .task-spec {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .task-thumb {
+      width: 100%;
+      max-height: 160px;
+      border-radius: 8px;
+      object-fit: cover;
+      margin-top: 8px;
+      background: #e2e8f0;
+      cursor: pointer;
+    }
+
+    .empty-state {
+      padding: 24px 12px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .empty-icon {
+      font-size: 22px;
+      margin-bottom: 6px;
+      opacity: 0.6;
+    }
+
+    /* ── Form Inputs ────────────────────────────────────── */
+    .field-label {
+      display: block;
+      margin: 0 0 4px 2px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    textarea.prompt-input {
+      width: 100%;
+      min-height: 85px;
+      padding: 10px 12px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font: 500 12px var(--font);
+      outline: none;
+      resize: vertical;
+      line-height: 1.45;
+      margin-bottom: 8px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    textarea.prompt-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 55, 95, 0.08);
+    }
+
+    .type-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      padding: 3px;
+      margin-bottom: 8px;
+      background: #eef2f6;
+      border-radius: 10px;
+    }
+
+    .type-btn {
+      border: 0;
+      border-radius: 7px;
+      padding: 7px;
+      background: transparent;
+      color: var(--text-dim);
+      font: 700 11px var(--font);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .type-btn.active {
+      background: #1e293b;
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+    }
+
+    .form-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .form-row > * {
+      flex: 1;
+      min-width: 0;
+    }
+
+    select.select-input, input.text-input {
+      width: 100%;
+      height: 36px;
+      padding: 0 10px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font: 600 11px var(--font);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    select.select-input:focus, input.text-input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-submit {
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      color: white;
+      font: 800 12px var(--font);
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(255, 55, 95, 0.25);
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(255, 55, 95, 0.35);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Media Tab Grid ─────────────────────────────────── */
+    .media-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .media-item {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+    }
+
+    .media-preview {
+      width: 100%;
+      max-height: 220px;
+      object-fit: cover;
+      background: #f1f5f9;
+      display: block;
+    }
+
+    .media-footer {
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .media-info {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .media-prompt {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .media-time {
+      font-size: 9px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    .media-link {
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--accent-bg);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 800;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+
+    /* ── Logs Tab ───────────────────────────────────────── */
+    .log-entry {
+      border-bottom: 1px solid #f1f5f9;
+      padding: 6px 4px;
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .log-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .log-time {
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .log-type {
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .log-detail {
+      display: none;
+      margin-top: 4px;
+      padding: 6px 8px;
+      background: #f8fafc;
+      border-radius: 6px;
+      font-size: 9px;
+      color: var(--text-dim);
+      word-break: break-all;
+    }
+
+    .log-entry.open .log-detail {
+      display: block;
+    }
+
+    /* ── Settings Tab ───────────────────────────────────── */
+    .setting-group {
+      margin-bottom: 12px;
+    }
+
+    .btn-action-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .btn-secondary {
+      flex: 1;
+      height: 36px;
+      padding: 0 10px;
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font: 700 11px var(--font);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-secondary:hover {
+      background: #e2e8f0;
+    }
+
+    .btn-primary {
+      flex: 1;
+      height: 36px;
+      padding: 0 10px;
+      background: #0f172a;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      font: 700 11px var(--font);
+      cursor: pointer;
+    }
+
+    .btn-primary:hover {
+      background: #1e293b;
+    }
+
+    /* ── Bottom Fixed Action Bar ────────────────────────── */
+    .bottom-bar {
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: 1.1fr 1.1fr 0.8fr;
+      gap: 6px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.04);
+    }
+
+    .bottom-btn {
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      font: 700 10px var(--font);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+
+    .bottom-btn.primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      border: 0;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(255, 55, 95, 0.2);
+    }
+
+    .bottom-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    /* ── Toast Notifications ────────────────────────────── */
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 58px;
+      transform: translate(-50%, 10px);
+      background: #0f172a;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      pointer-events: none;
+      opacity: 0;
+      transition: all 0.2s;
+      z-index: 99;
+      white-space: nowrap;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    #toast.success { background: var(--green); }
+    #toast.error { background: var(--red); }
+
+    @keyframes pulse {
+      0% { opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { opacity: 0.5; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Header -->
+  <header>
+    <div class="logo-container">
+      <img src="icon48.png" alt="Flow Agent" class="logo-img">
+    </div>
+    <div class="header-info">
+      <div class="header-title">Flow Agent</div>
+      <div class="header-sub" id="header-token">Token —</div>
+    </div>
+    <div class="header-badges">
+      <div class="header-badge" id="badge-device" title="Active Account / Device ID">
+        <span class="label">DEVICE</span>
+        <span class="val" id="val-device">—</span>
+      </div>
+      <div class="header-badge credits interactive" id="badge-credits" title="Click to check & sync real-time credits from Flow">
+        <span class="label">CREDITS</span>
+        <span class="val" id="val-credits">—</span>
+        <span class="sync-icon" id="icon-sync-credits" title="Sync Credits">🔄</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Section Tabs -->
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tasks">Tasks<span class="tab-badge"></span></button>
+    <button class="tab-btn" data-tab="create">Create</button>
+    <button class="tab-btn" data-tab="media">Media</button>
+    <button class="tab-btn" data-tab="logs">Logs</button>
+    <button class="tab-btn" data-tab="rules">Rules</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <!-- Main Panels -->
+  <main id="content">
+
+    <!-- ── Panel: Tasks (Parallel Monitor) ──────────────── -->
+    <section class="tab-panel active" id="panel-tasks">
+      <!-- Status & Metrics Card -->
+      <div class="card">
+        <div class="monitor-top">
+          <div class="status-indicator">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Connecting...</span>
+          </div>
+          <button class="toggle-switch" id="worker-toggle">ON</button>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <span class="metric-val" id="metric-total">0</span>
+            <span class="metric-lbl">Total</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-val" id="metric-running" style="color:var(--yellow)">0</span>
+            <span class="metric-lbl">Active</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-val" id="metric-success" style="color:var(--green)">0</span>
+            <span class="metric-lbl">Success</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-val" id="metric-failed" style="color:var(--red)">0</span>
+            <span class="metric-lbl">Failed</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Parallel Tasks List -->
+      <div class="card-title">
+        <span>Parallel Tasks In Progress</span>
+        <span id="active-tasks-count" style="color:var(--accent); font-family:var(--mono);">0 active</span>
+      </div>
+      <div id="active-tasks-list">
+        <div class="empty-state">
+          <div class="empty-icon">⚡</div>
+          <div>No tasks running. Ready for parallel jobs.</div>
+        </div>
+      </div>
+
+      <!-- Recent Completed Tasks -->
+      <div class="card-title" style="margin-top:14px;">
+        <span>Recent History</span>
+        <button id="clear-history-btn" style="background:none; border:0; color:var(--accent); font:700 9px var(--font); cursor:pointer;">Clear</button>
+      </div>
+      <div id="history-tasks-list">
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <div>No completed tasks yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Panel: Create (Quick Generator) ──────────────── -->
+    <section class="tab-panel" id="panel-create">
+      <div class="card">
+        <label class="field-label" for="input-prompt">Prompt</label>
+        <textarea id="input-prompt" class="prompt-input" placeholder="Describe the scene, character or movement you want to generate..."></textarea>
+
+        <div class="type-switch">
+          <button class="type-btn active" type="button" data-type="image">Image</button>
+          <button class="type-btn" type="button" data-type="video">Video</button>
+          <input type="hidden" id="input-type" value="image">
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label">Model</label>
+            <select id="input-model" class="select-input">
+              <option value="Nano Banana 2">Nano Banana 2</option>
+              <option value="Nano Banana Pro">Nano Banana Pro</option>
+              <option value="Nano Banana Lite">Nano Banana Lite</option>
+              <option value="veo_3_1_fast" style="display:none;">Veo 3.1 Fast</option>
+              <option value="veo_3_1_quality" style="display:none;">Veo 3.1 Quality</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Format</label>
+            <select id="input-aspect" class="select-input">
+              <option value="9:16">Portrait (9:16)</option>
+              <option value="16:9">Landscape (16:9)</option>
+              <option value="1:1">Square (1:1)</option>
+            </select>
+          </div>
+          <div id="field-duration" style="display:none;">
+            <label class="field-label">Duration</label>
+            <select id="input-duration" class="select-input">
+              <option value="4">4 sec</option>
+              <option value="6">6 sec</option>
+              <option value="8" selected>8 sec</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="btn-generate" class="btn-submit">Generate with Flow</button>
+        <div id="gen-result-container" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- ── Panel: Media Library ─────────────────────────── -->
+    <section class="tab-panel" id="panel-media">
+      <div class="card-title">
+        <span>Generated Assets</span>
+        <div style="display:flex; gap:8px;">
+          <button id="btn-refresh-media" style="background:none; border:0; color:var(--text-dim); font:700 9px var(--font); cursor:pointer;">Refresh</button>
+          <button id="btn-delete-all-media" style="background:none; border:0; color:var(--red); font:700 9px var(--font); cursor:pointer;">Delete All</button>
+        </div>
+      </div>
+      <div class="media-grid" id="media-grid">
+        <div class="empty-state">Loading media...</div>
+      </div>
+    </section>
+
+    <!-- ── Panel: Request Logs ──────────────────────────── -->
+    <section class="tab-panel" id="panel-logs">
+      <div class="card-title">
+        <span>Execution Logs</span>
+        <button id="btn-clear-logs" style="background:none; border:0; color:var(--accent); font:700 9px var(--font); cursor:pointer;">Clear Logs</button>
+      </div>
+      <div class="card" style="padding:4px 8px;">
+        <div id="logs-list">
+          <div class="empty-state">No request logs recorded yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Panel: Settings ──────────────────────────────── -->
+    <section class="tab-panel" id="panel-settings">
+      <div class="card">
+        <div class="card-title">Worker Connection</div>
+
+        <div class="setting-group">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label class="field-label">Account ID</label>
+            <div style="display:flex; gap:6px;">
+              <button id="btn-new-id" style="background:none; border:0; color:var(--accent); font:700 9px var(--font); cursor:pointer;">+ New ID</button>
+              <button id="btn-auto-detect" style="background:none; border:0; color:var(--blue); font:700 9px var(--font); cursor:pointer;">Auto</button>
+            </div>
+          </div>
+          <input type="text" id="input-account-id" class="text-input" placeholder="google_acc_...">
+        </div>
+
+        <div class="setting-group">
+          <label class="field-label">Account Label</label>
+          <input type="text" id="input-account-label" class="text-input" placeholder="e.g. Chrome Profile 1">
+        </div>
+
+        <div class="setting-group">
+          <label class="field-label">Worker WebSocket URL</label>
+          <input type="text" id="input-server-ws" class="text-input" placeholder="ws://localhost:8088/ws">
+        </div>
+
+        <div class="setting-group" style="margin-top:12px; padding:10px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
+          <div style="font-weight:700; font-size:11px; margin-bottom:2px;">Parallel Worker Info</div>
+          <div style="color:var(--text-dim); font-size:10px; line-height:1.4;">
+            Slots: <b>3 Concurrent Tasks</b> per browser window.<br>
+            All generation jobs are automatically balanced by the Shine Worker pool.
+          </div>
+        </div>
+
+        <div class="btn-action-row">
+          <button id="btn-save-settings" class="btn-primary">Save & Reconnect</button>
+          <button id="btn-sync-cookies" class="btn-secondary">Sync Cookies</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Panel: Rules & DOM Inspector ──────────────────── -->
+    <section class="tab-panel" id="panel-rules">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Flow DOM Inspector</div>
+          <div class="card-sub">Inspect elements directly on Google Flow</div>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4; margin-bottom:12px;">
+          Enable the Inspector overlay on Google Flow to point-and-click elements, automatically extract normalized tags/classes, and update DOM rules.
+        </div>
+        <button id="btn-open-inspector" class="btn-primary" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px;">
+          <span>🎯 Open Inspector on Flow Tab</span>
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Rule Sync (Worker Sync)</div>
+          <span class="header-badge" id="popup-rules-version-badge">
+            <span class="label">VERSION</span>
+            <span class="val" id="popup-rules-version">v5</span>
+          </span>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4; margin-bottom:12px;">
+          Sync DOM selector rules with the Flow Worker server to apply across all workers and users.
+        </div>
+        <div class="btn-action-row" style="margin-bottom:8px;">
+          <button id="btn-sync-rules-worker" class="btn-primary">🔄 Sync to Worker</button>
+          <button id="btn-refresh-rules" class="btn-secondary">⬇️ Pull from Worker</button>
+        </div>
+        <button id="btn-reset-rules-default" class="btn-secondary" style="width:100%;">↩️ Reset to Default</button>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Quick Selector Test</div>
+        </div>
+        <div class="setting-group" style="margin-bottom:8px;">
+          <input type="text" id="input-test-selector" class="text-input" placeholder="Enter CSS selector, e.g.: button.settings-trigger-button">
+        </div>
+        <button id="btn-run-test-selector" class="btn-secondary" style="width:100%;">👁️ Highlight on Flow Tab</button>
+        <div id="test-selector-result" style="font-size:11px; margin-top:8px; color:var(--text-dim);"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Bottom Action Bar -->
+  <div class="bottom-bar">
+    <button class="bottom-btn primary" id="btn-open-flow" title="Open or switch to Google Flow tab">
+      <span>Open Flow</span>
+    </button>
+    <button class="bottom-btn" id="btn-sync-credits-bottom" title="Check & Sync Credits from Flow" style="color: #059669; border-color: rgba(16, 185, 129, 0.4);">
+      <span>🔄 Sync Credit</span>
+    </button>
+    <button class="bottom-btn" id="btn-refresh-token" title="Capture & refresh Google session token">
+      <span>Token</span>
+    </button>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

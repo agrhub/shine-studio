@@ -175,6 +175,9 @@ export const EnvConfig = {
   get geminiMaxTokens() {
     return Number(process.env.GEMINI_MAX_TOKENS) || 8192;
   },
+  get antigravityModel(){
+    return process.env.ANTIGRAVITY_MODEL || 'gemini-3.7-flash';
+  },
   get smtp() {
     const host = process.env.SMTP_HOST || 'smtp.example.com';
     const port = Number(process.env.SMTP_PORT) || 465;
@@ -350,5 +353,8 @@ export const EnvConfig = {
       return '';
     }
     return this.appUrl;
-  }
+  },
+  get generateEndFrame(){
+    return Boolean(process.env.GENERATE_START_END_FRAME || false);
+  },
 };

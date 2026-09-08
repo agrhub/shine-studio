@@ -73,13 +73,13 @@ export class CharacterToolExecutors {
           return await characterService.generatePortrait({
             series_id: params.seriesId,
             character_id: char.id,
-            name: char.name,
-            age: char.age,
-            gender: char.gender,
-            nationality: char.nationality,
-            visual_traits: char.visual_traits || char.traits,
-            style: params.style,
-            aspect_ratio: params.aspectRatio || '9:16',
+            // name: char.name,
+            // age: char.age,
+            // gender: char.gender,
+            // nationality: char.nationality,
+            // visual_traits: char.visual_traits || char.traits,
+            // style: params.style,
+            // aspect_ratio: params.aspectRatio || '9:16',
             user_id: params.userId,
           });
         });
@@ -89,7 +89,7 @@ export class CharacterToolExecutors {
           updatedChars[idx] = result.character;
         }
 
-        results.push({ name: char.name, status: 'generated', avatar: result.avatar_url });
+        results.push({ name: char.name, status: 'generated', avatar: result.image_url });
 
         await params.onItemProgress?.({
           asset: {
@@ -97,8 +97,8 @@ export class CharacterToolExecutors {
             name: `Portrait: ${char.name}`,
             type: 'character',
             status: 'completed',
-            url: result.avatar_url,
-            thumbnail: result.avatar_url,
+            url: result.image_url,
+            thumbnail: result.image_url,
           },
           current: results.length,
           total: targets.length,
@@ -107,6 +107,15 @@ export class CharacterToolExecutors {
       }
 
       await db.updateSeries(params.seriesId, { characters: updatedChars });
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedSeries = await db.getSeriesById(params.seriesId);
+        if (updatedSeries) {
+          PatchSyncService.broadcast(params.seriesId, 'series:updated', updatedSeries);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[CharacterTools] WebSocket broadcast notice: ${wsErr.message}`);
+      }
 
       const generatedCount = results.filter((r) => r.status === 'generated').length;
       return {
@@ -164,8 +173,8 @@ export class CharacterToolExecutors {
         const variants: CharacterWardrobeVariant[] = char.wardrobe_variants && char.wardrobe_variants.length > 0
           ? [...char.wardrobe_variants]
           : [
-              { variant_id: `wardrobe_${char.id}_signature`, name: 'Signature Look', category: 'Formal', clothing_and_accessories: char.clothing_and_accessories || 'Classic signature look' },
-              { variant_id: `wardrobe_${char.id}_casual`, name: 'Casual Look', category: 'Casual', clothing_and_accessories: 'Relaxed civilian attire' }
+              { variant_id: `wv_${char.id}`, name: 'Signature Look', category: 'Formal', clothing_and_accessories: char.clothing_and_accessories || 'Classic signature look' },
+              // { variant_id: `wardrobe_${char.id}_casual`, name: 'Casual Look', category: 'Casual', clothing_and_accessories: 'Relaxed civilian attire' }
             ];
 
         for (const variant of variants) {
@@ -190,18 +199,19 @@ export class CharacterToolExecutors {
 
           const { result } = await executeWithRetry(`Generate Wardrobe Variant "${variant.name}" for "${char.name}"`, async () => {
             return await characterService.generateWardrobeLookbook({
+              series_id: params.seriesId,
               character_id: char.id,
               variant_id: varId,
-              variant_name: variant.name,
-              char_name: char.name,
-              clothing_desc: variant.clothing_and_accessories || 'Signature character wardrobe outfit',
-              char_traits: char.visual_traits || char.physical_characteristics || char.traits,
-              age: char.age,
-              gender: char.gender,
-              nationality: char.nationality || series.country,
+              // variant_name: variant.name,
+              // char_name: char.name,
+              clothing_desc: variant.clothing_and_accessories || char.clothing_and_accessories || '',
+              // char_traits: char.visual_traits || char.physical_characteristics || char.traits,
+              // age: char.age,
+              // gender: char.gender,
+              // nationality: char.nationality || series.country,
               reference_avatar_url: char.avatar || undefined,
-              visual_style: series.visual_style,
-              visual_style_prompt: series.visual_style_prompt,
+              // visual_style: series.visual_style,
+              // visual_style_prompt: series.visual_style_prompt,
               user_id: params.userId,
             });
           });
@@ -252,6 +262,15 @@ export class CharacterToolExecutors {
       }
 
       await db.updateSeries(params.seriesId, { characters: updatedChars });
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedSeries = await db.getSeriesById(params.seriesId);
+        if (updatedSeries) {
+          PatchSyncService.broadcast(params.seriesId, 'series:updated', updatedSeries);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[CharacterTools] WebSocket broadcast notice: ${wsErr.message}`);
+      }
 
       return {
         success: true,

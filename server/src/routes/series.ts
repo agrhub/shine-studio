@@ -7,8 +7,11 @@ import { Logger } from '../utils/logger.js';
 import { nanoid } from 'nanoid';
 import { getAuthUser, getUserId } from '~/utils/auth.js';
 import { normalizeSceneEntity, normalizeLocationAsset, normalizePropAsset, normalizeCharacterEntity } from '../utils/sceneNormalizer.js';
-import type { LocationAsset, PropAsset, SceneEntity, CharacterSeriesEntity } from '@/types.js';
+import type { LocationAsset, PropAsset, SceneEntity, CharacterSeriesEntity, EpisodeEntity, CharacterSceneCostumes } from '@/types.js';
 import multer from 'multer';
+import { SeriesDeletionQueue } from '../services/SeriesDeletionQueue.js';
+import { PatchSyncService } from '../realtime/PatchSyncService.js';
+import { TimelineService } from '../services/TimelineService.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -69,6 +72,9 @@ router.patch('/:id', async (req: Request, res: Response): Promise<void> => {
     if (genre !== undefined) updates.genre = genre;
 
     const updated = await db.updateSeries(seriesId, updates);
+    if (updated) {
+      PatchSyncService.broadcast(seriesId, 'series:updated', updated);
+    }
     ok(res, { series: updated }, 'Series updated successfully');
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -91,63 +97,21 @@ function extractStorageKeysFromAsset(asset: any): string[] {
   return keys;
 }
 
-// DELETE /api/series/:id - Permanently delete series and all S3/cloud assets
+// DELETE /api/series/:id - Instantly unlink series and queue for background purge
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const seriesId = req.params.id as string;
     const db = await getDatabaseProvider();
     const series = await db.getSeriesById(seriesId);
     if (!series) {
-      fail(res, 404, 'Series not found'); return;
+      fail(res, 404, 'Series not found');
+      return;
     }
 
-    const episodes = await db.getEpisodesBySeriesId(seriesId);
+    // Instantly mark as DELETING, detach user ownership, and enqueue for background purge
+    await SeriesDeletionQueue.markAndEnqueue(seriesId);
 
-    // 1. Purge all related assets on S3 / Storage Provider BEFORE deleting DB records
-    try {
-      const storage = await StorageFactory.getActiveAdapter();
-      Logger.info(`[SeriesDelete] Purging cloud assets for series "${seriesId}" and ${episodes.length} episodes...`);
-
-      // Delete series asset folders
-      await storage.deleteFolder(`series/${seriesId}`);
-      await storage.deleteFolder(`images/${seriesId}`);
-      await storage.deleteFolder(`videos/${seriesId}`);
-      await storage.deleteFolder(`audio/${seriesId}`);
-
-      // Delete episode asset folders
-      for (const ep of episodes) {
-        await storage.deleteFolder(`episodes/${ep.id}`);
-      }
-
-      // Delete individual asset files associated with this series
-      const seriesAssets = await db.getAssets({ series_id: seriesId });
-      for (const a of seriesAssets) {
-        const keys = extractStorageKeysFromAsset(a);
-        for (const k of keys) {
-          await storage.deleteFile(k);
-        }
-      }
-
-      // Also delete asset files for all episodes of this series
-      for (const ep of episodes) {
-        const epAssets = await db.getAssets({ episode_id: ep.id });
-        for (const a of epAssets) {
-          const keys = extractStorageKeysFromAsset(a);
-          for (const k of keys) {
-            await storage.deleteFile(k);
-          }
-        }
-      }
-
-      Logger.info(`[SeriesDelete] Successfully purged cloud assets for "${seriesId}".`);
-    } catch (storageErr: any) {
-      Logger.warn(`[SeriesDelete] Cloud storage asset purge warning: ${storageErr.message}`);
-    }
-
-    // 2. Delete series and episodes from database
-    await db.deleteSeries(seriesId);
-
-    ok(res, { deleted: true, seriesId }, 'Series and all associated assets deleted successfully');
+    ok(res, { deleted: true, status: 'DELETING', seriesId }, 'Series unlinked and queued for background deletion');
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
   }
@@ -173,6 +137,87 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+/**
+ * Synchronizes character wardrobe variants with actual costumes specified in episode scenes.
+ * If a scene uses a costume with variant_id and description, and that variant is missing from the
+ * character's wardrobe_variants list, it is automatically registered with its exact variant_id,
+ * name, and clothing_and_accessories, linking its associated_scenes.
+ */
+function syncCharacterWardrobesFromScenes(
+  characters: CharacterSeriesEntity[],
+  episodes: EpisodeEntity[]
+): { updatedCharacters: CharacterSeriesEntity[]; hasChanged: boolean } {
+  if (!Array.isArray(characters) || characters.length === 0 || !Array.isArray(episodes) || episodes.length === 0) {
+    return { updatedCharacters: characters || [], hasChanged: false };
+  }
+
+  const updatedChars = characters.map(c => ({
+    ...c,
+    wardrobe_variants: Array.isArray(c.wardrobe_variants) ? [...c.wardrobe_variants] : [],
+  }));
+  let hasChanged = false;
+
+  for (const ep of episodes) {
+    if (!Array.isArray(ep.scenes)) continue;
+    for (const sc of ep.scenes) {
+      if (!Array.isArray(sc.character_costumes)) continue;
+      for (const cc of sc.character_costumes) {
+        if (!cc.character || !cc.wardrobe) continue;
+        const ccNameNorm = (cc.character || '').toLowerCase().trim();
+        const cIdx = updatedChars.findIndex(c => {
+          const cName = (c.name || '').toLowerCase().trim();
+          return cName === ccNameNorm || c.id === cc.character || cName.includes(ccNameNorm) || ccNameNorm.includes(cName);
+        });
+
+        if (cIdx >= 0) {
+          const char = updatedChars[cIdx];
+          const variants = char.wardrobe_variants;
+          const targetVId = (cc.variant_id || '').toLowerCase().trim();
+          const targetWardrobe = (cc.wardrobe || '').toLowerCase().trim();
+          const sceneNum = sc.scene_number || sc.index || 1;
+
+          const existingIdx = variants.findIndex(v =>
+            (targetVId && (v.variant_id || '').toLowerCase().trim() === targetVId) ||
+            (targetWardrobe && (
+              (v.name || '').toLowerCase().trim() === targetWardrobe ||
+              (v.clothing_and_accessories || '').toLowerCase().trim() === targetWardrobe
+            ))
+          );
+
+          if (existingIdx === -1) {
+            variants.push({
+              variant_id: cc.variant_id || `wv_${nanoid(6)}`,
+              name: cc.wardrobe.slice(0, 40) || 'Scene Wardrobe',
+              clothing_and_accessories: cc.wardrobe,
+              associated_scenes: [sceneNum],
+            });
+            hasChanged = true;
+          } else {
+            const existing = variants[existingIdx];
+            let itemChanged = false;
+            if (!existing.variant_id && cc.variant_id) {
+              existing.variant_id = cc.variant_id;
+              itemChanged = true;
+            }
+            const assocScenes = Array.isArray(existing.associated_scenes) ? [...existing.associated_scenes] : [];
+            if (!assocScenes.includes(sceneNum)) {
+              assocScenes.push(sceneNum);
+              existing.associated_scenes = assocScenes;
+              itemChanged = true;
+            }
+            if (itemChanged) {
+              variants[existingIdx] = existing;
+              hasChanged = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { updatedCharacters: updatedChars, hasChanged };
+}
+
 // GET /api/series/:id - Get series details with episodes (Auto-activates DRAFT series when workspace is opened)
 router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -185,11 +230,37 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 
     // If series is in DRAFT, transition to ACTIVE upon entering workspace for production
     if (series.status === 'DRAFT') {
-      series = await db.updateSeries(seriesId, { status: 'ACTIVE' });
+      series = await db.updateSeries(seriesId, { status: 'ACTIVE' }) || series;
     }
 
-    const episodes = await db.getEpisodesBySeriesId(seriesId as string);
-    ok(res, { series, episodes: episodes || [] });
+    const rawEpisodes = await db.getEpisodesBySeriesId(seriesId as string);
+    const episodes = (rawEpisodes || []).map(epItem => {
+      const sceneSum = Array.isArray(epItem.scenes) && epItem.scenes.length > 0
+        ? epItem.scenes.reduce((sum, sc) => sum + (Number(sc.duration_seconds) || 0), 0)
+        : 0;
+      const dur = sceneSum > 0 ? sceneSum : (Number(epItem.duration) || Number(epItem.duration_seconds) || 60);
+      return {
+        ...epItem,
+        duration: dur,
+        duration_seconds: dur,
+      };
+    });
+
+    // 1. Sync character wardrobe variants if missing from character_costumes across scenes
+    const { updatedCharacters, hasChanged: wardrobesChanged } = syncCharacterWardrobesFromScenes(series?.characters || [], episodes || []);
+    if (wardrobesChanged) {
+      const updatedSeries = await db.updateSeries(seriesId, {
+        characters: updatedCharacters,
+      });
+      if (updatedSeries) {
+        series = updatedSeries;
+      } else {
+        series.characters = updatedCharacters;
+      }
+      Logger.info(`[SeriesRoute] 👗 Synced missing wardrobe_variants from scene character_costumes for series ${seriesId}`);
+    }
+
+    ok(res, { series, episodes });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
   }
@@ -218,10 +289,13 @@ router.put('/:id/characters', async (req: Request, res: Response): Promise<void>
     }
     parsedPlan.characters = characters;
 
-    await db.updateSeries(seriesId, {
+    const updatedSeries = await db.updateSeries(seriesId, {
       characters,
       master_plan: parsedPlan,
     });
+    if (updatedSeries) {
+      PatchSyncService.broadcast(seriesId, 'series:updated', updatedSeries);
+    }
 
     ok(res, { characters, message: 'Characters updated successfully' });
   } catch (err: any) {
@@ -290,6 +364,12 @@ router.put('/:id/episodes/:epId', async (req: Request, res: Response): Promise<v
       ...updatedEpisode,
       scenes: Array.isArray(updatedEpisode?.scenes) ? updatedEpisode.scenes.map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)) : [],
     };
+
+    if (updates.scenes !== undefined) {
+      await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[PUT Episode] Timeline sync error: ${e.message}`));
+    }
+    PatchSyncService.broadcast(seriesId || updatedEpisode?.series_id || 'all', 'episode:updated', resultEpisode);
+
     ok(res, { episode: resultEpisode, message: 'Episode updated successfully' });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -363,6 +443,10 @@ router.post('/:id/episodes/:epId/render-versions', upload.single('file'), async 
       video_url: ep.video_url || finalVideoUrl,
     });
 
+    if (updatedEpisode) {
+      PatchSyncService.broadcast(seriesId || updatedEpisode.series_id || 'all', 'episode:updated', updatedEpisode);
+    }
+
     ok(res, { version: versionEntity, episode: updatedEpisode }, 'Render version added successfully', 201);
   } catch (err: any) {
     Logger.error(`[AddRenderVersion] Failed: ${err.message}`);
@@ -400,6 +484,10 @@ router.delete('/:id/episodes/:epId/render-versions/:versionId', async (req: Requ
       video_url: remainingVersions.length > 0 ? (remainingVersions[0].video_url || remainingVersions[0].url) : undefined,
     });
 
+    if (updatedEpisode) {
+      PatchSyncService.broadcast(seriesId || updatedEpisode.series_id || 'all', 'episode:updated', updatedEpisode);
+    }
+
     ok(res, { render_versions: remainingVersions, episode: updatedEpisode }, 'Render version deleted successfully');
   } catch (err: any) {
     Logger.error(`[DeleteRenderVersion] Failed: ${err.message}`);
@@ -422,13 +510,19 @@ router.patch('/:id/episodes/:epId', async (req: Request, res: Response): Promise
 
     const body = { ...req.body };
     if (body.scenes !== undefined && Array.isArray(body.scenes)) {
-      body.scenes = body.scenes.map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1));
+      body.scenes = body.scenes.map((s: SceneEntity, idx: number) => normalizeSceneEntity(s, idx + 1));
     }
     const updatedEpisode = await db.updateEpisode(ep.id, body);
     const resultEpisode = {
       ...updatedEpisode,
-      scenes: Array.isArray(updatedEpisode?.scenes) ? updatedEpisode.scenes.map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)) : [],
+      scenes: Array.isArray(updatedEpisode?.scenes) ? updatedEpisode.scenes.map((s: SceneEntity, idx: number) => normalizeSceneEntity(s, idx + 1)) : [],
     };
+
+    if (body.scenes !== undefined) {
+      await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[PATCH Episode] Timeline sync error: ${e.message}`));
+    }
+    PatchSyncService.broadcast(seriesId || updatedEpisode?.series_id || 'all', 'episode:updated', resultEpisode);
+
     ok(res, { episode: resultEpisode, message: 'Episode updated successfully' });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -475,6 +569,11 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
     );
 
     if (hasFullScreenplay) {
+      const sceneSum = (ep.scenes || []).reduce((sum, sc) => sum + (Number(sc.duration_seconds) || 0), 0);
+      const totalDur = sceneSum > 0 ? sceneSum : (Number(ep.duration) || Number(ep.duration_seconds) || 60);
+      if (sceneSum > 0 && (ep.duration !== sceneSum || ep.duration_seconds !== sceneSum)) {
+        await db.updateEpisode(ep.id, { duration: totalDur, duration_seconds: totalDur }).catch(() => {});
+      }
       ok(res, {
         episode: `EP ${String(ep.episode_number).padStart(2, '0')}`,
         episode_number: ep.episode_number,
@@ -482,6 +581,9 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
         synopsis: ep.synopsis,
         screenplay,
         scenes: ep.scenes || [],
+        total_duration_seconds: totalDur,
+        duration_seconds: totalDur,
+        duration: totalDur,
         characters,
         locations,
         props,
@@ -515,8 +617,9 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
 
     if (scriptRes?.scenes) {
       const normalizedScenes: SceneEntity[] = (scriptRes.scenes || []).map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)).filter((s): s is SceneEntity => s !== null);
+      const epDuration = scriptRes.total_duration_seconds || normalizedScenes.reduce((sum, sc) => sum + (Number(sc.duration_seconds) || 0), 0) || 60;
 
-      await db.updateEpisode(ep.id, {
+      const updatedEp = await db.updateEpisode(ep.id, {
         scenes: normalizedScenes,
         screenplay: scriptRes.screenplay || '',
         reference_assets: {
@@ -524,15 +627,23 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
           location_ids: locations.map(l => l.id),
           prop_ids: props.map(p => p.id),
         },
-        duration: scriptRes.total_duration_seconds,
+        duration: epDuration,
+        duration_seconds: epDuration,
         script: JSON.stringify({
           ...scriptRes,
           scenes: normalizedScenes,
+          total_duration_seconds: epDuration,
         }),
       });
 
+      await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[Auto-Script] Timeline sync error: ${e.message}`));
+      PatchSyncService.broadcast(seriesId as string, 'episode:updated', updatedEp || { ...ep, scenes: normalizedScenes, duration: epDuration, duration_seconds: epDuration });
+
       ok(res, {
-        ...scriptRes,
+        ...updatedEp,
+        total_duration_seconds: epDuration,
+        duration_seconds: epDuration,
+        duration: epDuration,
         scenes: normalizedScenes,
         characters,
         locations,
@@ -593,8 +704,9 @@ router.post('/:id/episodes/:epId/generate-script', async (req: Request, res: Res
 
     if (scriptRes?.scenes) {
       const normalizedScenes = (scriptRes.scenes || []).map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)).filter((s): s is SceneEntity => s !== null);
+      const epDuration = scriptRes.total_duration_seconds || normalizedScenes.reduce((sum, sc) => sum + (Number(sc.duration_seconds) || 0), 0) || 60;
 
-      await db.updateEpisode(ep.id, {
+      const updatedEp = await db.updateEpisode(ep.id, {
         scenes: normalizedScenes,
         screenplay: scriptRes.screenplay || '',
         reference_assets: {
@@ -602,15 +714,23 @@ router.post('/:id/episodes/:epId/generate-script', async (req: Request, res: Res
           location_ids: locations.map(l => l.id),
           prop_ids: props.map(p => p.id),
         },
-        duration: scriptRes.total_duration_seconds,
+        duration: epDuration,
+        duration_seconds: epDuration,
         script: JSON.stringify({
           ...scriptRes,
           scenes: normalizedScenes,
+          total_duration_seconds: epDuration,
         }),
       });
 
+      await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[Generate-Script] Timeline sync error: ${e.message}`));
+      PatchSyncService.broadcast(seriesId, 'episode:updated', updatedEp || { ...ep, scenes: normalizedScenes, duration: epDuration, duration_seconds: epDuration });
+
       ok(res, {
         ...scriptRes,
+        total_duration_seconds: epDuration,
+        duration_seconds: epDuration,
+        duration: epDuration,
         scenes: normalizedScenes,
         characters,
         locations,
@@ -655,6 +775,10 @@ router.post('/:id/episodes', async (req: Request, res: Response): Promise<void> 
       status: 'DRAFT',
     });
 
+    if (episode) {
+      PatchSyncService.broadcast(seriesId, 'episode:updated', episode);
+    }
+
     ok(res, { episode }, 'Episode created successfully', 201);
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -662,6 +786,27 @@ router.post('/:id/episodes', async (req: Request, res: Response): Promise<void> 
 });
 
 export const episodesRouter = Router();
+
+// GET /api/episodes/series/:seriesId
+episodesRouter.get('/series/:seriesId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const seriesId = req.params.seriesId as string;
+    const publishedOnly = req.query.publishedOnly === 'true' || req.query.published === 'true';
+    const db = await getDatabaseProvider();
+    let episodes = await db.getEpisodesBySeriesId(seriesId);
+    if (publishedOnly && Array.isArray(episodes)) {
+      episodes = episodes.filter(ep =>
+        ep.status === 'PUBLISHED' ||
+        (Array.isArray(ep.published_platforms) && ep.published_platforms.length > 0) ||
+        (ep.published_urls && Object.keys(ep.published_urls).length > 0) ||
+        Boolean(ep.analytics_summary)
+      );
+    }
+    ok(res, { episodes: episodes || [] });
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Internal server error');
+  }
+});
 
 // GET /api/episodes/:episodeId
 episodesRouter.get('/:episodeId', async (req: Request, res: Response): Promise<void> => {
@@ -690,6 +835,12 @@ episodesRouter.put('/:episodeId', async (req: Request, res: Response): Promise<v
       return;
     }
     const updated = await db.updateEpisode(episodeId, req.body);
+    if (req.body?.scenes !== undefined) {
+      await TimelineService.getOrBuildEpisodeTimeline(episodeId).catch((e: any) => Logger.warn(`[PUT Episode] Timeline sync error: ${e.message}`));
+    }
+    if (updated) {
+      PatchSyncService.broadcast(updated.series_id || ep.series_id || 'all', 'episode:updated', updated);
+    }
     ok(res, { episode: updated, message: 'Episode updated successfully' });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -707,6 +858,12 @@ episodesRouter.patch('/:episodeId', async (req: Request, res: Response): Promise
       return;
     }
     const updated = await db.updateEpisode(episodeId, req.body);
+    if (req.body?.scenes !== undefined) {
+      await TimelineService.getOrBuildEpisodeTimeline(episodeId).catch((e: any) => Logger.warn(`[PATCH Episode] Timeline sync error: ${e.message}`));
+    }
+    if (updated) {
+      PatchSyncService.broadcast(updated.series_id || ep.series_id || 'all', 'episode:updated', updated);
+    }
     ok(res, { episode: updated, message: 'Episode updated successfully' });
   } catch (err: any) {
     fail(res, 500, err.message || 'Internal server error');
@@ -715,7 +872,6 @@ episodesRouter.patch('/:episodeId', async (req: Request, res: Response): Promise
 
 import { normalizeTransitionKey } from '../constants/transitions.js';
 import { normalizeEffectKey } from '../constants/effects.js';
-import { TimelineService } from '../services/TimelineService.js';
 
 // GET /api/episodes/:episodeId/timeline
 episodesRouter.get('/:episodeId/timeline', async (req: Request, res: Response): Promise<void> => {
@@ -905,6 +1061,11 @@ episodesRouter.post('/:episodeId/timeline/restore', async (req: Request, res: Re
     const authorObj = author || { id: 'usr_default', name: 'Editor Alpha' };
     const db = await getDatabaseProvider();
     const restoreResult = await db.restoreTimelineVersion(episodeId, versionId, authorObj, reason || 'Restored version');
+
+    const ep = await db.getEpisodeById(episodeId);
+    if (ep) {
+      PatchSyncService.broadcast(ep.series_id || 'all', 'episode:updated', ep);
+    }
 
     ok(res, restoreResult, 'Timeline version successfully restored');
   } catch (err: any) {

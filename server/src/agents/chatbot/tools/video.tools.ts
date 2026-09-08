@@ -165,6 +165,15 @@ export class VideoToolExecutors {
       } catch (tlErr: any) {
         Logger.warn(`[VideoTools.generateSceneVideo] Timeline sync notice: ${tlErr.message}`);
       }
+      try {
+        const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+        const updatedEp = await db.getEpisodeById(params.episodeId);
+        if (updatedEp) {
+          PatchSyncService.broadcast(params.seriesId, 'episode:updated', updatedEp);
+        }
+      } catch (wsErr: any) {
+        Logger.warn(`[VideoTools.generateSceneVideo] WebSocket broadcast notice: ${wsErr.message}`);
+      }
 
       const failedResults = results.filter((r) => r.status === 'failed');
       if (failedResults.length > 0) {

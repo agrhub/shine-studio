@@ -47,6 +47,12 @@ Each shot MUST include:
 - `scene_context`: story beat context for this shot
 - `prop_details`: specific props visible or interacted with in this shot
 
+#### Reference Assets Matching (CRITICAL)
+- `reference_assets` MUST strictly contain the exact canonical `id` strings from `get_episode_context`:
+  - `characters`: Array of exact `id` strings of characters physically present in this shot (e.g. `["char_thao_nguyen"]`). **NEVER invent or abbreviate IDs like `["char_nguyen"]`**. If no characters appear in the shot, use `[]`.
+  - `locations`: Array of exact `id` strings of defined locations in the series (e.g. `["loc_hoang_boardroom"]`). **NEVER invent new IDs like `["loc_exec_office"]`**. If the setting is not in the defined locations list, leave `locations: []`.
+  - `props`: Array of exact `id` strings of defined props in the series (e.g. `["prop_wedding_ring"]`). If no defined props appear, use `[]`.
+
 #### Wardrobe Variant Matching (CRITICAL)
 - You MUST look at the character's `wardrobe_variants` list provided in context.
 - ALWAYS use the exact `variant_id` from the character's wardrobe_variants array.
@@ -56,7 +62,7 @@ Each shot MUST include:
 - In micro-drama video, audio dialogue is the core viewer retention driver! Viewers swipe away if there are prolonged silent shots or dead air.
 - **Ensure cumulative spoken dialogue and voiceover (VO) covers 80% to 90% of the total episode duration**.
 - **Ensure at least 85% to 95% of shots contain spoken dialogue or internal monologue (VO)**.
-- **Per-shot word budget**: Each shot's dialogue line length must match 70%–85% of that shot's `duration_seconds` (~2.0–2.4 words per second; avoid 1-word grunts).
+- **Per-shot word budget**: Micro-dramas demand rapid-fire, high-density speech (~3.2–3.8 words per second, speed 1.1x–1.2x). Each shot's dialogue line length must match 75%–85% of that shot's `duration_seconds` (~14–18 words for 5s, ~18–24 words for 6s; avoid 1-2 word grunts).
 - Max 10 dialogue items per shot (strict).
 - Lines must be dramatically sharp, emotionally charged — cutting retorts, icy threats, whispered commands, or psychological inner thoughts.
 - Purely silent shots (`dialogue: []`) are strictly limited to at most 1 per episode.

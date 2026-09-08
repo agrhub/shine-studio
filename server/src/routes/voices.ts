@@ -352,6 +352,15 @@ router.post('/tts', async (req: Request, res: Response) => {
               await db.saveTimeline(episode_id, syncedTimeline, { id: 'system', name: 'Studio System' }, `Update voiceover for scene #${targetIndex}`);
               Logger.info(`[voicesRouter] Synchronized timeline for episode ${episode_id} with updated voiceover clip`);
             }
+            try {
+              const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+              const updatedEp = await db.getEpisodeById(episode_id);
+              if (updatedEp) {
+                PatchSyncService.broadcast(ep.series_id || 'all', 'episode:updated', updatedEp);
+              }
+            } catch (wsErr: any) {
+              Logger.warn(`[voicesRouter] WebSocket broadcast notice: ${wsErr.message}`);
+            }
           }
         }
       }

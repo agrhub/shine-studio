@@ -18,6 +18,7 @@ LANGUAGE DIRECTIVE:
 Characters Directives:
 - Generate a comprehensive and rich ensemble cast of characters (Protagonist, Antagonists, Allies, Love Interests, Rivals, Catalysts, Family, and Informants) as required by the series narrative.
 - Assign authentic character names and personas belonging culturally to {{country}}.
+- MANDATORY: Each character MUST include `wardrobe_variants` array with at least 1 default variant (containing unique `variant_id` such as `wv_1`, `name`, and detailed `clothing_and_accessories`).
 - Select appropriate voice IDs from the catalog below:
 {{voiceCatalog}}
 

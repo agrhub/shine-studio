@@ -305,6 +305,15 @@ router.post('/music', async (req: Request, res: Response) => {
             await db.updateEpisode(ep.id, { bgm_url: ep.bgm_url, bgm_versions: ep.bgm_versions, scenes: ep.scenes });
             const { TimelineService } = await import('@/services/TimelineService.js');
             await TimelineService.getOrBuildEpisodeTimeline(ep.id);
+            try {
+              const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+              const updatedEp = await db.getEpisodeById(ep.id);
+              if (updatedEp) {
+                PatchSyncService.broadcast(ep.series_id || 'all', 'episode:updated', updatedEp);
+              }
+            } catch (wsErr: any) {
+              Logger.warn(`[audioRouter.music] WebSocket broadcast notice: ${wsErr.message}`);
+            }
           }
         }
       } catch (epErr: any) {

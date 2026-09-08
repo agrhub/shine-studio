@@ -1,3 +1,4 @@
+import path from 'path';
 import axios from 'axios';
 import { nanoid } from 'nanoid';
 import { IStorageAdapter } from './StorageAdapter.js';
@@ -189,10 +190,12 @@ export class StorageFactory {
    * Get streaming readable stream from active storage adapter.
    */
   public static async getFileStream(key: string, options?: { start?: number; end?: number }): Promise<any> {
-    // Check if URL matches /api/assets/file/{storageKey}
-    const match = key.match(/(?:\/api\/assets\/file\/)(.+)$/);
+    // Check if URL matches /api/assets/file/{storageKey} or /api/media/{storageKey}
+    const match = key.match(/(?:\/api\/(?:assets\/file|media)\/)(.+)$/);
     if (match && match[1]) {
       key = decodeURIComponent(match[1]);
+    } else {
+      key = key.replace(/^\/+/, '');
     }
     // Resolve adapter ONCE and hold reference — never re-resolve mid-stream
     const adapter = await this.getActiveAdapter();
@@ -327,7 +330,19 @@ export class StorageFactory {
       }
     });
 
-    return { buffer, mimeType: streamResult?.headers?.['content-type'] };
+    let mimeType = streamResult?.headers?.['content-type'];
+    if (!mimeType) {
+      const ext = path.extname(keyOrUrl.split('?')[0]).toLowerCase();
+      if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+      else if (ext === '.png') mimeType = 'image/png';
+      else if (ext === '.webp') mimeType = 'image/webp';
+      else if (ext === '.mp4') mimeType = 'video/mp4';
+      else if (ext === '.mp3') mimeType = 'audio/mp3';
+      else if (ext === '.wav') mimeType = 'audio/wav';
+      else mimeType = 'application/octet-stream';
+    }
+
+    return { buffer, mimeType };
   }
 
   /**

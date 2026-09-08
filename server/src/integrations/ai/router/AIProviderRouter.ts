@@ -8,6 +8,7 @@ import { AIAccountStatus, AIAccountType, IAIAccount } from '~/types.js';
 import { Logger } from '@/utils/logger.js';
 import { EnvConfig } from '@/config/env.js';
 import type { StudioSystemConfig } from '@/types.js';
+import { flowServiceClient } from '../flow/FlowServiceClient.js';
 
 export interface RouteGenerationOptions {
   userTier?: 'FREE' | 'PRO' | 'ENTERPRISE';
@@ -38,59 +39,74 @@ export class AIProviderRouter {
     if (isCommercial || options.type === 'TEXT') {
       Logger.info(`[AIProviderRouter] Routing request (Type: ${options.type}, Mode: ${options.mode || 'DEFAULT'}, Tier: ${options.userTier || 'FREE'})`);
     }
-     const db = await getDatabaseProvider();
+    
+    const db = await getDatabaseProvider();
+    let isWorkerOnline = await flowServiceClient.hasActiveWorkers();
+    if (!isWorkerOnline) {
+      const isServerUp = await flowServiceClient.isWorkerHealthy();
+      if (isServerUp) {
+        Logger.info('[AIProviderRouter] Flow Worker server is online. Waiting up to 3.5s for connected Flow tab...');
+        isWorkerOnline = await flowServiceClient.waitForActiveWorker(3500);
+        if (isWorkerOnline) {
+          Logger.info('[AIProviderRouter] ✅ Flow tab connected successfully to worker.');
+        } else {
+          Logger.warn('[AIProviderRouter] ⚠️ Flow Worker server is running, but 0 Google Flow tabs are currently connected (WebSocket inactive).');
+        }
+      } else {
+        Logger.info('[AIProviderRouter] Flow Worker service is offline (localhost:8088 unreachable).');
+      }
+    }
     if (options.type === 'IMAGE') {
       try {
         const flowAccounts = await db.getFlowAccounts('ACTIVE');
-
-        if (flowAccounts && flowAccounts.length > 0) {
-          // Select the account with the most credits
-          const bestAccount = [...flowAccounts].sort((a, b) => (b.credits_remaining || 0) - (a.credits_remaining || 0))[0];
+        const bestAccount = flowAccounts && flowAccounts.length > 0
+          ? [...flowAccounts].sort((a, b) => (b.credits_remaining || 0) - (a.credits_remaining || 0))[0]
+          : null;
+        
+        if (isWorkerOnline || (bestAccount && bestAccount.session_token)) {
+          const accountEmail = isWorkerOnline ? 'flow-worker-fleet' : (bestAccount?.email || 'flow-worker-fleet');
+          Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Image (${options.model}) (Account: ${accountEmail}, Worker Online: ${isWorkerOnline})`);
           
-          if (bestAccount && bestAccount.session_token) {
-            Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Image (${options.model}) (Account: ${bestAccount.email}, Credits: ${bestAccount.credits_remaining})`);
-            
-            const flowAccountAdapterParam: IAIAccount = {
-              id: bestAccount.id,
-              email: bestAccount.email,
-              session_token: bestAccount.session_token,
-              access_token: bestAccount.access_token,
-              project_id: bestAccount.project_id,
-              status: AIAccountStatus.READY,
-              credits: bestAccount.credits_remaining,
-              account_type: AIAccountType.GOOGLE_FLOW,
-              is_active: true,
-            };
+          const flowAccountAdapterParam: IAIAccount = {
+            id: bestAccount?.id || 'flow-worker',
+            email: accountEmail,
+            session_token: bestAccount?.session_token || 'flow-worker-session',
+            access_token: bestAccount?.access_token,
+            project_id: bestAccount?.project_id,
+            status: AIAccountStatus.READY,
+            credits: bestAccount?.credits_remaining ?? 100,
+            account_type: AIAccountType.GOOGLE_FLOW,
+            is_active: true,
+          };
 
-            const imageInputs = options.imageInputs || (options.characterReferences?.length ? options.characterReferences : []);
-            const flowResult: any = await flowAdapter.generateImage(
-              flowAccountAdapterParam as any,
-              options.prompt,
-              String(options.model),
-              {
-                aspectRatio: options.aspectRatio === '1:1' ? '1:1' : options.aspectRatio === '16:9' ? '16:9' : '9:16',
-                imageInputs,
-              }
-            );
+          const imageInputs = options.imageInputs || (options.characterReferences?.length ? options.characterReferences : []);
+          const flowResult: any = await flowAdapter.generateImage(
+            flowAccountAdapterParam as any,
+            options.prompt,
+            String(options.model),
+            {
+              aspectRatio: options.aspectRatio === '1:1' ? '1:1' : options.aspectRatio === '16:9' ? '16:9' : '9:16',
+              imageInputs,
+            }
+          );
 
-            if (flowResult) {
-              if (flowResult.buffer) {
-                const base64 = flowResult.buffer.toString('base64');
-                const mime = flowResult.mimeType || 'image/png';
-                return {
-                  provider: `Google Flow (${options.model})`,
-                  url: `data:${mime};base64,${base64}`,
-                  mimeType: mime,
-                  buffer: flowResult.buffer,
-                };
-              }
-              if (flowResult.url) {
-                return {
-                  provider: `Google Flow (${options.model})`,
-                  url: flowResult.url,
-                  mimeType: flowResult.mimeType || 'image/jpeg',
-                };
-              }
+          if (flowResult) {
+            if (flowResult.buffer) {
+              const base64 = flowResult.buffer.toString('base64');
+              const mime = flowResult.mimeType || 'image/png';
+              return {
+                provider: `Google Flow (${options.model})`,
+                url: `data:${mime};base64,${base64}`,
+                mimeType: mime,
+                buffer: flowResult.buffer,
+              };
+            }
+            if (flowResult.url) {
+              return {
+                provider: `Google Flow (${options.model})`,
+                url: flowResult.url,
+                mimeType: flowResult.mimeType || 'image/jpeg',
+              };
             }
           }
         }
@@ -125,45 +141,46 @@ export class AIProviderRouter {
     if (options.type === 'VIDEO') {
       try {
         const flowAccounts = await db.getFlowAccounts('ACTIVE');
+        const bestAccount = flowAccounts && flowAccounts.length > 0
+          ? [...flowAccounts].sort((a, b) => (b.credits_remaining || 0) - (a.credits_remaining || 0))[0]
+          : null;
 
-        if (flowAccounts && flowAccounts.length > 0) {
-          const bestAccount = [...flowAccounts].sort((a, b) => (b.credits_remaining || 0) - (a.credits_remaining || 0))[0];
+        if (isWorkerOnline || (bestAccount && bestAccount.session_token)) {
+          const accountEmail = isWorkerOnline ? 'flow-worker-fleet' : (bestAccount?.email || 'flow-worker-fleet');
+          Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Video (${options.model}) (Account: ${accountEmail}, Worker Online: ${isWorkerOnline})`);
           
-          if (bestAccount && bestAccount.session_token) {
-            Logger.info(`[AIProviderRouter] Prioritizing Google Flow Pool for Video (${options.model}) (Account: ${bestAccount.email})`);
-            
-            const flowAccountAdapterParam: IAIAccount = {
-              id: bestAccount.id,
-              email: bestAccount.email,
-              session_token: bestAccount.session_token,
-              access_token: bestAccount.access_token,
-              project_id: bestAccount.project_id,
-              status: AIAccountStatus.READY,
-              credits: bestAccount.credits_remaining,
-              account_type: AIAccountType.GOOGLE_FLOW,
-              is_active: true,
-            };
+          const flowAccountAdapterParam: IAIAccount = {
+            id: bestAccount?.id || 'flow-worker',
+            email: accountEmail,
+            session_token: bestAccount?.session_token || 'flow-worker-session',
+            access_token: bestAccount?.access_token,
+            project_id: bestAccount?.project_id,
+            status: AIAccountStatus.READY,
+            credits: bestAccount?.credits_remaining ?? 100,
+            account_type: AIAccountType.GOOGLE_FLOW,
+            is_active: true,
+          };
 
-            const flowResult: any = await flowAdapter.generateVideo(
-              flowAccountAdapterParam as any,
-              options.prompt,
-              String(options.model),
-              {
-                aspectRatio: options.aspectRatio === '1:1' ? '1:1' : options.aspectRatio === '16:9' ? '16:9' : '9:16',
-                characterReferences: options.imageEnd ? [] : (options.characterReferences || []),//ingore reference images if start + end frame are provided
-                imageStart: options.imageStart,
-                imageEnd: options.imageEnd,
-              }
-            );
-
-            if (flowResult) {
-              const videoUrl = typeof flowResult === 'string' ? flowResult : (flowResult.url || flowResult.videoUrl);
-              return {
-                provider: `Google Flow (${options.model})`,
-                url: videoUrl,
-                data: flowResult,
-              };
+          const flowResult: any = await flowAdapter.generateVideo(
+            flowAccountAdapterParam as any,
+            options.prompt,
+            String(options.model),
+            {
+              aspectRatio: options.aspectRatio === '1:1' ? '1:1' : options.aspectRatio === '16:9' ? '16:9' : '9:16',
+              characterReferences: options.imageEnd ? [] : (options.characterReferences || []), // ignore reference images if start + end frame are provided
+              imageStart: options.imageStart,
+              imageEnd: options.imageEnd,
+              durationSeconds: options.extraOptions?.duration || options.extraOptions?.durationSeconds || 5,
             }
+          );
+
+          if (flowResult) {
+            const videoUrl = typeof flowResult === 'string' ? flowResult : (flowResult.url || flowResult.videoUrl);
+            return {
+              provider: `Google Flow (${options.model})`,
+              url: videoUrl,
+              data: flowResult,
+            };
           }
         }
       } catch (flowErr: any) {
@@ -330,38 +347,27 @@ export class AIProviderRouter {
         data: text,
       };
     } catch (geminiErr: any) {
-      const errMsg = String(geminiErr?.message || '');
-      const isResourceExhausted =
-        geminiErr?.status === 429 ||
-        geminiErr?.status === 409 ||
-        geminiErr?.code === 429 ||
-        geminiErr?.code === 409 ||
-        errMsg.includes('429') ||
-        errMsg.includes('409') ||
-        errMsg.includes('RESOURCE_EXHAUSTED') ||
-        errMsg.includes('Resource exhausted') ||
-        errMsg.includes('Quota exceeded') ||
-        errMsg.includes('quota');
+      const causeMsg = geminiErr?.cause ? ` (Cause: ${geminiErr.cause.message || geminiErr.cause.code || geminiErr.cause})` : '';
+      const errMsg = String(geminiErr?.message || '') + causeMsg;
 
-      if (isResourceExhausted) {
-        Logger.warn(`[AIProviderRouter] GeminiClient hit Resource Exhausted (${errMsg}). Attempting Antigravity fallback...`);
-        const agText = await this.tryAntigravityTextFallback(options);
-        if (agText) {
-          return {
-            provider: 'Antigravity (Google Cloud Code)',
-            data: agText,
-          };
-        }
-
-        Logger.warn(`[AIProviderRouter] Antigravity fallback unavailable or failed. Attempting FlowAdapter fallback...`);
-        const flowText = await this.tryFlowTextFallback(options);
-        if (flowText) {
-          return {
-            provider: 'Google Flow (gemini-3-flash-preview)',
-            data: flowText,
-          };
-        }
+      Logger.warn(`[AIProviderRouter] GeminiClient primary attempt failed (${errMsg}). Attempting Antigravity fallback...`);
+      const agText = await this.tryAntigravityTextFallback(options);
+      if (agText) {
+        return {
+          provider: 'Antigravity (Google Cloud Code)',
+          data: agText,
+        };
       }
+
+      Logger.warn(`[AIProviderRouter] Antigravity fallback unavailable or failed. Attempting FlowAdapter fallback...`);
+      const flowText = await this.tryFlowTextFallback(options);
+      if (flowText) {
+        return {
+          provider: 'Google Flow (gemini-3-flash-preview)',
+          data: flowText,
+        };
+      }
+
       throw geminiErr;
     }
   }
@@ -671,7 +677,16 @@ export class AIProviderRouter {
     }
   }
 
-  async generateImage(prompt: string, options?: { aspectRatio?: '9:16' | '1:1' | '16:9' | '4:3'; model?: string; systemPrompt?: string; characterReferences?: string[]; imageInputs?: string[] }): Promise<{ url: string; mimeType: string; provider: string; buffer?: Buffer }> {
+  async generateImage(
+    prompt: string,
+    options?: {
+      aspectRatio?: '9:16' | '1:1' | '16:9' | '4:3';
+      model?: string;
+      systemPrompt?: string;
+      characterReferences?: string[];
+      imageInputs?: string[];
+    }
+  ): Promise<{ url: string; mimeType: string; provider: string; buffer?: Buffer }> {
     const db = await getDatabaseProvider();
     const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
     const targetModel = options?.model || studioConfig?.gemini?.imageModel || EnvConfig.geminiModelImage;

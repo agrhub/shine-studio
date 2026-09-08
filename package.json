@@ -6,6 +6,7 @@
   "scripts": {
     "server": "pnpm --filter shine-server dev",
     "client": "pnpm --filter shine-client dev",
+    "flow-worker": "pnpm --filter shine-flow-worker dev",
     "dev": "concurrently \"pnpm run server\" \"pnpm run client\"",
     "client:build": "pnpm --filter shine-client build",
     "server:build": "pnpm --filter shine-server build",

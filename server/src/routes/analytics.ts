@@ -3,6 +3,8 @@ import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js'
 import { getDatabaseProvider } from '../database/index.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
 import { getUserId } from '@/utils/auth.js';
+import { episodeHarvesterService } from '@/services/EpisodeHarvesterService.js';
+import { audienceIntelligenceAgent } from '@/agents/AudienceIntelligenceAgent.js';
 
 export const analyticsPaywallRouter = Router();
 
@@ -336,3 +338,143 @@ analyticsPaywallRouter.get('/paywall-recommendation', async (req: Request, res: 
     });
   }
 });
+
+// POST /api/analytics/episodes/:episodeId/sync - Trigger multi-platform metrics & comments harvesting via Parallel MCP
+analyticsPaywallRouter.post('/episodes/:episodeId/sync', async (req: Request, res: Response) => {
+  try {
+    const { episodeId } = req.params;
+    const userId = getUserId(req) || 'usr_default';
+    const db = await getDatabaseProvider();
+
+    const episode = await db.getEpisodeById(episodeId as string);
+    if (!episode) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: `Episode not found with id: ${episodeId}`,
+        error: 'Not Found',
+      });
+    }
+
+    const series = await db.getSeriesById(episode.series_id);
+
+    // 1. Harvest metrics and comments via Parallel MCP & Native APIs
+    const { summary, comments } = await episodeHarvesterService.harvestEpisodeData(episodeId as string, userId);
+
+    // 2. Perform Gemini audience intelligence analysis
+    const insight = await audienceIntelligenceAgent.analyzeEpisodeFeedback({
+      episode,
+      comments,
+      metrics: summary,
+      series,
+    });
+
+    return res.json({
+      code: 200,
+      data: {
+        summary,
+        comments,
+        insight,
+      },
+      message: 'Episode performance metrics and audience intelligence synchronized successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: 500,
+      data: null,
+      message: 'Failed to synchronize episode analytics',
+      error: err.message,
+    });
+  }
+});
+
+// GET /api/analytics/episodes/:episodeId/insights - Retrieve audience intelligence and feedback for an episode
+analyticsPaywallRouter.get('/episodes/:episodeId/insights', async (req: Request, res: Response) => {
+  try {
+    const { episodeId } = req.params;
+    const userId = getUserId(req) || 'usr_default';
+    const db = await getDatabaseProvider();
+
+    const episode = await db.getEpisodeById(episodeId as string);
+    if (!episode) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: `Episode not found with id: ${episodeId}`,
+        error: 'Not Found',
+      });
+    }
+
+    const series = await db.getSeriesById(episode.series_id);
+
+    // If no summary or insight exists yet, harvest on-the-fly
+    let summary = episode.analytics_summary;
+    let comments = await episodeHarvesterService.getEpisodeComments(episode.id, userId);
+    let insight = episode.audience_insight;
+
+    if (!summary || !insight) {
+      const harvested = await episodeHarvesterService.harvestEpisodeData(episode.id, userId);
+      summary = harvested.summary;
+      comments = harvested.comments;
+      insight = await audienceIntelligenceAgent.analyzeEpisodeFeedback({
+        episode,
+        comments,
+        metrics: summary,
+        series,
+      });
+    }
+
+    return res.json({
+      code: 200,
+      data: {
+        summary,
+        comments,
+        insight,
+      },
+      message: 'Episode audience intelligence retrieved successfully',
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: 500,
+      data: null,
+      message: 'Failed to retrieve episode insights',
+      error: err.message,
+    });
+  }
+});
+
+// POST /api/analytics/episodes/:episodeId/apply-to-next - Apply audience recommendations to subsequent episode's screenplay
+analyticsPaywallRouter.post('/episodes/:episodeId/apply-to-next', async (req: Request, res: Response) => {
+  try {
+    const { episodeId } = req.params;
+    const { customInstruction } = req.body || {};
+
+    const result = await audienceIntelligenceAgent.applyInsightsToNextEpisode(episodeId as string, customInstruction);
+
+    if (!result.success) {
+      return res.status(400).json({
+        code: 400,
+        data: result,
+        message: result.message,
+        error: 'Failed to apply recommendations',
+      });
+    }
+
+    return res.json({
+      code: 200,
+      data: result,
+      message: result.message,
+      error: null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: 500,
+      data: null,
+      message: 'Failed to apply audience feedback to next episode',
+      error: err.message,
+    });
+  }
+});
+

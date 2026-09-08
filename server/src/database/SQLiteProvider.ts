@@ -239,6 +239,8 @@ export class SQLiteProvider implements IDatabaseProvider {
         "country TEXT DEFAULT 'United State'",
         "ratio TEXT DEFAULT '9:16'",
         "visual_style_prompt TEXT",
+        "synopsis TEXT",
+        "viral_hook TEXT",
         "characters TEXT",
         "locations TEXT",
         "props TEXT",
@@ -269,6 +271,8 @@ export class SQLiteProvider implements IDatabaseProvider {
         'caption_settings TEXT',
         'caption_languages TEXT',
         'dubbing_languages TEXT',
+        'analytics_summary TEXT',
+        'audience_insight TEXT',
       ];
       for (const colDef of episodeColumns) {
         try {
@@ -699,6 +703,32 @@ export class SQLiteProvider implements IDatabaseProvider {
     return { success: true, balance: newBalance, transaction: tx };
   }
 
+  async refundCredits(userId: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      return { success: false, balance: 0, error: 'User not found' };
+    }
+
+    const currentCredits = user.credits ?? 0;
+    const newBalance = currentCredits + amount;
+    user.credits = newBalance;
+    await this.updateUser(user);
+
+    const tx: CreditTransactionEntity = {
+      id: `tx_${nanoid(10)}`,
+      user_id: userId,
+      activity: activity.startsWith('Refund') ? activity : `Refund: ${activity}`,
+      details: details || '',
+      amount: amount,
+      balance_after: newBalance,
+      status: 'Success',
+      created_at: new Date().toISOString(),
+    };
+
+    await this.recordCreditTransaction(tx);
+    return { success: true, balance: newBalance, transaction: tx };
+  }
+
   async getCreditHistory(userId?: string, limit = 50): Promise<CreditTransactionEntity[]> {
     if (this.isFallback) {
       const list = userId ? this.creditTxStore.filter((t) => t.user_id === userId) : this.creditTxStore;
@@ -752,8 +782,12 @@ export class SQLiteProvider implements IDatabaseProvider {
       return series;
     }
     this.db.prepare(`
-      INSERT INTO series (id, user_id, title, genre, visual_style, visual_style_prompt, target_audience, episode_count, country, language, ratio, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO series (
+        id, user_id, title, genre, visual_style, visual_style_prompt, target_audience,
+        episode_count, country, language, ratio, status, synopsis, viral_hook,
+        characters, locations, props, master_plan
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       series.id,
       series.user_id,
@@ -766,7 +800,13 @@ export class SQLiteProvider implements IDatabaseProvider {
       series.country || 'United States',
       series.language || 'en-US',
       series.ratio || '9:16',
-      series.status
+      series.status,
+      series.synopsis || '',
+      series.viral_hook || '',
+      series.characters ? (typeof series.characters === 'string' ? series.characters : JSON.stringify(series.characters)) : null,
+      series.locations ? (typeof series.locations === 'string' ? series.locations : JSON.stringify(series.locations)) : null,
+      series.props ? (typeof series.props === 'string' ? series.props : JSON.stringify(series.props)) : null,
+      series.master_plan ? (typeof series.master_plan === 'string' ? series.master_plan : JSON.stringify(series.master_plan)) : null
     );
     return (await this.getSeriesById(series.id))!;
   }
@@ -789,6 +829,24 @@ export class SQLiteProvider implements IDatabaseProvider {
     if (typeof masterPlan === 'string') {
       try { masterPlan = JSON.parse(masterPlan); } catch {}
     }
+    if (Array.isArray(characters)) {
+      characters = characters.map((c: any) => {
+        if (!Array.isArray(c.wardrobe_variants) || c.wardrobe_variants.length === 0) {
+          const defaultCloth = c.clothing_and_accessories || c.costume_style || 'Signature look';
+          return {
+            ...c,
+            wardrobe_variants: [{
+              variant_id: `${c.id || 'char'}_default`,
+              name: defaultCloth.slice(0, 40) || 'Default Outfit',
+              clothing_and_accessories: defaultCloth,
+              associated_scenes: [1],
+            }],
+          };
+        }
+        return c;
+      });
+    }
+
     return {
       ...row,
       characters: Array.isArray(characters) ? characters : [],
@@ -810,8 +868,13 @@ export class SQLiteProvider implements IDatabaseProvider {
   async getSeriesList(userId?: string, search?: string, status?: string): Promise<SeriesEntity[]> {
     if (this.isFallback) {
       let res = this.seriesStore.filter(s => s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
+      if (userId) res = res.filter(s => s.user_id === userId);
       if (search) res = res.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
-      if (status) res = res.filter((s) => s.status === status);
+      if (status) {
+        res = res.filter((s) => s.status === status);
+      } else {
+        res = res.filter((s) => s.status !== 'DELETING');
+      }
       return res;
     }
     let query = 'SELECT * FROM series WHERE 1=1';
@@ -827,6 +890,9 @@ export class SQLiteProvider implements IDatabaseProvider {
     if (status) {
       query += ' AND status = ?';
       params.push(status);
+    } else {
+      query += ' AND (status IS NULL OR status != ?)';
+      params.push('DELETING');
     }
     query += ' ORDER BY created_at DESC';
     const rows = this.db.prepare(query).all(...params) as any[];
@@ -929,6 +995,14 @@ export class SQLiteProvider implements IDatabaseProvider {
     if (typeof dubbing_languages === 'string') {
       try { dubbing_languages = JSON.parse(dubbing_languages); } catch {}
     }
+    let analytics_summary = row.analytics_summary;
+    if (typeof analytics_summary === 'string') {
+      try { analytics_summary = JSON.parse(analytics_summary); } catch {}
+    }
+    let audience_insight = row.audience_insight;
+    if (typeof audience_insight === 'string') {
+      try { audience_insight = JSON.parse(audience_insight); } catch {}
+    }
     return {
       ...row,
       scenes: Array.isArray(scenes) ? scenes : [],
@@ -943,6 +1017,8 @@ export class SQLiteProvider implements IDatabaseProvider {
       video_urls: typeof video_urls === 'object' && video_urls !== null ? video_urls : {},
       thumbnail_url: row.thumbnail_url || row.cover_image || '',
       cover_image: row.cover_image || row.thumbnail_url || '',
+      analytics_summary: typeof analytics_summary === 'object' && analytics_summary !== null ? analytics_summary : undefined,
+      audience_insight: typeof audience_insight === 'object' && audience_insight !== null ? audience_insight : undefined,
     };
   }
 
@@ -1020,6 +1096,9 @@ export class SQLiteProvider implements IDatabaseProvider {
         values.push(typeof val === 'object' ? JSON.stringify(val) : val);
       } else if (key === 'dubbing_languages') {
         fields.push('dubbing_languages = ?');
+        values.push(typeof val === 'object' ? JSON.stringify(val) : val);
+      } else if (key === 'analytics_summary' || key === 'audience_insight') {
+        fields.push(`${key} = ?`);
         values.push(typeof val === 'object' ? JSON.stringify(val) : val);
       } else if (key === 'thumbnail_url' || key === 'cover_image') {
         fields.push('thumbnail_url = ?', 'cover_image = ?');

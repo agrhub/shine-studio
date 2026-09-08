@@ -48,8 +48,9 @@ export interface CustomizeAssetParams {
   custom_prompt: string;
   use_reference_image?: boolean;
   reference_image_url?: string;
-  aspect_ratio?: string;
-  user_id?: string;
+  // aspect_ratio?: string;
+  user_id: string;
+  start_frame_url?: string;
 }
 
 export interface CustomizeAssetResult {
@@ -144,6 +145,7 @@ export interface PropAsset {
   versions?: AssetVersion[];
   frame_description?: string;
   owner?: string;
+  holder?: string;
 }
 
 export interface ShotFrame {
@@ -322,7 +324,7 @@ export interface SeriesEntity {
   characters: CharacterSeriesEntity[];
   locations: LocationAsset[];
   props: PropAsset[];
-  status: 'DRAFT' | 'ACTIVE' | 'PUBLISHED' | 'ARCHIVED';
+  status: 'DRAFT' | 'ACTIVE' | 'PUBLISHED' | 'ARCHIVED' | 'DELETING';
   created_at?: string;
   updated_at?: string;
 }
@@ -430,6 +432,135 @@ export interface EpisodePublishedPlatform {
   likes?: number;
   comments_count?: number;
   shares?: number;
+  estimated_revenue?: number;
+}
+
+export interface EpisodeTopCountry {
+  country: string;
+  country_code: string;
+  percentage: number;
+}
+
+export interface EpisodeAnalyticsSummary {
+  episode_id: string;
+  series_id: string;
+  total_views: number;
+  total_likes: number;
+  total_comments: number;
+  total_shares: number;
+  estimated_revenue: number;
+  retention_rate_pct?: number;
+  top_countries: EpisodeTopCountry[];
+  synced_at: string;
+}
+
+export interface EpisodeCommentItem {
+  id: string;
+  episode_id: string;
+  platform: 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'web' | string;
+  author_name: string;
+  author_avatar?: string;
+  comment_text: string;
+  likes: number;
+  published_at: string;
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
+  topics?: string[];
+}
+
+export interface CharacterAudienceReaction {
+  character_name: string;
+  sentiment_score: number; // -100 to 100
+  feedback_summary: string;
+  audience_tags: string[]; // e.g. ["fan_favorite", "unjustified_villain", "boring"]
+}
+
+export interface SentimentDistribution {
+  positive_pct: number;
+  neutral_pct: number;
+  negative_pct: number;
+  dominant_emotion: string;
+}
+
+export interface PacingRetentionCritique {
+  drop_off_risk_scenes: string[];
+  highlight_scenes: string[];
+  pacing_rating: 'too_slow' | 'balanced' | 'rushed';
+  verdict: string;
+}
+
+export interface PaywallOptimizationAdvice {
+  recommended_cliffhanger_type: string;
+  hook_placement_second: number;
+  reasoning: string;
+}
+
+export interface EpisodeAudienceInsight {
+  episode_id: string;
+  series_id: string;
+  analyzed_at: string;
+  sample_comments_count: number;
+  sentiment_distribution: SentimentDistribution;
+  character_reception: CharacterAudienceReaction[];
+  pacing_and_retention_critique: PacingRetentionCritique;
+  plot_flaws_and_questions: string[];
+  audience_theories_and_desires: string[];
+  recommendations_for_next_episodes: string[];
+  paywall_optimization_advice?: PaywallOptimizationAdvice;
+}
+
+export interface EpisodePublicMetricsInput {
+  videoUrl?: string;
+  title: string;
+  seriesTitle?: string;
+  platform?: string;
+}
+
+export interface EpisodePublicMetricsResult {
+  views: number;
+  likes: number;
+  commentsCount: number;
+  shares: number;
+  topCountries: EpisodeTopCountry[];
+}
+
+export interface EpisodeCommentsHarvestInput {
+  videoUrl?: string;
+  title: string;
+  seriesTitle?: string;
+  platform?: string;
+  limit?: number;
+}
+
+export interface HarvestedRawComment {
+  authorName: string;
+  commentText: string;
+  likes: number;
+  platform: string;
+  publishedAt: string;
+}
+
+export interface EpisodeHarvestResult {
+  summary: EpisodeAnalyticsSummary;
+  comments: EpisodeCommentItem[];
+}
+
+export interface AnalyzeEpisodeFeedbackParams {
+  episode: EpisodeEntity;
+  comments: EpisodeCommentItem[];
+  metrics: EpisodeAnalyticsSummary;
+  series?: SeriesEntity | null;
+}
+
+export interface ApplyAudienceFeedbackInput {
+  episodeId: string;
+  customInstruction?: string;
+}
+
+export interface ApplyAudienceFeedbackResult {
+  success: boolean;
+  targetEpisode: EpisodeEntity | null;
+  appliedDirectives: string[];
+  message: string;
 }
 
 export interface EpisodeEntity {
@@ -461,6 +592,8 @@ export interface EpisodeEntity {
   render_versions?: EpisodeRenderVersion[];
   published_urls?: Record<string, string>;
   published_platforms?: EpisodePublishedPlatform[];
+  analytics_summary?: EpisodeAnalyticsSummary;
+  audience_insight?: EpisodeAudienceInsight;
   locations?: LocationAsset[];
   props?: PropAsset[];
   characters?: CharacterSeriesEntity[];
@@ -1666,17 +1799,17 @@ export interface VideoRenderJob {
 }
 
 export interface GenerateSceneImageParams {
-  user_id?: string;
-  series_id?: string;
-  episode_id?: string;
-  scene_id?: string;
+  user_id: string;
+  series_id: string;
+  episode_id: string;
+  scene_id: string;
   scene_index?: number;
-  prompt?: string;
-  aspect_ratio?: string;
-  style?: string;
-  characters?: string[];
-  scene_data?: Partial<SceneEntity>;
-  type?: string;
+  custom_prompt?: string;
+  // aspect_ratio?: string;
+  // style?: string;
+  // characters?: string[];
+  // scene_data?: Partial<SceneEntity>;
+  // type?: string;
   is_end_frame?: boolean;
 }
 

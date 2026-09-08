@@ -356,6 +356,50 @@ export class FirestoreProvider implements IDatabaseProvider {
     }
   }
 
+  public async refundCredits(
+    userId: string,
+    amount: number,
+    activity: string,
+    details?: string
+  ): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
+    const userRef = this.db.collection('users').doc(userId);
+
+    try {
+      const result = await this.db.runTransaction(async (transaction) => {
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          throw new Error('User not found');
+        }
+
+        const userData = userDoc.data() as UserEntity;
+        const currentCredits = userData.credits || 0;
+        const newBalance = currentCredits + amount;
+        transaction.update(userRef, { credits: newBalance });
+
+        const txId = `tx_${nanoid(12)}`;
+        const tx: CreditTransactionEntity = {
+          id: txId,
+          user_id: userId,
+          amount: amount,
+          balance_after: newBalance,
+          activity: activity.startsWith('Refund') ? activity : `Refund: ${activity}`,
+          details,
+          status: 'Success',
+          created_at: new Date().toISOString(),
+        };
+
+        const txRef = this.db.collection('credit_transactions').doc(txId);
+        transaction.set(txRef, tx);
+
+        return { success: true, balance: newBalance, transaction: tx };
+      });
+
+      return result;
+    } catch (err: any) {
+      return { success: false, balance: 0, error: err.message };
+    }
+  }
+
   public async getCreditHistory(userId?: string, limit = 50): Promise<CreditTransactionEntity[]> {
     let query: FirebaseFirestore.Query = this.db.collection('credit_transactions');
     if (userId) {
@@ -431,6 +475,11 @@ export class FirestoreProvider implements IDatabaseProvider {
     // Filter out phantom global or temp documents if previously persisted
     list = list.filter(s => s.id && s.id !== 'global' && !s.id.startsWith('wiz_') && !s.id.startsWith('temp_'));
 
+    // Exclude DELETING series unless specifically querying for DELETING
+    if (status !== 'DELETING') {
+      list = list.filter(s => s.status !== 'DELETING');
+    }
+
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(s =>
@@ -454,7 +503,7 @@ export class FirestoreProvider implements IDatabaseProvider {
     const doc = await this.db.collection('series').doc(id).get();
     if (!doc.exists) return null;
     const series = doc.data() as SeriesEntity;
-    this.setCache(cacheKey, series, 15000);
+      this.setCache(cacheKey, series, 15000);
     return series;
   }
 
@@ -467,37 +516,90 @@ export class FirestoreProvider implements IDatabaseProvider {
     return this.getSeriesById(id);
   }
 
+  /**
+   * Deletes an array of document references safely without transactional batch size limits.
+   * Uses chunked concurrent `ref.delete()` calls (concurrency: 20) to completely avoid
+   * Firestore's "3 INVALID_ARGUMENT: Transaction too big" error when deleting documents
+   * with large payload histories (e.g. timelines, snapshots, versions).
+   */
+  private async batchDeleteRefs(refs: FirebaseFirestore.DocumentReference[]): Promise<void> {
+    if (!refs || refs.length === 0) return;
+    const uniqueMap = new Map<string, FirebaseFirestore.DocumentReference>();
+    for (const ref of refs) {
+      if (ref && ref.path) {
+        uniqueMap.set(ref.path, ref);
+      }
+    }
+    const uniqueRefs = Array.from(uniqueMap.values());
+    const CONCURRENCY = 20;
+    for (let i = 0; i < uniqueRefs.length; i += CONCURRENCY) {
+      const chunk = uniqueRefs.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(ref =>
+          ref.delete().catch(err => {
+            Logger.warn(`[FirestoreProvider] Failed to delete ref "${ref.path}": ${err?.message}`);
+          })
+        )
+      );
+    }
+  }
+
   public async deleteSeries(id: string): Promise<boolean> {
-    const batch = this.db.batch();
-    batch.delete(this.db.collection('series').doc(id));
+    const refsToDelete: FirebaseFirestore.DocumentReference[] = [];
+    refsToDelete.push(this.db.collection('series').doc(id));
 
     // Find all episodes belonging to this series
     const epSnap = await this.db.collection('episodes').where('series_id', '==', id).get();
     const episodeIds = epSnap.docs.map(doc => doc.id);
     epSnap.docs.forEach(doc => {
-      batch.delete(doc.ref);
-      batch.delete(this.db.collection('timelines').doc(doc.id));
+      refsToDelete.push(doc.ref);
+      refsToDelete.push(this.db.collection('timelines').doc(doc.id));
     });
 
+    // Helper to query in chunks of 30 (Firestore 'in' operator limit)
+    const chunkArray = <T>(arr: T[], size: number): T[][] => {
+      const chunks: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+      }
+      return chunks;
+    };
+
+    const epChunks = chunkArray(episodeIds, 30);
+
     // Delete timeline versions of all episodes in series
-    for (const epId of episodeIds) {
-      const vers = await this.db.collection('timeline_versions').where('episode_id', '==', epId).get();
-      vers.docs.forEach(doc => batch.delete(doc.ref));
+    for (const epChunk of epChunks) {
+      const vers = await this.db.collection('timeline_versions').where('episode_id', 'in', epChunk).get();
+      vers.docs.forEach(doc => refsToDelete.push(doc.ref));
     }
 
-    // Delete chat messages associated with this series
+    // Delete chat messages associated with this series and its episodes
     const msgs = await this.db.collection('chat_messages').where('series_id', '==', id).get();
-    msgs.docs.forEach(doc => batch.delete(doc.ref));
+    msgs.docs.forEach(doc => refsToDelete.push(doc.ref));
+    for (const epChunk of epChunks) {
+      const epMsgs = await this.db.collection('chat_messages').where('episode_id', 'in', epChunk).get();
+      epMsgs.docs.forEach(doc => refsToDelete.push(doc.ref));
+    }
 
-    // Delete assets associated with this series
+    // Delete assets associated with this series and its episodes
     const assets = await this.db.collection('assets').where('series_id', '==', id).get();
-    assets.docs.forEach(doc => batch.delete(doc.ref));
+    assets.docs.forEach(doc => refsToDelete.push(doc.ref));
+    for (const epChunk of epChunks) {
+      const epAssets = await this.db.collection('assets').where('episode_id', 'in', epChunk).get();
+      epAssets.docs.forEach(doc => refsToDelete.push(doc.ref));
+    }
 
-    // Delete pipeline background jobs associated with this series
+    // Delete pipeline background jobs associated with this series and its episodes
     const jobs = await this.db.collection('pipeline_jobs').where('series_id', '==', id).get();
-    jobs.docs.forEach(doc => batch.delete(doc.ref));
+    jobs.docs.forEach(doc => refsToDelete.push(doc.ref));
+    for (const epChunk of epChunks) {
+      const epJobs = await this.db.collection('pipeline_jobs').where('episode_id', 'in', epChunk).get();
+      epJobs.docs.forEach(doc => refsToDelete.push(doc.ref));
+    }
 
-    await batch.commit();
+    await this.batchDeleteRefs(refsToDelete);
+    this.invalidateCachePrefix('series:');
+    this.invalidateCachePrefix('series_list:');
     return true;
   }
 
@@ -569,27 +671,27 @@ export class FirestoreProvider implements IDatabaseProvider {
     const ep = await this.getEpisodeById(id);
     const seriesId = ep?.series_id;
 
-    const batch = this.db.batch();
-    batch.delete(this.db.collection('episodes').doc(id));
-    batch.delete(this.db.collection('timelines').doc(id));
+    const refsToDelete: FirebaseFirestore.DocumentReference[] = [];
+    refsToDelete.push(this.db.collection('episodes').doc(id));
+    refsToDelete.push(this.db.collection('timelines').doc(id));
 
     // Cascade delete timeline versions for this episode
     const vers = await this.db.collection('timeline_versions').where('episode_id', '==', id).get();
-    vers.docs.forEach(doc => batch.delete(doc.ref));
+    vers.docs.forEach(doc => refsToDelete.push(doc.ref));
 
     // Cascade delete chat messages for this episode
     const msgs = await this.db.collection('chat_messages').where('episode_id', '==', id).get();
-    msgs.docs.forEach(doc => batch.delete(doc.ref));
+    msgs.docs.forEach(doc => refsToDelete.push(doc.ref));
 
     // Cascade delete pipeline jobs for this episode
     const jobs = await this.db.collection('pipeline_jobs').where('episode_id', '==', id).get();
-    jobs.docs.forEach(doc => batch.delete(doc.ref));
+    jobs.docs.forEach(doc => refsToDelete.push(doc.ref));
 
     // Cascade delete assets for this episode
     const assets = await this.db.collection('assets').where('episode_id', '==', id).get();
-    assets.docs.forEach(doc => batch.delete(doc.ref));
+    assets.docs.forEach(doc => refsToDelete.push(doc.ref));
 
-    await batch.commit();
+    await this.batchDeleteRefs(refsToDelete);
     if (seriesId) {
       await this.syncSeriesEpisodeCounters(seriesId);
     }
@@ -855,9 +957,7 @@ export class FirestoreProvider implements IDatabaseProvider {
     }
     const snap = await this.db.collection('antigravity_accounts').where('email', '==', idOrEmail).get();
     if (!snap.empty) {
-      const batch = this.db.batch();
-      snap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+      await this.batchDeleteRefs(snap.docs.map(d => d.ref));
     }
     return true;
   }

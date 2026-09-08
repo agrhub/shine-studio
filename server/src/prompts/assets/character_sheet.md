@@ -3,6 +3,9 @@ Character: {{characterName}}
 Physical Characteristics & Identity: {{physicalCharacteristics}}
 Wardrobe & Clothing To Wear: {{clothingAndAccessories}}
 Visual Style: {{visualStyle}}
+{{#if customPrompt}}
+Customize conditions: {{customPrompt}}
+{{/if}}
 {{#if referenceImageUrl}}
 CRITICAL FACIAL & HAIR IDENTITY CONTINUITY: The character in BOTH the headshot and full-body shot MUST BE THE EXACT SAME PERSON as in the reference image. Strictly preserve the identical bone structure, eye shape and angle, eyelid crease, nose bridge and tip, lip fullness, jawline contour, skin complexion/undertone, and natural hair color and hairline.
 CRITICAL OUTFIT OVERRIDE: ONLY change the clothing, garments, shoes, and accessories from the neck down to match: "{{clothingAndAccessories}}". DO NOT copy any garments, collars, lanyards, or ID badges from the reference portrait.

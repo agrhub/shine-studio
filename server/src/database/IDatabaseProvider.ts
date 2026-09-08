@@ -55,6 +55,7 @@ export interface IDatabaseProvider {
 
   // Credits & Deductions
   deductCredits(user_id: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }>;
+  refundCredits(user_id: string, amount: number, activity: string, details?: string): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }>;
   getCreditHistory(user_id?: string, limit?: number): Promise<CreditTransactionEntity[]>;
   recordCreditTransaction(tx: CreditTransactionEntity): Promise<CreditTransactionEntity>;
 

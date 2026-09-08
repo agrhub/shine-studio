@@ -143,7 +143,9 @@ Respond with a JSON array where each object has:
 
     const lineWords = fullLine.split(/\s+/).filter(Boolean);
     const startSec = Math.max(0.1, Number(startSecOverride) || 0.5);
-    const estimatedDurSec = Math.max(1.0, Math.min(Math.max(1.0, durSec - startSec - 0.2), lineWords.length * 0.32));
+    const speed = typeof dialogueList[0]?.speed === 'number' && dialogueList[0].speed > 0 ? dialogueList[0].speed : 1.15;
+    const wordRateSec = 0.27 / speed;
+    const estimatedDurSec = Math.max(0.8, Math.min(Math.max(0.8, durSec - startSec - 0.15), lineWords.length * wordRateSec));
     const endSec = startSec + estimatedDurSec;
     const voiceDurSec = Math.max(0.8, endSec - startSec);
 

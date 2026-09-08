@@ -43,15 +43,17 @@ DEPLOY_INFRA="${DEPLOY_INFRA:-${ENV_MAP["DEPLOY_INFRA"]:-true}}"
 DEPLOY_WORKERS="${DEPLOY_WORKERS:-${ENV_MAP["DEPLOY_WORKERS"]:-true}}"
 DEPLOY_DEMUCS="${DEPLOY_DEMUCS:-${ENV_MAP["DEPLOY_DEMUCS"]:-$DEPLOY_WORKERS}}"
 DEPLOY_RENDER="${DEPLOY_RENDER:-${ENV_MAP["DEPLOY_RENDER"]:-$DEPLOY_WORKERS}}"
+DEPLOY_FLOW="${DEPLOY_FLOW:-${ENV_MAP["DEPLOY_FLOW"]:-$DEPLOY_WORKERS}}"
 
 # Parse CLI arguments (e.g. --skip-workers, --skip-infra)
 for arg in "$@"; do
   case $arg in
-    --skip-workers) DEPLOY_WORKERS=false; DEPLOY_DEMUCS=false; DEPLOY_RENDER=false ;;
+    --skip-workers) DEPLOY_WORKERS=false; DEPLOY_DEMUCS=false; DEPLOY_RENDER=false; DEPLOY_FLOW=false ;;
     --skip-demucs) DEPLOY_DEMUCS=false ;;
     --skip-render) DEPLOY_RENDER=false ;;
+    --skip-flow) DEPLOY_FLOW=false ;;
     --skip-infra) DEPLOY_INFRA=false ;;
-    --force-workers) DEPLOY_WORKERS=true; DEPLOY_DEMUCS=true; DEPLOY_RENDER=true ;;
+    --force-workers) DEPLOY_WORKERS=true; DEPLOY_DEMUCS=true; DEPLOY_RENDER=true; DEPLOY_FLOW=true ;;
   esac
 done
 
@@ -63,6 +65,7 @@ echo " Root Dir:         $ROOT_DIR"
 echo " Auto Deploy Infra: $DEPLOY_INFRA"
 echo " Deploy Demucs:    $DEPLOY_DEMUCS"
 echo " Deploy Render:    $DEPLOY_RENDER"
+echo " Deploy Flow AI:   $DEPLOY_FLOW"
 echo "========================================================="
 
 # ─── 1. Check & Auto-Enable Required Google Cloud APIs ─────────────────────────
@@ -281,7 +284,48 @@ else
   fi
 fi
 
-# ─── 5. Deploy Main Shine Application (Full .env Synchronization) ─────────────
+# ─── 5. Build & Deploy Shine Flow AI Worker (From Source or Reuse) ───────────
+FLOW_WORKER_URL=""
+if [ "$DEPLOY_FLOW" = "true" ]; then
+  FLOW_CPU="${ENV_MAP["FLOW_WORKER_CPU"]:-2}"
+  FLOW_MEM="${ENV_MAP["FLOW_WORKER_MEMORY"]:-4Gi}"
+  FLOW_TIMEOUT="${ENV_MAP["FLOW_WORKER_TIMEOUT"]:-600}"
+  FLOW_MIN="${ENV_MAP["FLOW_WORKER_MIN_INSTANCES"]:-0}"
+  FLOW_MAX="${ENV_MAP["FLOW_WORKER_MAX_INSTANCES"]:-3}"
+
+  echo ""
+  echo "[Step 5/7] Building and Deploying Shine Flow AI Worker (CPU: $FLOW_CPU, Mem: $FLOW_MEM, Timeout: ${FLOW_TIMEOUT}s, Max Instances: $FLOW_MAX)..."
+  cd "$ROOT_DIR/services/flow-worker"
+  gcloud run deploy shine-flow-worker \
+    --source . \
+    --region "$REGION" \
+    --memory "$FLOW_MEM" \
+    --cpu "$FLOW_CPU" \
+    --timeout "$FLOW_TIMEOUT" \
+    --min-instances "$FLOW_MIN" \
+    --max-instances "$FLOW_MAX" \
+    --allow-unauthenticated \
+    --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCP_REGION=$REGION,NODE_ENV=production" \
+    --quiet
+
+  FLOW_WORKER_URL=$(gcloud run services describe shine-flow-worker --region "$REGION" --format="value(status.url)" 2>/dev/null | xargs || true)
+  cd "$ROOT_DIR"
+  echo "✅ Flow Worker Deployed: $FLOW_WORKER_URL"
+else
+  echo ""
+  echo "[Step 5/7] Skipping Flow Worker build (Reusing existing service)..."
+  FLOW_WORKER_URL=$(gcloud run services describe shine-flow-worker --region "$REGION" --format="value(status.url)" 2>/dev/null | xargs || true)
+  if [ -z "$FLOW_WORKER_URL" ] && [ -n "${ENV_MAP["FLOW_WORKER_URL"]}" ]; then
+    FLOW_WORKER_URL="${ENV_MAP["FLOW_WORKER_URL"]}"
+  fi
+  if [ -n "$FLOW_WORKER_URL" ]; then
+    echo "ℹ️ Reusing Active Flow Worker: $FLOW_WORKER_URL"
+  else
+    echo "⚠️ Notice: Flow worker URL not found on GCP or in .env."
+  fi
+fi
+
+# ─── 6. Deploy Main Shine Application (Full .env Synchronization) ─────────────
 APP_CPU="${ENV_MAP["APP_CPU"]:-2}"
 APP_MEM="${ENV_MAP["APP_MEMORY"]:-4Gi}"
 APP_TIMEOUT="${ENV_MAP["APP_TIMEOUT"]:-300}"
@@ -289,10 +333,11 @@ APP_MIN="${ENV_MAP["APP_MIN_INSTANCES"]:-0}"
 APP_MAX="${ENV_MAP["APP_MAX_INSTANCES"]:-3}"
 
 echo ""
-echo "[Step 5/6] Building and Deploying Main Shine App (CPU: $APP_CPU, Mem: $APP_MEM, Timeout: ${APP_TIMEOUT}s, Max Instances: $APP_MAX)..."
+echo "[Step 6/7] Building and Deploying Main Shine App (CPU: $APP_CPU, Mem: $APP_MEM, Timeout: ${APP_TIMEOUT}s, Max Instances: $APP_MAX)..."
 
 if [ -n "$DEMUCS_URL" ]; then ENV_MAP["DEMUCS_SERVICE_URL"]="$DEMUCS_URL"; fi
 if [ -n "$RENDER_URL" ]; then ENV_MAP["RENDER_WORKER_URL"]="$RENDER_URL"; fi
+if [ -n "$FLOW_WORKER_URL" ]; then ENV_MAP["FLOW_WORKER_URL"]="$FLOW_WORKER_URL"; fi
 ENV_MAP["GOOGLE_CLOUD_PROJECT"]="$PROJECT_ID"
 ENV_MAP["GOOGLE_CLOUD_LOCATION"]="global"
 ENV_MAP["GOOGLE_GENAI_USE_VERTEXAI"]="1"
@@ -335,12 +380,13 @@ SHINE_APP_URL=$(gcloud run services describe shine-app --region "$REGION" --form
 try_sync_redirect() {
   gcloud run services update demucs-worker --update-env-vars "SHINE_APP_URL=$SHINE_APP_URL" --region "$REGION" --quiet >/dev/null 2>&1 || true
   gcloud run services update shine-render-worker --update-env-vars "SHINE_APP_URL=$SHINE_APP_URL" --region "$REGION" --quiet >/dev/null 2>&1 || true
+  gcloud run services update shine-flow-worker --update-env-vars "SHINE_APP_URL=$SHINE_APP_URL" --region "$REGION" --quiet >/dev/null 2>&1 || true
 }
 try_sync_redirect
 
-# ─── 6. Configure Cloud Scheduler for Periodic Flow Token Sync Heartbeat ──────
+# ─── 7. Configure Cloud Scheduler for Periodic Flow Token Sync Heartbeat ──────
 echo ""
-echo "[Step 6/6] Configuring Google Cloud Scheduler for Flow Token Sync..."
+echo "[Step 7/7] Configuring Google Cloud Scheduler for Flow Token Sync..."
 
 JOB_NAME="shine-flow-token-sync"
 SYNC_URI="$SHINE_APP_URL/api/flow-accounts/sync"

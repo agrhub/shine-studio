@@ -17,8 +17,13 @@ import { getVisualStylePrompt } from '../constants/VisualStyles.js';
 import { videoService } from '@/services/VideoService.js';
 import { AssetService } from '@/services/AssetService.js';
 import { TimelineService } from '@/services/TimelineService.js';
+import { characterService } from '@/services/CharacterService.js';
 import { normalizeSceneEntity, normalizeLocationAsset, normalizePropAsset, normalizeCharacterEntity } from '@/utils/sceneNormalizer.js';
 import type { CharacterSeriesEntity, EpisodeEntity, LocationAsset, PropAsset, SceneEntity, AssetVersion } from '@/types.js';
+import { scriptAgent } from '@/agents/ScriptAgent.js';
+import { getLanguageInfo, assertValidBCP47 } from '@/utils/LanguageMapping.js';
+import { EnvConfig } from '~/config/env.js';
+import { PatchSyncService } from '@/realtime/PatchSyncService.js';
 
 export const assetsRouter = Router();
 
@@ -344,6 +349,15 @@ assetsRouter.post('/select-version', async (req: Request, res: Response) => {
           } catch (tlErr: any) {
             Logger.warn(`[assetsRouter.select-version] Failed to auto-sync timeline: ${tlErr.message}`);
           }
+          try {
+            const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+            const updatedEp = await db.getEpisodeById(targetEpisodeId);
+            if (updatedEp) {
+              PatchSyncService.broadcast(episode.series_id || series_id || 'all', 'episode:updated', updatedEp);
+            }
+          } catch (wsErr: any) {
+            Logger.warn(`[assetsRouter.select-version] WebSocket broadcast notice: ${wsErr.message}`);
+          }
         }
       }
     }
@@ -461,48 +475,85 @@ assetsRouter.post('/image-generate', async (req: Request, res: Response) => {
     const { type, prompt, style, characters, scene_data, series_id, episode_id, scene_id, aspect_ratio = '9:16', scene_index, is_end_frame = false } = req.body;
     const userId = getUserId(req);
 
-    const deduct = await CreditService.deductUserCredits(userId, 'sceneImage', 'Scene Background Generation', `Scene: ${scene_id || 'frame'}`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
-      return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
-    }
-
-    const result = await videoService.generateSceneImage({
+    // const deduct = await CreditService.deductUserCredits(userId, 'sceneImage', 'Scene Background Generation', `Scene: ${scene_id || 'frame'}`);
+    // if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    //   return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
+    // }
+    const result = await AssetService.generateStoryboardShot({
       user_id: userId,
-      type,
-      prompt,
       series_id: series_id,
       episode_id: episode_id,
-      scene_id: scene_id,
-      aspect_ratio: aspect_ratio,
-      style,
       scene_index: scene_index,
-      characters,
-      scene_data: scene_data,
-      is_end_frame: is_end_frame,
+      custom_prompt: prompt,
+      generate_start_frame: !is_end_frame,
+      generate_end_frame: EnvConfig.generateEndFrame || is_end_frame,
     });
 
-    if (result.synthIdHeaders) {
-      res.set(result.synthIdHeaders);
+    if (!result || (!result.image_url && !result.end_frame_url)) {
+      return res.status(500).json({ code: 500, data: null, message: 'Failed to generate scene images', error: 'GENERATION_FAILED' });
+    }
+
+    try {
+      const db = await getDatabaseProvider();
+      const episode = await db.getEpisodeById(episode_id);
+      if (episode) {
+        if(result.image_url){
+          episode.scenes[scene_index].storyboard_frame_url = result.image_url;
+        }
+        if (result.end_frame_url) {
+          episode.scenes[scene_index].storyboard_end_frame_url = result.end_frame_url;
+        }
+        await db.updateEpisode(episode_id, { scenes: episode.scenes });
+        await TimelineService.getOrBuildEpisodeTimeline(episode_id);
+      }
+    } catch (err: any) {
+      Logger.error(`[assetsRouter.select-version] Failed to update episode or timeline: ${err.message}`);
     }
 
     return res.status(201).json({
       code: 201,
-      data: {
-        job_id: `job_${nanoid(8)}`,
-        asset_id: result.assetId,
-        s3_key: result.s3Key,
-        url: result.url,
-        image_url: result.imageUrl,
-        size_bytes: result.sizeBytes,
-        provider: result.provider,
-        synth_id: result.synthId,
-        generation_params: { prompt: result.enhancedPrompt, type, episode_id, scene_id, style },
-        status: 'completed',
-        message: 'AI scene background rendered and saved to database successfully with SynthID',
-      },
+      data: result,
       message: 'AI scene image generated and stored to database successfully',
       error: null,
     });
+
+    // const result = await videoService.generateSceneImage({
+    //   user_id: userId,
+    //   // type,
+    //   custom_prompt: prompt,
+    //   series_id: series_id,
+    //   episode_id: episode_id,
+    //   scene_id: scene_id,
+    //   // aspect_ratio: aspect_ratio,
+    //   // style,
+    //   scene_index: scene_index,
+    //   // characters,
+    //   // scene_data: scene_data,
+    //   is_end_frame: is_end_frame,
+    // });
+
+    // if (result.synthIdHeaders) {
+    //   res.set(result.synthIdHeaders);
+    // }
+    
+    // return res.status(201).json({
+    //   code: 201,
+    //   data: {
+    //     job_id: `job_${nanoid(8)}`,
+    //     asset_id: result.assetId,
+    //     s3_key: result.s3Key,
+    //     url: result.url,
+    //     image_url: result.imageUrl,
+    //     size_bytes: result.sizeBytes,
+    //     provider: result.provider,
+    //     synth_id: result.synthId,
+    //     generation_params: { prompt: result.enhancedPrompt, type, episode_id, scene_id, style },
+    //     status: 'completed',
+    //     message: 'AI scene background rendered and saved to database successfully with SynthID',
+    //   },
+    //   message: 'AI scene image generated and stored to database successfully',
+    //   error: null,
+    // });
   } catch (err: any) {
     Logger.error(`[assetsRouter] Scene image generation failed: ${err.message}`);
     return res.status(500).json({
@@ -519,10 +570,6 @@ assetsRouter.post('/video-generate', async (req: Request, res: Response) => {
   try {
     const { start_frame_url, end_frame_url, character_image_ids, series_id, episode_id, scene_id, duration, motion, camera_movement, prompt, aspect_ratio, language, scene_data } = req.body;
     const userId = getUserId(req);
-
-    // Deduct credits for Video Generation
-    await CreditService.deductUserCredits(userId, 'videoGeneration', 'Scene Video Generation', `Scene: ${scene_id || 'ep' + episode_id}`);
-
     const result = await videoService.generateSceneVideo({
       user_id: userId,
       start_frame_url,
@@ -542,6 +589,46 @@ assetsRouter.post('/video-generate', async (req: Request, res: Response) => {
 
     if (result.synthIdHeaders) {
       res.set(result.synthIdHeaders);
+    }
+
+    try {
+      const db = await getDatabaseProvider();
+      const episode = await db.getEpisodeById(episode_id);
+      if (episode) {
+        const scene = episode.scenes.find((s: SceneEntity) => s.id === scene_id);
+        const sceneIndex = scene?.index || 0;
+        if(result.s3Key){
+          episode.scenes[sceneIndex].video_url = result.s3Key;
+        }
+        if (result.voiceoverUrl) {
+          episode.scenes[sceneIndex].voiceover_url = result.voiceoverUrl;
+        }
+        if (result.bgmUrl) {
+          episode.scenes[sceneIndex].bgm_url = result.bgmUrl;
+        }
+        if (result.voiceStartUs) {
+          episode.scenes[sceneIndex].voice_start_us = result.voiceStartUs;
+        }
+        if (result.voiceDurationUs) {
+          episode.scenes[sceneIndex].voice_duration_us = result.voiceDurationUs;
+        }
+        if (result.captionsData) {
+          episode.scenes[sceneIndex].captions_data = result.captionsData;
+        }
+        await db.updateEpisode(episode_id, { scenes: episode.scenes });
+        await TimelineService.getOrBuildEpisodeTimeline(episode_id);
+        try {
+          const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+          const updatedEp = await db.getEpisodeById(episode_id);
+          if (updatedEp) {
+            PatchSyncService.broadcast(episode.series_id || series_id || 'all', 'episode:updated', updatedEp);
+          }
+        } catch (wsErr: any) {
+          Logger.warn(`[assetsRouter.video-generate] WebSocket broadcast notice: ${wsErr.message}`);
+        }
+      }
+    } catch (err: any) {
+      Logger.error(`[assetsRouter.select-version] Failed to update episode or timeline: ${err.message}`);
     }
 
     return res.status(201).json({
@@ -691,6 +778,15 @@ assetsRouter.post('/music-generate', async (req, res: Response) => {
           if (updated) {
             await db.updateEpisode(ep.id, { bgm_url: ep.bgm_url, bgm_versions: ep.bgm_versions, scenes: ep.scenes });
             await TimelineService.getOrBuildEpisodeTimeline(ep.id);
+            try {
+              const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+              const updatedEp = await db.getEpisodeById(ep.id);
+              if (updatedEp) {
+                PatchSyncService.broadcast(ep.series_id || 'all', 'episode:updated', updatedEp);
+              }
+            } catch (wsErr: any) {
+              Logger.warn(`[assetsRouter.music-generate] WebSocket broadcast notice: ${wsErr.message}`);
+            }
           }
         }
       } catch (epErr: any) {
@@ -722,9 +818,6 @@ assetsRouter.post('/music-generate', async (req, res: Response) => {
     });
   }
 });
-
-import { scriptAgent } from '@/agents/ScriptAgent.js';
-import { getLanguageInfo, assertValidBCP47 } from '@/utils/LanguageMapping.js';
 
 /**
  * Helper: Automatically resolves country, language, and duration from Series & Episode in DB
@@ -972,8 +1065,8 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
               ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, ep.title)
               : screenplay;
 
-            const totalDuration = result.total_duration_seconds || 60;
-            await db.updateEpisode(episode_id, {
+            const totalDuration = result.total_duration_seconds || (normalizedScenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0)) || 60;
+            const updatedEp = await db.updateEpisode(episode_id, {
               screenplay: cleanScreenplay,
               scenes: normalizedScenes,
               reference_assets: {
@@ -982,6 +1075,7 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
                 prop_ids: normalizedProps.map(p => p.id),
               },
               duration: totalDuration,
+              duration_seconds: totalDuration,
               script: JSON.stringify({
                 episode: ep.title,
                 episode_number: ep.episode_number,
@@ -991,6 +1085,11 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
                 total_duration_seconds: totalDuration,
               }),
             });
+
+            await TimelineService.getOrBuildEpisodeTimeline(episode_id).catch((e: any) => Logger.warn(`[assetsRouter.analyze] Timeline sync error: ${e.message}`));
+            if (series_id) {
+              PatchSyncService.broadcast(series_id, 'episode:updated', updatedEp || { ...ep, scenes: normalizedScenes, duration: totalDuration, duration_seconds: totalDuration });
+            }
           }
         }
       } catch (dbErr: any) {
@@ -1006,12 +1105,17 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
       ? scriptAgent.assembleMarkdownScreenplay(normalizedScenes as any, (episode as any)?.title)
       : (result.screenplay || screenplay);
 
+    const calculatedDuration = result.total_duration_seconds || (normalizedScenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0)) || 60;
+
     return res.json({
       code: 200,
       data: {
         ...result,
         screenplay: finalScreenplay,
         scenes: normalizedScenes,
+        total_duration_seconds: calculatedDuration,
+        duration_seconds: calculatedDuration,
+        duration: calculatedDuration,
         characters: normalizedCharacters,
         locations: normalizedLocations,
         props: normalizedProps,
@@ -1087,46 +1191,34 @@ assetsRouter.post('/screenplay/enrich-dialogue', async (req: Request, res: Respo
 // POST /api/assets/character/sheet — Generate 2-in-1 Character Sheet (Head & shoulders left + Full body right)
 assetsRouter.post('/character/sheet', async (req: Request, res: Response) => {
   try {
-    const { character_name, physical_characteristics = '', clothing_and_accessories = '', visual_style, reference_image_url, series_id, character_id } = req.body;
+    const { character_name, series_id, character_id, variant_id, prompt, physical_characteristics = '', clothing_and_accessories = '', reference_image_url } = req.body;
 
-    if (!character_name) {
+    if (!character_name && !character_id) {
       return res.status(400).json({ code: 400, data: null, message: 'character_name is required', error: 'INVALID_PAYLOAD' });
     }
 
-    const result = await AssetService.generateCharacterSheet(
-      character_name,
-      physical_characteristics,
-      clothing_and_accessories,
-      visual_style,
-      reference_image_url
-    );
+    if (!series_id) {
+      return res.status(400).json({ code: 400, data: null, message: 'series_id is required', error: 'INVALID_PAYLOAD' });
+    }
 
-    if (series_id) {
-      try {
-        const db = await getDatabaseProvider();
-        const series = await db.getSeriesById(series_id);
-        if (series && Array.isArray(series.characters)) {
-          const cIdx = series.characters.findIndex((c: any) => (character_id && c.id === character_id) || c.name === character_name);
-          if (cIdx >= 0) {
-            series.characters[cIdx].avatar = result.imageUrl;
-            if (result.version) {
-              const curVersions = Array.isArray(series.characters[cIdx].versions) ? series.characters[cIdx].versions : [];
-              series.characters[cIdx].versions = [result.version, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
-            }
-            await db.updateSeries(series_id, { characters: series.characters });
-          }
-        }
-      } catch (sErr: any) {
-        Logger.warn(`[assetsRouter.characterSheet] Auto-update series character notice: ${sErr.message}`);
-      }
+    const result = await AssetService.generateCharacterWardrobe({
+      user_id: getUserId(req),
+      series_id,
+      character_id: character_name || character_id,
+      // physical_characteristics,
+      clothing_and_accessories,
+      variant_id: variant_id,
+      reference_image_url,
+      custom_prompt: prompt
+    });
+
+    if (!result || !result.image_url) {
+      return res.status(500).json({ code: 500, data: null, message: 'Failed to generate character wardrobe', error: 'CHARACTER_WARDROBE_FAILED' });
     }
 
     return res.json({
       code: 200,
-      data: {
-        image_url: result.imageUrl || (result as any).image_url,
-        ...result,
-      },
+      data: result,
       message: 'Character sheet generated successfully',
       error: null,
     });
@@ -1138,45 +1230,53 @@ assetsRouter.post('/character/sheet', async (req: Request, res: Response) => {
 // POST /api/assets/location/sheet — Generate 4-in-1 Location Sheet (1 establishing + 3 perspective views 16:9)
 assetsRouter.post('/location/sheet', async (req: Request, res: Response) => {
   try {
-    const { location_name, physical_characteristics = '', time_of_day = 'Daytime', visual_style, series_id, location_id } = req.body;
+    const { series_id, location_id, location_name, physical_characteristics = '', time_of_day = 'Daytime', reference_image_url, prompt } = req.body;
 
-    if (!location_name) {
-      return res.status(400).json({ code: 400, data: null, message: 'location_name is required', error: 'INVALID_PAYLOAD' });
+    if (!location_id) {
+      return res.status(400).json({ code: 400, data: null, message: 'location_id is required', error: 'INVALID_PAYLOAD' });
     }
 
-    const result = await AssetService.generateLocationSheet(
-      location_name,
+    if (!series_id) {
+      return res.status(400).json({ code: 400, data: null, message: 'series_id is required', error: 'INVALID_PAYLOAD' });
+    }
+
+    const result = await AssetService.generateLocationSheet({
+      user_id: getUserId(req),
+      series_id,
+      location_id: location_id,
       physical_characteristics,
       time_of_day,
-      visual_style
-    );
+      reference_image_url,
+      custom_prompt: prompt
+    });
 
-    if (series_id) {
-      try {
-        const db = await getDatabaseProvider();
-        const series = await db.getSeriesById(series_id);
-        if (series && Array.isArray(series.locations)) {
-          const lIdx = series.locations.findIndex((l: any) => (location_id && l.id === location_id) || l.name === location_name);
-          if (lIdx >= 0) {
-            series.locations[lIdx].image_url = result.imageUrl;
-            if (result.version) {
-              const curVersions = Array.isArray(series.locations[lIdx].versions) ? series.locations[lIdx].versions : [];
-              series.locations[lIdx].versions = [result.version, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
-            }
-            await db.updateSeries(series_id, { locations: series.locations });
-          }
-        }
-      } catch (sErr: any) {
-        Logger.warn(`[assetsRouter.locationSheet] Auto-update series location notice: ${sErr.message}`);
-      }
+    // if (series_id) {
+    //   try {
+    //     const db = await getDatabaseProvider();
+    //     const series = await db.getSeriesById(series_id);
+    //     if (series && Array.isArray(series.locations)) {
+    //       const lIdx = series.locations.findIndex((l: any) => (location_id && l.id === location_id) || l.name === location_name);
+    //       if (lIdx >= 0) {
+    //         series.locations[lIdx].image_url = result.imageUrl;
+    //         if (result.version) {
+    //           const curVersions = Array.isArray(series.locations[lIdx].versions) ? series.locations[lIdx].versions : [];
+    //           series.locations[lIdx].versions = [result.version, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+    //         }
+    //         await db.updateSeries(series_id, { locations: series.locations });
+    //       }
+    //     }
+    //   } catch (sErr: any) {
+    //     Logger.warn(`[assetsRouter.locationSheet] Auto-update series location notice: ${sErr.message}`);
+    //   }
+    // }
+
+    if (!result || !result.image_url) {
+      return res.status(500).json({ code: 500, data: null, message: 'Failed to generate location sheet', error: 'LOCATION_SHEET_FAILED' });
     }
 
     return res.json({
       code: 200,
-      data: {
-        image_url: result.imageUrl || (result as any).image_url,
-        ...result,
-      },
+      data: result,
       message: 'Location sheet generated successfully',
       error: null,
     });
@@ -1188,58 +1288,57 @@ assetsRouter.post('/location/sheet', async (req: Request, res: Response) => {
 // POST /api/assets/prop/sheet — Generate Prop Product Shot (Isolated on seamless white background)
 assetsRouter.post('/prop/sheet', async (req: Request, res: Response) => {
   try {
-    const { prop_name, physical_characteristics = '', visual_style, series_id, prop_id } = req.body;
+    const { series_id, prop_id, prop_name, physical_characteristics = '', custom_prompt = '', reference_image_url = '' } = req.body;
 
-    if (!prop_name) {
-      return res.status(400).json({ code: 400, data: null, message: 'prop_name is required', error: 'INVALID_PAYLOAD' });
+    if (!prop_id) {
+      return res.status(400).json({ code: 400, data: null, message: 'prop_id is required', error: 'INVALID_PAYLOAD' });
     }
 
-    const result = await AssetService.generatePropProductShot(
-      prop_name,
+    const result = await AssetService.generatePropProductShot({
+      series_id,
+      prop_id,
       physical_characteristics,
-      visual_style
-    );
+      custom_prompt,
+      reference_image_url
+    });
 
-    if (series_id) {
-      try {
-        const db = await getDatabaseProvider();
-        const series = await db.getSeriesById(series_id);
-        if (series && Array.isArray(series.props)) {
-          const pIdx = series.props.findIndex((p: any) => (prop_id && p.id === prop_id) || p.name === prop_name);
-          if (pIdx >= 0) {
-            const curVersions: any[] = Array.isArray(series.props[pIdx].versions) ? [...series.props[pIdx].versions] : [];
-            if (curVersions.length === 0 && series.props[pIdx].image_url && series.props[pIdx].image_url !== result.imageUrl) {
-              curVersions.push({
-                id: `v1_prop_${series.props[pIdx].id || pIdx + 1}`,
-                image_url: series.props[pIdx].image_url,
-                created_at: new Date().toISOString(),
-                is_selected: false,
-              });
-            }
-            const newPropVer = {
-              id: `ver_prop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              image_url: result.imageUrl,
-              prompt: result.prompt,
-              created_at: new Date().toISOString(),
-              is_selected: true,
-              aspect_ratio: '16:9',
-            };
-            series.props[pIdx].versions = [newPropVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
-            series.props[pIdx].image_url = result.imageUrl;
-            await db.updateSeries(series_id, { props: series.props });
-          }
-        }
-      } catch (sErr: any) {
-        Logger.warn(`[assetsRouter.propSheet] Auto-update series prop notice: ${sErr.message}`);
-      }
-    }
+    // if (series_id) {
+    //   try {
+    //     const db = await getDatabaseProvider();
+    //     const series = await db.getSeriesById(series_id);
+    //     if (series && Array.isArray(series.props)) {
+    //       const pIdx = series.props.findIndex((p: any) => (prop_id && p.id === prop_id) || p.name === prop_name);
+    //       if (pIdx >= 0) {
+    //         const curVersions: any[] = Array.isArray(series.props[pIdx].versions) ? [...series.props[pIdx].versions] : [];
+    //         if (curVersions.length === 0 && series.props[pIdx].image_url && series.props[pIdx].image_url !== result.imageUrl) {
+    //           curVersions.push({
+    //             id: `v1_prop_${series.props[pIdx].id || pIdx + 1}`,
+    //             image_url: series.props[pIdx].image_url,
+    //             created_at: new Date().toISOString(),
+    //             is_selected: false,
+    //           });
+    //         }
+    //         const newPropVer = {
+    //           id: `ver_prop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    //           image_url: result.imageUrl,
+    //           prompt: result.prompt,
+    //           created_at: new Date().toISOString(),
+    //           is_selected: true,
+    //           aspect_ratio: '16:9',
+    //         };
+    //         series.props[pIdx].versions = [newPropVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+    //         series.props[pIdx].image_url = result.imageUrl;
+    //         await db.updateSeries(series_id, { props: series.props });
+    //       }
+    //     }
+    //   } catch (sErr: any) {
+    //     Logger.warn(`[assetsRouter.propSheet] Auto-update series prop notice: ${sErr.message}`);
+    //   }
+    // }
 
     return res.json({
       code: 200,
-      data: {
-        image_url: result.imageUrl || (result as any).image_url,
-        ...result,
-      },
+      data: result,
       message: 'Prop product shot generated successfully',
       error: null,
     });
@@ -1275,80 +1374,80 @@ assetsRouter.post('/screenplay/breakdown-shots', async (req: Request, res: Respo
 });
 
 // POST /api/assets/storyboard/shot-image — Generate Shot Frame Image with linked assets
-assetsRouter.post('/storyboard/shot-image', async (req: Request, res: Response) => {
-  try {
-    const { shot, assets, visual_style, aspect_ratio, episode_id, scene_index } = req.body;
-    const frameVisual = shot?.frame_visual;
-    if (!shot || !frameVisual) {
-      return res.status(400).json({ code: 400, data: null, message: 'Shot data is required', error: 'INVALID_PAYLOAD' });
-    }
+// assetsRouter.post('/storyboard/shot-image', async (req: Request, res: Response) => {
+//   try {
+//     const { shot, assets, visual_style, aspect_ratio, episode_id, scene_index } = req.body;
+//     const frameVisual = shot?.frame_visual;
+//     if (!shot || !frameVisual) {
+//       return res.status(400).json({ code: 400, data: null, message: 'Shot data is required', error: 'INVALID_PAYLOAD' });
+//     }
 
-    const assetsMap = new Map<string, { name: string; type: string; image_url?: string; physical_characteristics?: string }>();
-    if (Array.isArray(assets)) {
-      for (const a of assets) {
-        if (a.id) assetsMap.set(a.id, a);
-      }
-    }
+//     const assetsMap = new Map<string, { name: string; type: string; image_url?: string; physical_characteristics?: string }>();
+//     if (Array.isArray(assets)) {
+//       for (const a of assets) {
+//         if (a.id) assetsMap.set(a.id, a);
+//       }
+//     }
 
-    const result = await AssetService.generateShotImage(
-      shot,
-      assetsMap,
-      visual_style,
-      aspect_ratio
-    );
+//     const result = await AssetService.generateShotImage(
+//       shot,
+//       assetsMap,
+//       visual_style,
+//       aspect_ratio
+//     );
 
-    if (episode_id) {
-      try {
-        const db = await getDatabaseProvider();
-        const ep = await db.getEpisodeById(episode_id);
-        if (ep && Array.isArray(ep.scenes)) {
-          const scIdx = scene_index !== undefined ? Number(scene_index) : (shot?.index !== undefined ? Number(shot.index) : undefined);
-          const sIdx = ep.scenes.findIndex((s: any) => (scIdx !== undefined && Number(s.index || s.scene_number) === scIdx) || (shot?.id && s.id === shot.id));
-          if (sIdx >= 0) {
-            const curVersions: any[] = Array.isArray(ep.scenes[sIdx].versions) ? [...ep.scenes[sIdx].versions] : [];
-            const startImg = ep.scenes[sIdx].storyboard_frame_url || ep.scenes[sIdx].image_url;
-            if (curVersions.length === 0 && startImg && startImg !== result.imageUrl) {
-              curVersions.push({
-                id: `v1_start_${ep.scenes[sIdx].id || sIdx + 1}`,
-                image_url: startImg,
-                created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
-                is_selected: false,
-              });
-            }
-            const newVer = {
-              id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              image_url: result.imageUrl,
-              prompt: result.prompt,
-              created_at: new Date().toISOString(),
-              is_selected: true,
-              aspect_ratio: aspect_ratio || '9:16',
-            };
-            ep.scenes[sIdx].versions = [newVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
-            ep.scenes[sIdx].storyboard_frame_url = result.imageUrl;
-            ep.scenes[sIdx].image_url = result.imageUrl;
-            ep.scenes[sIdx].status = 'image_ready';
-            await db.updateEpisode(episode_id, { scenes: ep.scenes });
-            await TimelineService.getOrBuildEpisodeTimeline(episode_id);
-          }
-        }
-      } catch (epErr: any) {
-        Logger.warn(`[assetsRouter.shotImage] Auto-update episode scene notice: ${epErr.message}`);
-      }
-    }
+//     if (episode_id) {
+//       try {
+//         const db = await getDatabaseProvider();
+//         const ep = await db.getEpisodeById(episode_id);
+//         if (ep && Array.isArray(ep.scenes)) {
+//           const scIdx = scene_index !== undefined ? Number(scene_index) : (shot?.index !== undefined ? Number(shot.index) : undefined);
+//           const sIdx = ep.scenes.findIndex((s: any) => (scIdx !== undefined && Number(s.index || s.scene_number) === scIdx) || (shot?.id && s.id === shot.id));
+//           if (sIdx >= 0) {
+//             const curVersions: any[] = Array.isArray(ep.scenes[sIdx].versions) ? [...ep.scenes[sIdx].versions] : [];
+//             const startImg = ep.scenes[sIdx].storyboard_frame_url || ep.scenes[sIdx].image_url;
+//             if (curVersions.length === 0 && startImg && startImg !== result.imageUrl) {
+//               curVersions.push({
+//                 id: `v1_start_${ep.scenes[sIdx].id || sIdx + 1}`,
+//                 image_url: startImg,
+//                 created_at: ep.scenes[sIdx].created_at || new Date().toISOString(),
+//                 is_selected: false,
+//               });
+//             }
+//             const newVer = {
+//               id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+//               image_url: result.imageUrl,
+//               prompt: result.prompt,
+//               created_at: new Date().toISOString(),
+//               is_selected: true,
+//               aspect_ratio: aspect_ratio || '9:16',
+//             };
+//             ep.scenes[sIdx].versions = [newVer, ...curVersions.map((v: any) => ({ ...v, is_selected: false }))];
+//             ep.scenes[sIdx].storyboard_frame_url = result.imageUrl;
+//             ep.scenes[sIdx].image_url = result.imageUrl;
+//             ep.scenes[sIdx].status = 'image_ready';
+//             await db.updateEpisode(episode_id, { scenes: ep.scenes });
+//             await TimelineService.getOrBuildEpisodeTimeline(episode_id);
+//           }
+//         }
+//       } catch (epErr: any) {
+//         Logger.warn(`[assetsRouter.shotImage] Auto-update episode scene notice: ${epErr.message}`);
+//       }
+//     }
 
-    return res.json({
-      code: 200,
-      data: {
-        image_url: result.imageUrl || (result as any).image_url,
-        ...result,
-      },
-      message: 'Shot image generated successfully',
-      error: null,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SHOT_IMAGE_FAILED' });
-  }
-});
+//     return res.json({
+//       code: 200,
+//       data: {
+//         image_url: result.imageUrl || (result as any).image_url,
+//         ...result,
+//       },
+//       message: 'Shot image generated successfully',
+//       error: null,
+//     });
+//   } catch (err: any) {
+//     return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SHOT_IMAGE_FAILED' });
+//   }
+// });
 
 // POST /api/assets/customize — Customize asset using custom prompt & reference image
 assetsRouter.post('/customize', async (req: Request, res: Response) => {
@@ -1362,7 +1461,8 @@ assetsRouter.post('/customize', async (req: Request, res: Response) => {
       custom_prompt,
       use_reference_image,
       reference_image_url,
-      aspect_ratio,
+      // aspect_ratio,
+      start_frame_url,
     } = req.body;
 
     if (!series_id || !asset_type || !asset_id || !custom_prompt) {
@@ -1384,9 +1484,33 @@ assetsRouter.post('/customize', async (req: Request, res: Response) => {
       custom_prompt,
       use_reference_image: use_reference_image !== false,
       reference_image_url,
-      aspect_ratio,
+      start_frame_url,
+      // aspect_ratio,
       user_id: userId,
     });
+
+    if (!result || !result.image_url) {
+      return res.status(500).json({
+        code: 500,
+        data: null,
+        message: 'Asset customization failed',
+        error: 'CUSTOMIZE_ASSET_FAILED',
+      });
+    }
+
+    try {
+      const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+      const db = await getDatabaseProvider();
+      if (asset_type === 'character' || asset_type === 'wardrobe' || asset_type === 'location' || asset_type === 'prop') {
+        const updatedSeries = await db.getSeriesById(series_id);
+        if (updatedSeries) PatchSyncService.broadcast(series_id, 'series:updated', updatedSeries);
+      } else if (episode_id) {
+        const updatedEp = await db.getEpisodeById(episode_id);
+        if (updatedEp) PatchSyncService.broadcast(series_id || 'all', 'episode:updated', updatedEp);
+      }
+    } catch (wsErr: any) {
+      Logger.warn(`[assetsRouter.customize] WebSocket broadcast notice: ${wsErr.message}`);
+    }
 
     return res.json({
       code: 200,

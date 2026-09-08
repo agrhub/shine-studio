@@ -25,17 +25,22 @@ export function normalizeSceneEntity(s: any, idx?: number): SceneEntity | null {
   const propDetails = s.prop_details || '';
   const transitionEffect = s.transition_effect || 'cut';
   const videoEffect = s.video_effect || '';
-  const storyboardFrameUrl = s.storyboard_frame_url || s.image_url || null;
-  const storyboardEndFrameUrl = s.storyboard_end_frame_url || null;
-  const videoUrl = s.video_url || null;
-  const voiceoverUrl = s.voiceover_url || null;
-  const bgmUrl = s.bgm_url || null;
+  const storyboardFrameUrl = s.storyboard_frame_url || s.image_url || undefined;
+  const storyboardEndFrameUrl = s.storyboard_end_frame_url || undefined;
+  const videoUrl = s.video_url || undefined;
+  const voiceoverUrl = s.voiceover_url || undefined;
+  const bgmUrl = s.bgm_url || undefined;
   const voiceStartUs = Number(s.voice_start_us) || 0;
   const voiceDurationUs = Number(s.voice_duration_us) || 0;
 
   const captionsData: SceneCaptionData[] = Array.isArray(s.captions_data) ? s.captions_data : [];
   const words: SceneCaptionWord[] = Array.isArray(s.words) ? s.words : [];
   const characterCostumes: CharacterSceneCostumes[] = Array.isArray(s.character_costumes) ? s.character_costumes : [];
+  const versions = Array.isArray(s.versions) ? s.versions : [];
+  const endFrameVersions = Array.isArray(s.end_frame_versions) ? s.end_frame_versions : [];
+  const videoVersions = Array.isArray(s.video_versions) ? s.video_versions : [];
+  const voiceVersions = Array.isArray(s.voice_versions) ? s.voice_versions : [];
+  const bgmVersions = Array.isArray(s.bgm_versions) ? s.bgm_versions : [];
 
   const rawRef = s.reference_assets || {};
   const referenceAssets: SceneReferenceAssets = {
@@ -81,6 +86,11 @@ export function normalizeSceneEntity(s: any, idx?: number): SceneEntity | null {
     voice_duration_us: voiceDurationUs,
     captions_data: captionsData,
     words,
+    versions,
+    end_frame_versions: endFrameVersions,
+    video_versions: videoVersions,
+    voice_versions: voiceVersions,
+    bgm_versions: bgmVersions,
     status: s.status || (videoUrl ? 'video_ready' : (storyboardFrameUrl ? 'image_ready' : 'draft')),
   };
 }

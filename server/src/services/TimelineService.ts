@@ -786,7 +786,7 @@ export class TimelineService {
         if (scene.video_url) {
           clips[vClipId].src = scene.video_url;
           clips[vClipId].type = 'Video';
-        } else if (scene.storyboard_frame_url && (!clips[vClipId].src || clips[vClipId].src.includes('unsplash.com') || clips[vClipId].src.includes('poster-1.jpg'))) {
+        } else if (scene.storyboard_frame_url) {
           clips[vClipId].src = scene.storyboard_frame_url;
           clips[vClipId].type = 'Image';
         }

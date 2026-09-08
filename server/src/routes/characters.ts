@@ -8,6 +8,7 @@ import { getVisualStylePrompt } from '../constants/VisualStyles.js';
 import { PromptLoader } from '@/utils/PromptLoader.js';
 import { Logger } from '@/utils/logger.js';
 import { nanoid } from 'nanoid';
+import { getUserId } from '~/utils/auth.js';
 
 export const characterRouter = Router();
 
@@ -63,31 +64,31 @@ characterRouter.post('/', async (req: Request, res: Response) => {
 // POST /api/characters/:characterId/portrait — Generate single character avatar / portrait image via CharacterService
 characterRouter.post('/:characterId/portrait', async (req: Request, res: Response) => {
   try {
-    const { characterId } = req.params;
-    const { series_id, name, age, gender, nationality, visual_traits, prompt, style, visual_style, visual_style_prompt, aspect_ratio } = req.body;
-    const userId = (req as any).user?.id || (req as any).user?.user_id;
+    // const { characterId } = req.params;
+    const { series_id, character_id, prompt } = req.body;
+    const userId = getUserId(req);
 
-    const { avatar_url, character } = await characterService.generatePortrait({
+    const { image_url, character } = await characterService.generatePortrait({
       series_id,
-      character_id: characterId,
-      name,
-      age,
-      gender,
-      nationality,
-      visual_traits,
-      prompt,
-      style,
-      visual_style,
-      visual_style_prompt,
-      aspect_ratio,
+      character_id: character_id,
+      // name,
+      // age,
+      // gender,
+      // nationality,
+      // visual_traits,
+      custom_prompt: prompt,
+      // style,
+      // visual_style,
+      // visual_style_prompt,
+      // aspect_ratio,
       user_id: userId,
     });
 
     return res.json({
       code: 200,
       data: {
-        avatar: avatar_url,
-        image_url: avatar_url,
+        avatar: image_url,
+        image_url,
         character,
       },
       message: 'Character portrait generated successfully',
@@ -223,6 +224,15 @@ characterRouter.post('/:characterId/anchors', async (req: Request, res: Response
         targetSeries.characters[charIndex].avatar = avatarUrl || targetSeries.characters[charIndex].avatar;
         targetSeries.characters[charIndex].mesh_match_rate = 98.7;
         await db.updateSeries(targetSeriesId, { characters: targetSeries.characters });
+        try {
+          const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+          const updatedSeries = await db.getSeriesById(targetSeriesId);
+          if (updatedSeries) {
+            PatchSyncService.broadcast(targetSeriesId, 'series:updated', updatedSeries);
+          }
+        } catch (wsErr: any) {
+          Logger.warn(`[characterRouter.anchors] WebSocket broadcast notice: ${wsErr.message}`);
+        }
       }
     }
 
@@ -450,6 +460,15 @@ Return strict JSON:
         }
         targetSeries.characters[cIdx].wardrobe.push(newItem);
         await db.updateSeries(seriesId, { characters: targetSeries.characters });
+        try {
+          const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
+          const updatedSeries = await db.getSeriesById(seriesId);
+          if (updatedSeries) {
+            PatchSyncService.broadcast(seriesId, 'series:updated', updatedSeries);
+          }
+        } catch (wsErr: any) {
+          Logger.warn(`[characterRouter.wardrobes] WebSocket broadcast notice: ${wsErr.message}`);
+        }
       }
     }
 

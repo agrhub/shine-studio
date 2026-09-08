@@ -318,6 +318,36 @@ export class MapDBProvider implements IDatabaseProvider {
     return { success: true, balance: user.credits, transaction: tx };
   }
 
+  public async refundCredits(
+    userId: string,
+    amount: number,
+    activity: string,
+    details?: string
+  ): Promise<{ success: boolean; balance: number; transaction?: CreditTransactionEntity; error?: string }> {
+    const user = this.users.get(userId);
+    if (!user) {
+      return { success: false, balance: 0, error: 'User not found' };
+    }
+
+    user.credits = (user.credits || 0) + amount;
+    this.users.set(userId, user);
+
+    const tx: CreditTransactionEntity = {
+      id: `tx_${nanoid(12)}`,
+      user_id: userId,
+      amount: amount,
+      balance_after: user.credits,
+      activity: activity.startsWith('Refund') ? activity : `Refund: ${activity}`,
+      details,
+      status: 'Success',
+      created_at: new Date().toISOString(),
+    };
+    this.creditTransactions.unshift(tx);
+    this.scheduleSave();
+
+    return { success: true, balance: user.credits, transaction: tx };
+  }
+
   public async getCreditHistory(userId?: string, limit = 50): Promise<CreditTransactionEntity[]> {
     let list = this.creditTransactions;
     if (userId) {
@@ -371,6 +401,8 @@ export class MapDBProvider implements IDatabaseProvider {
     }
     if (status) {
       list = list.filter(s => s.status === status);
+    } else {
+      list = list.filter(s => s.status !== 'DELETING');
     }
     if (search) {
       const q = search.toLowerCase();
