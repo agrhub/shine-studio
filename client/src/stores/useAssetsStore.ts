@@ -9,19 +9,26 @@ export const useAssetsStore = defineStore('assets', () => {
   const isLoading = ref<boolean>(false);
   const isUploading = ref<boolean>(false);
 
+  let activeFetchPromise: Promise<Asset[]> | null = null;
+
   async function fetchAssets(params?: { type?: string; search?: string; userId?: string }) {
+    if (activeFetchPromise) return activeFetchPromise;
     isLoading.value = true;
-    try {
-      const res: any = await http.get('/assets', { params });
-      const list = res?.data?.assets || res?.assets || res?.data || res;
-      assets.value = Array.isArray(list) ? list : [];
-      return assets.value;
-    } catch (err) {
-      console.error('Failed to fetch assets from API', err);
-      return assets.value;
-    } finally {
-      isLoading.value = false;
-    }
+    activeFetchPromise = (async () => {
+      try {
+        const res: any = await http.get('/assets', { params });
+        const list = res?.data?.assets || res?.assets || res?.data || res;
+        assets.value = Array.isArray(list) ? list : [];
+        return assets.value;
+      } catch (err) {
+        console.error('Failed to fetch assets from API', err);
+        return assets.value;
+      } finally {
+        isLoading.value = false;
+        activeFetchPromise = null;
+      }
+    })();
+    return activeFetchPromise;
   }
 
   async function createAsset(payload: Partial<Asset>) {

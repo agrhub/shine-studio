@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import { toast } from 'vue-sonner';
 import http from '@/utils/http';
 import { storeToRefs } from 'pinia';
+import { useRoute } from 'vue-router';
+import EpisodeAudienceFeedback from '@/components/analytics/EpisodeAudienceFeedback.vue';
 
 const { t } = useI18n();
 const seriesStore = useSeriesStore();
@@ -201,6 +203,7 @@ function renderDemoChart() {
 }
 
 async function fetchAnalytics() {
+  if (isLoading.value) return;
   isLoading.value = true;
   try {
     const res: any = await http.get('/analytics/insights', {
@@ -244,16 +247,36 @@ function handleSceneHighlightClick(item: any) {
   toast.info(t('analytics.sceneHighlightInfo', { title: item.title, time: item.time, desc: item.desc }));
 }
 
+const route = useRoute();
+
 onMounted(async () => {
   await seriesStore.fetchSeriesList({ userId: authStore.user?.id });
   if (Array.isArray(seriesStore.seriesList) && seriesStore.seriesList.length > 0) {
-    selectedSeriesId.value = seriesStore.seriesList[0].id;
+    if (!selectedSeriesId.value) {
+      const querySeriesId = route.query.seriesId as string;
+      const hasQueryMatch = querySeriesId && seriesStore.seriesList.some(s => s.id === querySeriesId);
+      const activeSeriesId = seriesStore.currentSeries?.id;
+      const hasActiveMatch = activeSeriesId && seriesStore.seriesList.some(s => s.id === activeSeriesId);
+
+      if (hasQueryMatch) {
+        selectedSeriesId.value = querySeriesId;
+      } else if (hasActiveMatch) {
+        selectedSeriesId.value = activeSeriesId;
+      } else {
+        selectedSeriesId.value = seriesStore.seriesList[0].id;
+      }
+    } else {
+      await fetchAnalytics();
+    }
+  } else {
+    await fetchAnalytics();
   }
-  await fetchAnalytics();
 });
 
-watch([selectedSeriesId, selectedTimeframe], () => {
-  fetchAnalytics();
+watch([selectedSeriesId, selectedTimeframe], ([newSeries, newTime], [oldSeries, oldTime]) => {
+  if (newSeries && (newSeries !== oldSeries || newTime !== oldTime)) {
+    fetchAnalytics();
+  }
 });
 
 // Watch isDark theme switch and re-render ApexCharts dynamically
@@ -474,6 +497,12 @@ watch(isDark, async () => {
         {{ t('analytics.noSeriesDesc') }}
       </div>
     </section>
+
+    <!-- Episode Audience Intelligence & Adaptive Script Evolution -->
+    <EpisodeAudienceFeedback
+      v-if="selectedSeriesId"
+      :series-id="selectedSeriesId"
+    />
   </div>
 </template>
 

@@ -106,6 +106,12 @@ export function useWebSocket() {
     s.on('episode:updated', callback);
   };
 
+  const onSeriesUpdated = (callback: (series: any) => void) => {
+    const s = getSocket();
+    s.off('series:updated', callback);
+    s.on('series:updated', callback);
+  };
+
   const onChatMessage = (callback: (data: { sessionId: string; message: any }) => void) => {
     const s = getSocket();
     s.off('chat:message', callback);
@@ -130,6 +136,7 @@ export function useWebSocket() {
     onPipelineJobUpdated,
     onPipelineJobCompleted,
     onEpisodeUpdated,
+    onSeriesUpdated,
     onChatMessage,
     disconnect,
   };

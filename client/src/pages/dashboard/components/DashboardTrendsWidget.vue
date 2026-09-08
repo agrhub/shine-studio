@@ -79,7 +79,7 @@ onMounted(() => {
 
 <template>
   <!-- Row 3.5: Viral Hot Trends & Topics Widget -->
-  <section class="bg-[var(--el-card-bg-color)] border border-[var(--el-border-color)] rounded-3xl p-6 sm:p-8 shadow-soft">
+  <section class="bg-[var(--el-card-bg-color)] border border-[var(--el-border-color)] rounded-3xl p-6 sm:p-8 shadow-soft overflow-hidden">
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
       <div>
         <div class="flex items-center gap-2 mb-1">
@@ -149,11 +149,11 @@ onMounted(() => {
     </div>
 
     <!-- Loading State Skeleton -->
-    <div v-if="isFetchingTrends" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+    <div v-if="isFetchingTrends" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
       <div
-        v-for="n in 3"
+        v-for="n in 4"
         :key="n"
-        class="rounded-2xl border border-[var(--el-border-color)] bg-[var(--el-bg-color)]/50 p-5 animate-pulse flex flex-col justify-between min-h-[200px]"
+        class="rounded-2xl border border-[var(--el-border-color)] bg-[var(--el-bg-color)]/50 p-4 sm:p-5 animate-pulse flex flex-col justify-between min-h-[200px]"
       >
         <div class="space-y-2.5">
           <div class="h-4 bg-[var(--el-fill-color)] rounded w-1/3"></div>
@@ -166,39 +166,39 @@ onMounted(() => {
     </div>
 
     <!-- Loaded Viral Topics Grid -->
-    <div v-else-if="viralTopics.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+    <div v-else-if="viralTopics.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
       <div
         v-for="topic in viralTopics"
         :key="topic.topic || topic.title"
         @click="handleCreateFromTrend(topic)"
-        class="group rounded-2xl border border-[var(--el-border-color)] hover:border-[var(--el-color-primary)] bg-[var(--el-bg-color)]/40 hover:bg-[var(--el-card-bg-color)] p-5 shadow-soft hover:shadow-md transition-all flex flex-col justify-between relative"
+        class="group rounded-2xl border border-[var(--el-border-color)] hover:border-[var(--el-color-primary)] bg-[var(--el-bg-color)]/40 hover:bg-[var(--el-card-bg-color)] p-4 sm:p-5 shadow-soft hover:shadow-md transition-all flex flex-col justify-between relative min-w-0"
       >
-        <div>
+        <div class="min-w-0">
           <div class="flex items-center justify-between gap-2 mb-2.5">
-            <div class="flex items-center gap-1.5 flex-wrap">
+            <div class="flex items-center gap-1.5 flex-wrap min-w-0">
               <el-tag size="small" type="primary" effect="plain" round class="text-[10px] font-bold">
                 {{ topic.genre || topic.category || topic.trope || 'Drama' }}
               </el-tag>
-              <el-tag v-if="topic.hook_type || topic.hashtag_velocity" size="small" type="warning" effect="plain" round class="text-[10px] font-bold">
+              <el-tag v-if="topic.hook_type || topic.hashtag_velocity" size="small" type="warning" effect="plain" round class="text-[10px] font-bold truncate max-w-[110px]">
                 {{ topic.hook_type || topic.hashtag_velocity }}
               </el-tag>
             </div>
-            <el-tag round type="danger" effect="plain" size="small">
+            <el-tag round type="danger" effect="plain" size="small" class="shrink-0">
               <el-icon><TrendCharts /></el-icon>
               <span>{{ topic.engagement_score || 88 }}%</span>
             </el-tag>
           </div>
 
-          <h4 class="font-semibold text-sm text-[var(--el-text-color-primary)] group-hover:text-[var(--el-color-primary)] transition-colors mb-1.5 line-clamp-1">
+          <h4 class="font-semibold text-sm text-[var(--el-text-color-primary)] group-hover:text-[var(--el-color-primary)] transition-colors mb-1.5 line-clamp-1 break-words">
             {{ topic.topic || topic.title }}
           </h4>
-          <p class="text-xs leading-relaxed text-[var(--el-text-color-secondary)] line-clamp-3 mb-4">
+          <p class="text-xs leading-relaxed text-[var(--el-text-color-secondary)] line-clamp-3 mb-4 break-words">
             {{ topic.description || topic.competitor_hook || topic.trope }}
           </p>
         </div>
 
-        <div class="pt-3.5 border-t border-[var(--el-border-color)]/60 flex items-center justify-between gap-3">
-          <div class="text-[11px] text-[var(--el-text-color-secondary)] flex items-center gap-1">
+        <div class="pt-3.5 border-t border-[var(--el-border-color)]/60 flex flex-wrap items-center justify-between gap-2">
+          <div class="text-[11px] text-[var(--el-text-color-secondary)] flex items-center gap-1 shrink-0">
             <span>{{ topic.target_episodes || 24 }} {{ t('dashboard.statEpisodes') }}</span>
             <span>·</span>
             <span>{{ topic.duration_seconds || 60 }}s</span>
@@ -207,8 +207,8 @@ onMounted(() => {
             type="primary"
             size="small"
             round
-            @click="handleCreateFromTrend(topic)"
-            class="!font-bold shadow-xs hover:scale-105 transition-transform"
+            @click.stop="handleCreateFromTrend(topic)"
+            class="!font-bold shadow-xs hover:scale-105 transition-transform shrink-0 !ml-0"
           >
             <el-icon class="mr-1"><MagicStick /></el-icon>
             <span>{{ t('wizard.createSeries') }}</span>

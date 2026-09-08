@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSeriesStore } from '@/stores/useSeriesStore';
+import { useAssetsStore } from '@/stores/useAssetsStore';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useBillingStore } from '@/stores/billingStore';
 import DashboardHeroHeader from './components/DashboardHeroHeader.vue';
@@ -14,6 +15,7 @@ import http from '@/utils/http';
 
 const router = useRouter();
 const seriesStore = useSeriesStore();
+const assetsStore = useAssetsStore();
 const authStore = useAuthStore();
 const billingStore = useBillingStore();
 
@@ -75,12 +77,13 @@ onMounted(async () => {
     seriesStore.fetchSeriesList({ userId: authStore.user?.id }),
     billingStore.fetchTierInfo(),
     fetchDashboardAnalytics(),
+    assetsStore.fetchAssets({ userId: authStore.user?.id }),
   ]);
 });
 </script>
 
 <template>
-  <div id="dashboard-page" class="w-full space-y-9 p-4 font-sans text-[var(--el-text-color-primary)] pb-12">
+  <div id="dashboard-page" class="w-full max-w-full overflow-x-hidden space-y-9 p-4 sm:p-6 font-sans text-[var(--el-text-color-primary)] pb-12">
     <!-- Top Welcome Banner -->
     <DashboardHeroHeader />
 

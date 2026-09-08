@@ -1,30 +1,84 @@
 <script setup lang="ts">
-import { computed, onMounted, nextTick } from 'vue';
+import { computed, onMounted, nextTick, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ApexCharts, { type ApexOptions } from 'apexcharts';
 import { useAssetsStore } from '@/stores/useAssetsStore';
+import { useSeriesStore } from '@/stores/useSeriesStore';
 import { toast } from 'vue-sonner';
 
 const { t } = useI18n();
 const assetsStore = useAssetsStore();
+const seriesStore = useSeriesStore();
 
 const props = defineProps<{
   analyticsData: any;
 }>();
 
-// Dynamic assets computed from real assetsStore or contextual items
+let cashflowInstance: ApexCharts | null = null;
+
+// Dynamic assets computed from real assetsStore or contextual series items
 const displayAssets = computed(() => {
   if (assetsStore.assets && assetsStore.assets.length > 0) {
-    return assetsStore.assets.slice(0, 4).map(file => ({
+    return assetsStore.assets.slice(0, 5).map(file => ({
       name: file.name,
-      type: file.type.toUpperCase(),
+      type: (file.type || 'image').toUpperCase(),
       size: file.size || '12 MB',
-      status: 'Rendered',
+      status: 'Ready',
       icon: file.type === 'video' ? 'VideoPlay' : file.type === 'audio' ? 'Headset' : 'Document',
       statusClass: 'text-[var(--el-color-primary-dark-2)] bg-[var(--el-color-primary-light-9)]',
     }));
   }
-  return [];
+
+  // Fallback: extract rendered assets from active user series
+  const extracted: any[] = [];
+  if (Array.isArray(seriesStore.seriesList)) {
+    for (const s of seriesStore.seriesList) {
+      if (Array.isArray(s.characters)) {
+        for (const char of s.characters) {
+          if ((char as any).avatar_url || (char as any).image_url) {
+            extracted.push({
+              name: `${char.name} (${s.title})`,
+              type: 'CHARACTER',
+              size: '2.4 MB',
+              status: 'Rendered',
+              icon: 'User',
+              statusClass: 'text-[var(--el-color-primary-dark-2)] bg-[var(--el-color-primary-light-9)]',
+            });
+          }
+        }
+      }
+      if (Array.isArray(s.locations)) {
+        for (const loc of s.locations) {
+          if (loc.image_url) {
+            extracted.push({
+              name: `${loc.name} (${s.title})`,
+              type: 'LOCATION',
+              size: '3.8 MB',
+              status: 'Rendered',
+              icon: 'Picture',
+              statusClass: 'text-[var(--el-color-primary-dark-2)] bg-[var(--el-color-primary-light-9)]',
+            });
+          }
+        }
+      }
+      if (Array.isArray(s.props)) {
+        for (const p of s.props) {
+          if (p.image_url) {
+            extracted.push({
+              name: `${p.name} (${s.title})`,
+              type: 'PROP',
+              size: '1.8 MB',
+              status: 'Rendered',
+              icon: 'Goods',
+              statusClass: 'text-[var(--el-color-primary-dark-2)] bg-[var(--el-color-primary-light-9)]',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return extracted.slice(0, 5);
 });
 
 function handleWithdraw() {
@@ -47,12 +101,21 @@ function initCashflowChart() {
 
   const cashflowEl = document.querySelector('#cashflow') as HTMLElement | null;
   if (cashflowEl) {
+    if (cashflowInstance) {
+      cashflowInstance.destroy();
+      cashflowInstance = null;
+    }
     cashflowEl.innerHTML = '';
+
+    const incomeData = props.analyticsData?.cashflow?.income || [0, 0, 0, 0, 0, 0];
+    const rawExpenseData = props.analyticsData?.cashflow?.expense || [0, 0, 0, 0, 0, 0];
+    const expenseData = rawExpenseData.map((v: number) => Math.abs(v));
+
     const options: ApexOptions = {
       chart: { type: 'bar', height: 200, toolbar: { show: false }, fontFamily: 'Outfit' },
       series: [
-        { name: t('dashboard.income'), data: props.analyticsData?.cashflow?.income || [0, 0, 0, 0, 0, 0] },
-        { name: t('dashboard.expense'), data: props.analyticsData?.cashflow?.expense || [0, 0, 0, 0, 0, 0] },
+        { name: t('dashboard.income'), data: incomeData },
+        { name: t('dashboard.expense'), data: expenseData },
       ],
       colors: [mint, expenseBar],
       plotOptions: { bar: { columnWidth: '52%', borderRadius: 5 } },
@@ -70,13 +133,17 @@ function initCashflowChart() {
           formatter: (v: number) => (Math.abs(v) > 999 ? `${v / 1000}k` : `${v}`),
         },
       },
-      tooltip: { theme: tooltipTheme, y: { formatter: (v: number) => (v < 0 ? '−$' : '$') + Math.abs(v) } },
+      tooltip: { theme: tooltipTheme, y: { formatter: (v: number) => `$${Math.abs(v)}` } },
     };
-    new ApexCharts(cashflowEl, options).render();
+    cashflowInstance = new ApexCharts(cashflowEl, options);
+    cashflowInstance.render();
   }
 }
 
 onMounted(() => {
+  if (!assetsStore.assets.length && !assetsStore.isLoading) {
+    assetsStore.fetchAssets();
+  }
   nextTick(() => {
     initCashflowChart();
   });
@@ -86,6 +153,16 @@ onMounted(() => {
   });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 });
+
+watch(
+  () => props.analyticsData,
+  () => {
+    nextTick(() => {
+      initCashflowChart();
+    });
+  },
+  { deep: true }
+);
 </script>
 
 <template>
@@ -126,6 +203,10 @@ onMounted(() => {
               {{ asset.status }}
             </span>
           </div>
+        </div>
+
+        <div v-if="displayAssets.length === 0" class="py-12 text-center text-xs text-[var(--el-text-color-secondary)]">
+          {{ t('dashboard.noAssetsFound') }}
         </div>
       </div>
     </div>

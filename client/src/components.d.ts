@@ -98,6 +98,7 @@ declare module 'vue' {
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
+    EpisodeAudienceFeedback: typeof import('./components/analytics/EpisodeAudienceFeedback.vue')['default']
     ExportGroupProperty: typeof import('./components/editor/properties-panel/options/ExportGroupProperty.vue')['default']
     ExportModal: typeof import('./components/editor/ExportModal.vue')['default']
     FadeGroupProperty: typeof import('./components/editor/properties-panel/options/FadeGroupProperty.vue')['default']

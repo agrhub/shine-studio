@@ -62,12 +62,14 @@ async function handleExtractAssets() {
 
     // Sync scenes and script in store
     if (result.scenes && result.scenes.length > 0) {
+      const dur = result.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0) || Number(result.total_duration_seconds) || 60;
       if (ep) {
         ep.scenes = result.scenes;
         ep.scenes_count = `${result.scenes.length} scenes`;
         ep.screenplay = screenplayText.value;
-        ep.duration_seconds = result.total_duration_seconds;
-        ep.duration = String(result.total_duration_seconds);
+        ep.duration_seconds = dur;
+        ep.duration = seriesStore.formatTime(dur);
+        seriesStore.episodesList = [...seriesStore.episodesList];
       }
       seriesStore.activeScript = {
         ...(seriesStore.activeScript || {}),
@@ -82,8 +84,8 @@ async function handleExtractAssets() {
         characters: result.characters || [],
         locations: result.locations || [],
         props: result.props || [],
-        duration_seconds: result.total_duration_seconds,
-        duration: String(result.total_duration_seconds),
+        duration_seconds: dur,
+        duration: seriesStore.formatTime(dur),
       };
     }
 

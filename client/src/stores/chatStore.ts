@@ -176,6 +176,9 @@ export const useChatStore = defineStore('chat', {
       }
 
       const targetId = targetIdOverride || (this.scope === 'series' && this.activeSeriesId ? this.activeSeriesId : 'global');
+      if (this.isLoadingHistory) {
+        return;
+      }
       this.isLoadingHistory = true;
       try {
         const offset = (page - 1) * limit;

@@ -190,12 +190,12 @@ export const usePipelineStore = defineStore('pipeline', () => {
       const res: any = await http.post(`/characters/${char.id}/portrait`, {
         series_id: sId,
         character_id: char.id,
-        name: char.name,
-        visual_traits: char.visual_traits || char.identity || `${char.name}, role: ${char.role || 'lead'}, ${char.nationality || 'intense expression'}, ${seriesGenre}`,
-        style: styleObj.promptModifier,
-        visual_style: currentStyle,
-        visual_style_prompt: styleObj.promptModifier,
-        aspect_ratio: targetAspect,
+        // name: char.name,
+        // visual_traits: char.visual_traits || char.identity || `${char.name}, role: ${char.role || 'lead'}, ${char.nationality || 'intense expression'}, ${seriesGenre}`,
+        // style: styleObj.promptModifier,
+        // visual_style: currentStyle,
+        // visual_style_prompt: styleObj.promptModifier,
+        // aspect_ratio: targetAspect,
       });
 
       const url = res?.data?.image_url || res?.data?.url;
@@ -271,13 +271,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
         episode_id: epId,
         scene_index: sceneIndex,
         scene_id: `scene_${String(sceneIndex).padStart(2, '0')}`,
-        prompt: sceneData.visual_prompt || sceneData.description || undefined,
-        scene_data: sceneData,
-        aspect_ratio: targetAspect,
-        visual_style: currentStyle,
-        visual_style_prompt: styleObj.promptModifier,
-        style: sceneData.lighting_mood || styleObj.promptModifier,
-        characters: sceneChars,
+        // prompt: sceneData.visual_prompt || sceneData.description || undefined,
+        // scene_data: sceneData,
+        // aspect_ratio: targetAspect,
+        // visual_style: currentStyle,
+        // visual_style_prompt: styleObj.promptModifier,
+        // style: sceneData.lighting_mood || styleObj.promptModifier,
+        // characters: sceneChars,
       });
 
       const url = res?.data?.image_url || res?.data?.url;
@@ -426,11 +426,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
             try {
               updateProgress(`Rendering Wardrobe: ${char.name} (${variant.name})`);
               const res = await scriptStore.generateCharacterSheet({
-                character_name: char.name,
-                physical_characteristics: resolvedPhysical,
+                character_id: char.id,
+                series_id: seriesStore.currentSeries?.id || '',
+                // physical_characteristics: resolvedPhysical,
+                variant_id: variant.variant_id || variant.id || '',
                 clothing_and_accessories: variant.clothing_and_accessories || '',
-                visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
-                reference_image_url: referenceAvatar || undefined,
+                // visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
+                // reference_image_url: referenceAvatar || undefined,
               });
               if (res?.image_url) {
                 variant.image_url = res.image_url;
@@ -485,10 +487,11 @@ export const usePipelineStore = defineStore('pipeline', () => {
         try {
           updateProgress(`Rendering Location: ${loc.name}`);
           const res = await scriptStore.generateLocationSheet({
-            location_name: loc.name,
+            series_id: sId,
+            location_id: loc.id,
             physical_characteristics: loc.physical_characteristics,
             time_of_day: loc.time_of_day,
-            visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
+            // visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
           });
           if (res?.image_url) {
             loc.image_url = res.image_url;
@@ -516,9 +519,10 @@ export const usePipelineStore = defineStore('pipeline', () => {
         try {
           updateProgress(`Rendering Prop: ${prop.name}`);
           const res = await scriptStore.generatePropSheet({
-            prop_name: prop.name,
+            series_id: sId,
+            prop_id: prop.id,
             physical_characteristics: prop.physical_characteristics,
-            visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
+            // visual_style: seriesStore.currentSeries?.visual_style || 'realistic',
           });
           if (res?.image_url) {
             prop.image_url = res.image_url;
@@ -589,18 +593,20 @@ export const usePipelineStore = defineStore('pipeline', () => {
       const res: any = await http.post('/assets/video-generate', {
         series_id: sId,
         episode_id: epId,
-        scene_id: `scene_${String(sceneIndex).padStart(2, '0')}`,
-        start_frame_url: scene.storyboard_frame_url,
-        end_frame_url: scene.storyboard_end_frame_url || undefined,
-        duration: calculatedDuration,
-        action: targetAction,
-        camera_movement: targetCamera,
-        lighting_mood: lightingMood,
-        prompt: scene.visual_prompt || scene.description || undefined,
-        scene_data: scene,
+        scene_id: scene.id,
+        scene_index: sceneIndex,
+        // scene_id: `scene_${String(sceneIndex).padStart(2, '0')}`,
+        // start_frame_url: scene.storyboard_frame_url,
+        // end_frame_url: scene.storyboard_end_frame_url || undefined,
+        // duration: calculatedDuration,
+        // action: targetAction,
+        // camera_movement: targetCamera,
+        // lighting_mood: lightingMood,
+        // prompt: scene.visual_prompt || scene.description || undefined,
+        // scene_data: scene,
       });
 
-      const url = res?.data?.url;
+      const url = res?.data?.video_url || res?.data?.url;
       if (url) {
         updateSceneStatus(sceneIndex, { video_status: 'done', video_url: url });
         seriesStore.updateSceneVideoUrl(epId, sceneIndex, url);
@@ -1574,6 +1580,16 @@ export const usePipelineStore = defineStore('pipeline', () => {
             }
             window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
           }
+        }
+      });
+
+      ws.onSeriesUpdated((updatedSeries: any) => {
+        if (updatedSeries?.id && updatedSeries.id === seriesStore.currentSeries?.id) {
+          seriesStore.currentSeries = { ...seriesStore.currentSeries, ...updatedSeries };
+          if (Array.isArray(updatedSeries.characters)) {
+            seriesStore.charactersList = updatedSeries.characters;
+          }
+          window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: { type: 'series_updated' } }));
         }
       });
     } catch (err) {

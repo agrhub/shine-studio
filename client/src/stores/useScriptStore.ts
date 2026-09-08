@@ -19,6 +19,8 @@ import type {
   Scene,
   CustomizableAsset,
   AssetVersion,
+  CustomizeVideoResult,
+  CustomizeVideoParams,
 } from '@/types/api';
 
 export const useScriptStore = defineStore('script', {
@@ -198,7 +200,20 @@ export const useScriptStore = defineStore('script', {
         episode_id: epId,
       });
       const raw = res.data as unknown as { characters?: Character[]; locations?: LocationAsset[]; props?: PropAsset[]; scenes?: Scene[]; total_duration_seconds?: number; totalDurationSeconds?: number };
-      const dur = Number(raw?.total_duration_seconds || raw?.totalDurationSeconds || 0);
+      const scenesSum = Array.isArray(raw?.scenes) ? raw.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0) : 0;
+      const dur = scenesSum > 0 ? scenesSum : Number(raw?.total_duration_seconds || raw?.totalDurationSeconds || 0);
+
+      const targetEp = seriesStore.episodesList.find(e => e.id === epId);
+      if (targetEp && Array.isArray(raw?.scenes) && raw.scenes.length > 0) {
+        targetEp.scenes = raw.scenes;
+        targetEp.scenes_count = `${raw.scenes.length} scenes`;
+        if (dur > 0) {
+          targetEp.duration_seconds = dur;
+          targetEp.duration = seriesStore.formatTime(dur);
+        }
+        seriesStore.episodesList = [...seriesStore.episodesList];
+      }
+
       return {
         characters: raw?.characters || [],
         locations: raw?.locations || [],
@@ -209,17 +224,17 @@ export const useScriptStore = defineStore('script', {
       };
     },
 
-    async generateCharacterSheet(payload: { character_name: string; physical_characteristics: string; clothing_and_accessories?: string; visual_style?: string; reference_image_url?: string; prompt?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
+    async generateCharacterSheet(payload: { character_id: string; series_id: string; variant_id: string, physical_characteristics?: string; clothing_and_accessories?: string; visual_style?: string; reference_image_url?: string; prompt?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
       const res = await http.post<ApiResponse<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }>>('/assets/character/sheet', payload);
       return (res.data as unknown as { image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }) || { image_url: '' };
     },
 
-    async generateLocationSheet(payload: { location_name: string; physical_characteristics?: string; visual_environment?: string; time_of_day?: string; visual_style?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
+    async generateLocationSheet(payload: { location_id: string; series_id: string; physical_characteristics?: string; visual_environment?: string; time_of_day?: string; visual_style?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
       const res = await http.post<ApiResponse<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }>>('/assets/location/sheet', payload);
       return (res.data as unknown as { image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }) || { image_url: '' };
     },
 
-    async generatePropSheet(payload: { prop_name: string; physical_characteristics: string; visual_style?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
+    async generatePropSheet(payload: { prop_id: string; series_id: string; physical_characteristics: string; visual_style?: string }): Promise<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }> {
       const res = await http.post<ApiResponse<{ image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }>>('/assets/prop/sheet', payload);
       return (res.data as unknown as { image_url: string; prompt?: string; version?: AssetVersion; asset?: CustomizableAsset }) || { image_url: '' };
     },
@@ -237,6 +252,11 @@ export const useScriptStore = defineStore('script', {
     async customizeAsset(payload: CustomizeAssetParams): Promise<CustomizeAssetResult> {
       const res = await http.post<ApiResponse<CustomizeAssetResult>>('/assets/customize', payload);
       return res.data as unknown as CustomizeAssetResult;
+    },
+
+    async customizeVideo(payload: CustomizeVideoParams): Promise<CustomizeVideoResult> {
+      const res = await http.post<ApiResponse<CustomizeVideoResult>>('/assets/video-generate', payload);
+      return res.data as unknown as CustomizeVideoResult;
     },
 
     async selectAssetVersion(payload: SelectAssetVersionParams): Promise<SelectAssetVersionResult> {

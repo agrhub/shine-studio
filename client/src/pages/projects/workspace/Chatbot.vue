@@ -68,11 +68,19 @@ const activeEpisode = computed(() => seriesStore.activeEpisode as any);
 const seriesId = computed(() => (route?.params?.id as string) || seriesStore.currentSeries?.id || '');
 const episodeId = computed(() => activeEpisode.value?.id || '1');
 
-async function loadHistory() {
+const lastLoadedSeriesId = ref<string | null>(null);
+const isLoadingHistory = ref(false);
+
+async function loadHistory(force = false) {
   const targetId = seriesId.value || seriesStore.currentSeries?.id;
   if (!targetId) return;
+  if (!force && targetId === lastLoadedSeriesId.value) return;
+  if (isLoadingHistory.value) return;
+
+  isLoadingHistory.value = true;
   try {
     const res: any = await http.get(`/ai/agentic/history/${targetId}`);
+    lastLoadedSeriesId.value = targetId;
     let historyList: any[] = [];
     if (res?.data?.messages && Array.isArray(res.data.messages)) {
       historyList = res.data.messages;
@@ -134,13 +142,15 @@ async function loadHistory() {
       }));
       scrollToBottom();
     }
+  } finally {
+    isLoadingHistory.value = false;
   }
 }
 
 watch(
-  [() => seriesId.value, () => seriesStore.currentSeries?.id],
-  ([id, storeId]) => {
-    if (id || storeId) loadHistory();
+  () => seriesId.value || seriesStore.currentSeries?.id,
+  (newId) => {
+    if (newId) loadHistory();
   },
   { immediate: true }
 );
@@ -545,6 +555,12 @@ async function sendMessage(customText?: string) {
                 } else if (eventType === 'item_updated' || eventType === 'series_updated') {
                   // Mark pending sync to update workspace in 1 batch once streaming finishes
                   hasPendingWorkspaceSync = true;
+                  // if (seriesId.value && episodeId.value) {
+                  //   seriesStore.loadEpisodeScript(seriesId.value, episodeId.value);
+                  // }
+                  // if (typeof window !== 'undefined') {
+                  //   window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: parsed }));
+                  // }
                 }
               } catch {}
             }

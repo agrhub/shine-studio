@@ -33,19 +33,26 @@ export const useSeriesStore = defineStore('series', () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 
+  let activeFetchSeriesPromise: Promise<Series[]> | null = null;
+
   async function fetchSeriesList(params?: { userId?: string }): Promise<Series[]> {
+    if (activeFetchSeriesPromise) return activeFetchSeriesPromise;
     isLoading.value = true;
-    try {
-      const res: any = await http.get('/series', { params });
-      const list = res?.data?.series || res?.series || res?.data || res;
-      seriesList.value = Array.isArray(list) ? list : [];
-      return seriesList.value;
-    } catch {
-      seriesList.value = [];
-      return [];
-    } finally {
-      isLoading.value = false;
-    }
+    activeFetchSeriesPromise = (async () => {
+      try {
+        const res: any = await http.get('/series', { params });
+        const list = res?.data?.series || res?.series || res?.data || res;
+        seriesList.value = Array.isArray(list) ? list : [];
+        return seriesList.value;
+      } catch {
+        seriesList.value = [];
+        return [];
+      } finally {
+        isLoading.value = false;
+        activeFetchSeriesPromise = null;
+      }
+    })();
+    return activeFetchSeriesPromise;
   }
 
   async function createSeries(data: {
@@ -87,6 +94,7 @@ export const useSeriesStore = defineStore('series', () => {
         const rawChars = res.data.series.characters || res.data.series.master_plan?.characters || [];
         if (Array.isArray(rawChars) && rawChars.length > 0) {
           charactersList.value = rawChars.map((c: Character, idx: number) => ({
+            ...c,
             id: c.id || `char_${seriesId}_${idx + 1}`,
             series_id: seriesId,
             name: c.name,
@@ -105,6 +113,8 @@ export const useSeriesStore = defineStore('series', () => {
             avatar: c.avatar || undefined,
             lora_model: c.lora_model || `lora-${(c.name || 'char').toLowerCase().replace(/\s+/g, '-')}-sdxl`,
             description: c.description || '',
+            wardrobe_variants: Array.isArray(c.wardrobe_variants) ? c.wardrobe_variants : [],
+            frame_description: c.frame_description || '',
           }));
         }
 
@@ -182,22 +192,26 @@ export const useSeriesStore = defineStore('series', () => {
           if (res.data.props) {
             targetEp.props = res.data.props;
           }
-          if (res.data.scenes) {
+          let epDur = 0;
+          if (res.data.scenes && Array.isArray(res.data.scenes)) {
             targetEp.scenes = res.data.scenes;
             targetEp.scenes_count = `${res.data.scenes.length} scenes`;
             const scenesTotal = res.data.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0);
             if (scenesTotal > 0) {
-              targetEp.duration_seconds = scenesTotal;
-              targetEp.duration = formatTime(scenesTotal);
+              epDur = scenesTotal;
             }
           }
-          if (res.data.total_duration_seconds || res.data.duration_seconds || res.data.duration) {
-            const d = Number(res.data.total_duration_seconds || res.data.duration_seconds || res.data.duration);
+          if (!epDur) {
+            const d = Number(res.data.total_duration_seconds || res.data.duration_seconds || res.data.duration || 0);
             if (d > 0) {
-              targetEp.duration_seconds = d;
-              targetEp.duration = formatTime(d);
+              epDur = d;
             }
           }
+          if (epDur > 0) {
+            targetEp.duration_seconds = epDur;
+            targetEp.duration = formatTime(epDur);
+          }
+          episodesList.value = [...episodesList.value];
           if (res.data.dubbing_settings) {
             targetEp.dubbing_settings = res.data.dubbing_settings;
           }
@@ -269,9 +283,16 @@ export const useSeriesStore = defineStore('series', () => {
           if (res.data.props) {
             targetEp.props = res.data.props;
           }
-          if (res.data.scenes) {
+          if (res.data.scenes && Array.isArray(res.data.scenes)) {
             targetEp.scenes = res.data.scenes;
             targetEp.scenes_count = `${res.data.scenes.length} scenes`;
+            const scenesTotal = res.data.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0);
+            const epDur = scenesTotal > 0 ? scenesTotal : Number(res.data.total_duration_seconds || res.data.duration_seconds || res.data.duration || 0);
+            if (epDur > 0) {
+              targetEp.duration_seconds = epDur;
+              targetEp.duration = formatTime(epDur);
+            }
+            episodesList.value = [...episodesList.value];
           }
         }
       }
@@ -788,6 +809,7 @@ export const useSeriesStore = defineStore('series', () => {
               targetEp.scenes_count = `${vTrack.clipIds.length} scenes`;
             }
           }
+          episodesList.value = [...episodesList.value];
         }
 
         return projectData;
@@ -1063,5 +1085,6 @@ export const useSeriesStore = defineStore('series', () => {
     masterClips,
     initTimelineTracks,
     applyLanguageTrackFilter,
+    formatTime,
   };
 });

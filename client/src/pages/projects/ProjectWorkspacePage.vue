@@ -409,7 +409,7 @@ function sendToChatbot(prompt: string) {
   }
 }
 
-async function runPipeline(stepId: string | undefined, agentMode = false) {
+async function runPipeline(stepId: string | undefined, agentMode = true) {
   if (!agentMode) {
     isRendering.value = true;
     if (stepId != undefined) {
@@ -520,7 +520,7 @@ async function reanalyzeEpisodeScreenplay() {
   });
 
   try {
-    await http.post('/assets/screenplay/analyze', {
+    const res: any = await http.post('/assets/screenplay/analyze', {
       series_id: sId,
       episode_id: epId,
       screenplay: screenplayText,
@@ -532,6 +532,22 @@ async function reanalyzeEpisodeScreenplay() {
       existing_locations: ep?.locations || seriesStore.currentSeries?.locations,
       existing_props: ep?.props || seriesStore.currentSeries?.props,
     });
+
+    const resData = res?.data?.data || res?.data;
+    if (resData && Array.isArray(resData.scenes)) {
+      const targetEp = seriesStore.episodesList.find(e => e.id === epId);
+      if (targetEp) {
+        targetEp.scenes = resData.scenes;
+        targetEp.scenes_count = `${resData.scenes.length} scenes`;
+        const dur = Number(resData.total_duration_seconds || resData.duration_seconds || resData.duration) ||
+          resData.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0);
+        if (dur > 0) {
+          targetEp.duration_seconds = dur;
+          targetEp.duration = formatTime(dur);
+        }
+        seriesStore.episodesList = [...seriesStore.episodesList];
+      }
+    }
 
     toast.success(t('workspace.reanalyzeSuccess'));
     await seriesStore.loadEpisodeScript(sId, epId);
@@ -905,7 +921,7 @@ async function confirmGenerationScope(customMessage?: string): Promise<'missing'
   }
 }
 
-async function triggerAutoPipeline(agentMode = false) {
+async function triggerAutoPipeline(agentMode = true) {
   if (agentMode) {
     const mode = await confirmGenerationScope();
     if (mode === 'cancel') return;
@@ -923,9 +939,18 @@ function goBack() {
   router.push('/dashboard');
 }
 
-function handleAssetUpdated() {
+async function handleAssetUpdated() {
   if (activeEpisodeId.value) {
-    loadEpisodeTimeline(activeEpisodeId.value, true);
+    if (seriesStore.currentSeries?.id) {
+      await seriesStore.loadEpisodeScript(seriesStore.currentSeries.id, activeEpisodeId.value);
+    }
+    await loadEpisodeTimeline(activeEpisodeId.value, true, true);
+    nextTick(() => {
+      if (studioState.value.studio) {
+        (studioState.value.studio as any).updateArtboardLayout?.();
+        (studioState.value.studio as any).requestRender?.();
+      }
+    });
   }
 }
 
