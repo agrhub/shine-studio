@@ -902,7 +902,7 @@ export class VideoService {
     }
 
     // ─── Resolve Start Frame & End Frame (Current Shot Only) ────────
-    const startFrameUrl = initialStartFrameUrl || sceneData?.storyboard_frame_url || sceneData?.image_url;
+    const startFrameUrl = initialStartFrameUrl || sceneData?.storyboard_frame_url;
     if (!startFrameUrl) {
       throw new Error('Start frame is required for video generation.');
     }

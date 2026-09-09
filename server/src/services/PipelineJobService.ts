@@ -245,6 +245,7 @@ export class PipelineJobService {
           seriesId: series_id,
           episodeId: episode_id,
           forceRegenerate: force_regenerate,
+          pipelineJobId: job_id,
         });
 
         if (!renderRes.success) {
@@ -345,10 +346,11 @@ export class PipelineJobService {
         await updateStep('b2', 'running', 20, 30, 'Step B2: Generating Storyboard Keyframes (Preserving existing locations/props)...');
         await addLog('info', 'Executing Step B2: Assets & Storyboards (Preserving existing series locations & props)');
 
-        // In full_pipeline mode, preserve existing location concepts and prop assets across episodes.
-        // Scene storyboards for this episode are regenerated if force_regenerate is true.
+        // In full_pipeline mode, preserve existing location concepts, prop assets, and storyboards across episodes.
+        // Storyboards are only force regenerated if running a dedicated step_b2 job with force_regenerate = true.
         const locForce = type === 'step_b2' ? force_regenerate : false;
         const propForce = type === 'step_b2' ? force_regenerate : false;
+        const sbForce = type === 'step_b2' ? force_regenerate : false;
 
         const locRes = await AssetToolExecutors.generateLocationAsset({
           userId: user_id,
@@ -372,7 +374,7 @@ export class PipelineJobService {
           userId: user_id,
           seriesId: series_id,
           episodeId: episode_id,
-          forceRegenerate: force_regenerate,
+          forceRegenerate: sbForce,
           onItemProgress: async (item) => {
             await appendItemProgress('b2', item.asset, item.current, item.total, 30, 45, item.description);
           },
@@ -416,7 +418,7 @@ export class PipelineJobService {
         });
 
         (epAfterB2?.scenes || []).forEach((s: SceneEntity) => {
-          const startImg = s.storyboard_frame_url || s.image_url;
+          const startImg = s.storyboard_frame_url;
           if (startImg) {
             b2Assets.push({
               id: `sb_${episode_id}_s${s.index}`,
@@ -457,11 +459,12 @@ export class PipelineJobService {
         await updateStep('b3', 'running', 40, 55, 'Step B3: Synthesizing AI Video Clips from Storyboards...');
         await addLog('info', 'Executing Step B3: AI Video Clips');
 
+        const vidForce = type === 'step_b3' ? force_regenerate : false;
         const vidRes = await VideoToolExecutors.generateSceneVideo({
           userId: user_id,
           seriesId: series_id,
           episodeId: episode_id,
-          forceRegenerate: force_regenerate,
+          forceRegenerate: vidForce,
           onItemProgress: async (item) => {
             await appendItemProgress('b3', item.asset, item.current, item.total, 45, 70, item.description);
           },
@@ -487,7 +490,7 @@ export class PipelineJobService {
               type: 'video',
               status: 'completed',
               url: s.video_url,
-              thumbnail: s.storyboard_frame_url || s.image_url,
+              thumbnail: s.storyboard_frame_url || '',
               scene_index: s.index,
             });
           }
@@ -506,11 +509,12 @@ export class PipelineJobService {
         await updateStep('b4', 'running', 60, 75, 'Step B4: Synthesizing Voiceovers and Dialogue TTS...');
         await addLog('info', 'Executing Step B4: Voiceover & TTS');
 
+        const audioForce = type === 'step_b4' ? force_regenerate : false;
         const audioRes = await AudioToolExecutors.generateSceneVoiceover({
           userId: user_id,
           seriesId: series_id,
           episodeId: episode_id,
-          forceRegenerate: force_regenerate,
+          forceRegenerate: audioForce,
           onItemProgress: async (item) => {
             await appendItemProgress('b4', item.asset, item.current, item.total, 70, 82, item.description);
           },
@@ -547,11 +551,12 @@ export class PipelineJobService {
         await updateStep('b5', 'running', 75, 88, 'Step B5: Building Word-Level Kinetic Subtitles...');
         await addLog('info', 'Executing Step B5: Word-by-Word Subtitles');
 
+        const capForce = type === 'step_b5' ? force_regenerate : false;
         const capRes = await CaptionToolExecutors.generateSceneCaption({
           userId: user_id,
           seriesId: series_id,
           episodeId: episode_id,
-          forceRegenerate: force_regenerate,
+          forceRegenerate: capForce,
           onItemProgress: async (item) => {
             await appendItemProgress('b5', item.asset, item.current, item.total, 82, 92, item.description);
           },
@@ -587,7 +592,13 @@ export class PipelineJobService {
         await updateStep('b6', 'running', 90, 95, 'Step B6: Compositing Final High-Definition Master Video...');
         await addLog('info', 'Executing Step B6: Final Video Compositor');
 
-        const renderRes = await RenderToolExecutors.renderEpisodeVideo({ userId: user_id, seriesId: series_id, episodeId: episode_id, forceRegenerate: force_regenerate });
+        const renderRes = await RenderToolExecutors.renderEpisodeVideo({
+          userId: user_id,
+          seriesId: series_id,
+          episodeId: episode_id,
+          forceRegenerate: force_regenerate,
+          pipelineJobId: job_id,
+        });
         if (!renderRes.success) {
           throw new Error(`Step B6 Failed: ${renderRes.message}`);
         }

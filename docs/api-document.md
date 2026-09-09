@@ -1403,4 +1403,142 @@ Provides two-way observability integration with Grafana MCP / Grafana Cloud:
 }
 ```
 
+---
+
+## 9. Bulk Social Publishing API (`/api/publish`)
+
+### 9.1 Fetch Rendered Video Versions
+`GET /api/publish/rendered-versions/:seriesId`
+
+Retrieves all rendered master video versions for a given series, including multi-language dubbed variants, resolutions, durations, and burned-in caption tracks.
+
+**Response:**
+```json
+{
+  "code": 200,
+  "data": [
+    {
+      "id": "ver_ep1_en-US",
+      "episode_id": "ep_01",
+      "episode_number": 1,
+      "episode_title": "Thrown Out into the Rain",
+      "language": "en-US",
+      "voice": "Original Audio (English)",
+      "subtitles": ["Caption: English (Burned-in)"],
+      "resolution": "1080x1920 (9:16 Vertical HD)",
+      "video_url": "https://storage.googleapis.com/shine-studio-media/videos/ep1_en.mp4",
+      "thumbnail_url": "https://storage.googleapis.com/shine-studio-media/covers/ep1.jpg",
+      "duration": 60,
+      "file_size": "83.7 MB",
+      "status": "ready"
+    }
+  ],
+  "message": "Rendered versions retrieved",
+  "error": null
+}
+```
+
+### 9.2 AI Social Optimizer & Poster Cover Generation
+`POST /api/publish/generate-metadata`
+`POST /api/publish/generate-cover`
+
+Generates high-CTR viral titles with emojis, algorithm-targeted hashtags, description hooks, and custom AI poster art based on selected keyframes.
+
+**Request Body (`POST /api/publish/generate-metadata`):**
+```json
+{
+  "seriesId": "series_123",
+  "episodeNumber": 1,
+  "episodeTitle": "Thrown Out into the Rain",
+  "synopsis": "Clara is thrown out in the rain by her arrogant ex-husband..."
+}
+```
+
+**Response:**
+```json
+{
+  "code": 200,
+  "data": {
+    "title": "He kicked her out in the rain, but didn't know who she works for now 😱👠",
+    "description": "Betrayed by her husband, Clara takes a live-in job at Vance Manor...",
+    "tags": ["#DivorcedBroke", "#BuiltHisEmpireInSecret", "#RevengeDrama", "#TikTokDrama", "#VerticalCinema"]
+  },
+  "message": "AI metadata generated successfully",
+  "error": null
+}
+```
+
+### 9.3 1-Click Multi-Platform Deployment
+`POST /api/publish/multi-platform`
+
+Dispatches videos to connected social media channels (**YouTube Shorts**, **TikTok for Creators**, **Meta Reels**) with immediate or scheduled release.
+
+**Request Body:**
+```json
+{
+  "seriesId": "series_123",
+  "versionIds": ["ver_ep1_en-US"],
+  "platforms": ["youtube", "tiktok"],
+  "metadata": {
+    "title": "He kicked her out in the rain...",
+    "description": "Full series available now!",
+    "tags": ["#RevengeDrama"]
+  },
+  "scheduleMode": "now"
+}
+```
+
+**Response:**
+```json
+{
+  "code": 200,
+  "data": {
+    "jobId": "pub_job_1788964786",
+    "status": "published",
+    "publishedUrls": {
+      "youtube": "https://youtube.com/shorts/live_stream_id_xyz"
+    }
+  },
+  "message": "Multi-Platform Deployment Successful!",
+  "error": null
+}
+```
+
+---
+
+## 10. Antigravity OAuth Account Pool API (`/api/antigravity-accounts`)
+
+### 10.1 List Account Pool & Health Status
+`GET /api/antigravity-accounts`
+
+Returns all pooled Google OAuth accounts, active quota usage, project IDs, and sync timestamps.
+
+**Response:**
+```json
+{
+  "code": 200,
+  "data": [
+    {
+      "id": "acc_01",
+      "email": "tancamap6@gmail.com",
+      "projectId": "aicode-consumers",
+      "tier": "PAID",
+      "modelQuotas": "26 Models (100%)",
+      "requests": 220,
+      "status": "ACTIVE",
+      "lastSync": "2026-09-09T20:00:00.000Z"
+    }
+  ],
+  "message": "Antigravity accounts retrieved",
+  "error": null
+}
+```
+
+### 10.2 OAuth Connect & Token Rotation
+`GET /api/antigravity-accounts/oauth/url`
+`POST /api/antigravity-accounts/:id/refresh`
+`POST /api/antigravity-accounts/sync-all`
+
+Provides automated OAuth URL generation, manual token refresh triggers, and complete pool health re-synchronization.
+
 

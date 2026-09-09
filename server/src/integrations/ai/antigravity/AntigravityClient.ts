@@ -54,7 +54,7 @@ export class AntigravityClient {
    * - 'gemini-2.5-flash' (Standard fallback)
    */
   public static normalizeModel(modelId?: string): string {
-    if (!modelId) return 'gemini-3.7-flash';
+    if (!modelId) return 'gemini-3.7-flash-tiered';
 
     const clean = modelId.toLowerCase().trim();
 
@@ -91,7 +91,7 @@ export class AntigravityClient {
     }
 
     // Modern default for gemini-3, 3.5, 3.7 or unmapped models
-    return 'gemini-3.7-flash';
+    return 'gemini-3.7-flash-tiered';
   }
 
   /**
@@ -167,7 +167,7 @@ export class AntigravityClient {
         generationConfig,
       },
       model: EnvConfig.antigravityModel,
-      userAgent: 'antigravity/1.13.3 windows/amd64',
+      userAgent: 'antigravity/2.5.5 windows/amd64',
       requestType: 'agent',
       project: projectId,
     };

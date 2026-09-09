@@ -23,6 +23,7 @@ export class RenderToolExecutors {
     captionLanguages?: string[];
     noCaptions?: boolean;
     forceRegenerate?: boolean;
+    pipelineJobId?: string;
   }): Promise<ToolExecutionResult> {
     try {
       const db = await getDatabaseProvider();
@@ -246,6 +247,7 @@ export class RenderToolExecutors {
       const job = compositorWorker.createJob({
         series_id: params.seriesId,
         episode_id: params.episodeId,
+        pipeline_job_id: params.pipelineJobId,
         dubbing_languages: dubbingLangs,
         caption_languages: captionLangs,
       });

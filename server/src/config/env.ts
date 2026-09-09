@@ -176,7 +176,7 @@ export const EnvConfig = {
     return Number(process.env.GEMINI_MAX_TOKENS) || 8192;
   },
   get antigravityModel(){
-    return process.env.ANTIGRAVITY_MODEL || 'gemini-3.7-flash';
+    return process.env.ANTIGRAVITY_MODEL || 'gemini-3.7-flash-tiered';
   },
   get smtp() {
     const host = process.env.SMTP_HOST || 'smtp.example.com';

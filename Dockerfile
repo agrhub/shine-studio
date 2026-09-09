@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-slim
 
 ENV PORT=8080 \
     DEBIAN_FRONTEND=noninteractive

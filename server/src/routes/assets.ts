@@ -334,7 +334,7 @@ assetsRouter.post('/select-version', async (req: Request, res: Response) => {
             }
           } else {
             targetScene.storyboard_frame_url = asset.url;
-            targetScene.image_url = asset.url;
+            // targetScene.image_url = asset.url;
             if (targetScene.status === 'draft') targetScene.status = 'image_ready';
             if (Array.isArray(targetScene.versions)) {
               targetScene.versions = targetScene.versions.map((v: AssetVersion) => ({
@@ -1076,14 +1076,14 @@ assetsRouter.post('/screenplay/analyze', async (req: Request, res: Response) => 
               },
               duration: totalDuration,
               duration_seconds: totalDuration,
-              script: JSON.stringify({
-                episode: ep.title,
-                episode_number: ep.episode_number,
-                title: ep.title,
-                screenplay: cleanScreenplay,
-                scenes: normalizedScenes,
-                total_duration_seconds: totalDuration,
-              }),
+              // script: JSON.stringify({
+              //   episode: ep.title,
+              //   episode_number: ep.episode_number,
+              //   title: ep.title,
+              //   screenplay: cleanScreenplay,
+              //   scenes: normalizedScenes,
+              //   total_duration_seconds: totalDuration,
+              // }),
             });
 
             await TimelineService.getOrBuildEpisodeTimeline(episode_id).catch((e: any) => Logger.warn(`[assetsRouter.analyze] Timeline sync error: ${e.message}`));

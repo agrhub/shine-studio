@@ -41,22 +41,22 @@ export class AIProviderRouter {
     }
     
     const db = await getDatabaseProvider();
-    let isWorkerOnline = await flowServiceClient.hasActiveWorkers();
-    if (!isWorkerOnline) {
-      const isServerUp = await flowServiceClient.isWorkerHealthy();
-      if (isServerUp) {
-        Logger.info('[AIProviderRouter] Flow Worker server is online. Waiting up to 3.5s for connected Flow tab...');
-        isWorkerOnline = await flowServiceClient.waitForActiveWorker(3500);
-        if (isWorkerOnline) {
-          Logger.info('[AIProviderRouter] ✅ Flow tab connected successfully to worker.');
-        } else {
-          Logger.warn('[AIProviderRouter] ⚠️ Flow Worker server is running, but 0 Google Flow tabs are currently connected (WebSocket inactive).');
-        }
-      } else {
-        Logger.info('[AIProviderRouter] Flow Worker service is offline (localhost:8088 unreachable).');
-      }
-    }
     if (options.type === 'IMAGE') {
+      let isWorkerOnline = await flowServiceClient.hasActiveWorkers();
+      if (!isWorkerOnline) {
+        const isServerUp = await flowServiceClient.isWorkerHealthy();
+        if (isServerUp) {
+          Logger.info('[AIProviderRouter] Flow Worker server is online. Waiting up to 3.5s for connected Flow tab...');
+          isWorkerOnline = await flowServiceClient.waitForActiveWorker(3500);
+          if (isWorkerOnline) {
+            Logger.info('[AIProviderRouter] ✅ Flow tab connected successfully to worker.');
+          } else {
+            Logger.warn('[AIProviderRouter] ⚠️ Flow Worker server is running, but 0 Google Flow tabs are currently connected (WebSocket inactive).');
+          }
+        } else {
+          Logger.info('[AIProviderRouter] Flow Worker service is offline (localhost:8088 unreachable).');
+        }
+      }
       try {
         const flowAccounts = await db.getFlowAccounts('ACTIVE');
         const bestAccount = flowAccounts && flowAccounts.length > 0
@@ -139,6 +139,21 @@ export class AIProviderRouter {
     }
 
     if (options.type === 'VIDEO') {
+      let isWorkerOnline = await flowServiceClient.hasActiveWorkers();
+      if (!isWorkerOnline) {
+        const isServerUp = await flowServiceClient.isWorkerHealthy();
+        if (isServerUp) {
+          Logger.info('[AIProviderRouter] Flow Worker server is online. Waiting up to 3.5s for connected Flow tab...');
+          isWorkerOnline = await flowServiceClient.waitForActiveWorker(3500);
+          if (isWorkerOnline) {
+            Logger.info('[AIProviderRouter] ✅ Flow tab connected successfully to worker.');
+          } else {
+            Logger.warn('[AIProviderRouter] ⚠️ Flow Worker server is running, but 0 Google Flow tabs are currently connected (WebSocket inactive).');
+          }
+        } else {
+          Logger.info('[AIProviderRouter] Flow Worker service is offline (localhost:8088 unreachable).');
+        }
+      }
       try {
         const flowAccounts = await db.getFlowAccounts('ACTIVE');
         const bestAccount = flowAccounts && flowAccounts.length > 0

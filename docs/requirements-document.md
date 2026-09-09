@@ -248,6 +248,21 @@ Shine operates as a cloud-hosted web application utilizing a Vue 3 + Vite fronte
 * **FR-067**: **Neural Overlays** - System shall apply AI-generated visual overlays (e.g., rain, dust motes, cinematic flares). (Should | Pro)
 * **FR-071**: **Live Voice Input** - System shall support the `connectLive()` WebSocket multimodal live API for real-time voice interaction. (Should | Pro, Admin)
 
+### 3.16 Bulk Social Publishing & Multi-Platform Distribution
+* **FR-114**: **Bulk Social Publishing Center & 1-Click Multi-Channel Distribution** - System shall provide a dedicated 3-step publishing wizard (`PublishWizardModal.vue`) and background task manager allowing creators to select rendered versions, generate platform-tailored metadata/tags/descriptions via Gemini, pick target distribution channels (YouTube Shorts, TikTok, Instagram Reels, Facebook Reels, Douyin), and deploy instantly or schedule posts with real-time SSE progress streaming (`/api/publish/render/stream`) and live URL verification (e.g., live YouTube Shorts playback). (Must | Pro, Admin)
+
+### 3.17 Sets, Locations & Narrative Props Engine
+* **FR-115**: **Sets, Locations & Narrative Props Engine for Cross-Scene Continuity** - System shall support managing dedicated physical Sets (e.g., Luxury Penthouse, Neon Alley, Abandoned Warehouse) and key narrative Props (e.g., encrypted flash drive, antique pocket watch) linked to scene visual prompts and character wardrobe configurations, locking environment aesthetics and object consistency across multi-episode runs. (Must | All Roles)
+
+### 3.18 Antigravity Google OAuth Account Pool & High-Throughput Token Manager
+* **FR-116**: **Antigravity Google OAuth Account Pool & Rate-Limit Failover** - System shall support an enterprise account pool management system (`/api/antigravity-accounts`) allowing administrators to connect multiple Google OAuth accounts, track live health/quota metrics, automatically rotate active credentials when hitting rate limits, and ensure uninterrupted high-throughput script and video generation across the entire studio. (Must | Admin)
+
+### 3.19 Grafana MCP Observability & Subagent Tracing
+* **FR-117**: **Grafana MCP Two-Way Observability Portal & Subagent Latency Tracing** - System shall provide seamless integration with Grafana Cloud / OpenTelemetry to monitor real-time P95/P99 latency, token consumption per subagent (Director, StorySkeleton, ScriptAgent, SupervisionAgent), error rates, and render worker cluster health directly from the studio settings panel. (Must | Admin)
+
+### 3.20 Dual-Mode Video Export & Interactive Review Player
+* **FR-118**: **Dual-Mode Video Export & Interactive Review Player** - System shall provide an Export Modal supporting both client-side WebCodecs canvas rendering (zero cloud cost, instant export) and server-side headless Node.js batch rendering on Cloud Run, complemented by an instant Review Player modal allowing creators to inspect final rendered MP4s with playback scrubbing, resolution inspection, and 1-click launch into the Publishing Center. (Must | All Roles)
+
 ---
 
 ## 4. Non-Functional Requirements

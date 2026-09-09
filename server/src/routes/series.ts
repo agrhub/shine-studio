@@ -377,7 +377,7 @@ router.put('/:id/episodes/:epId', async (req: Request, res: Response): Promise<v
 });
 
 // POST /api/series/:id/episodes/:epId/render-versions — Add / upload a rendered video version
-router.post('/:id/episodes/:epId/render-versions', upload.single('file'), async (req: Request, res: Response): Promise<void> => {
+router.post('/:id/episodes/:epId/render-versions', upload.any(), async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: seriesId, epId } = req.params;
     const db = await getDatabaseProvider();
@@ -391,15 +391,27 @@ router.post('/:id/episodes/:epId/render-versions', upload.single('file'), async 
 
     let finalVideoUrl = req.body.video_url || req.body.url || '';
     let finalFileSize = req.body.file_size || '';
+    let finalThumbUrl = (typeof req.body.thumbnail_url === 'string' && req.body.thumbnail_url !== '[object Blob]') ? req.body.thumbnail_url : '';
+
+    const files = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : (req.file ? [req.file] : []);
+    const videoFile = files.find(f => f.fieldname === 'file' || f.mimetype.startsWith('video/'));
+    const thumbFile = files.find(f => f.fieldname === 'thumbnail' || f.fieldname === 'thumbnail_url' || f.mimetype.startsWith('image/'));
 
     // If a video file was uploaded directly via multipart/form-data
-    if (req.file) {
-      const file = req.file;
-      const mime = file.mimetype || 'video/mp4';
-      const ext = file.originalname.split('.').pop() || 'mp4';
-      const s3Result = await StorageFactory.uploadMedia(file.buffer, 'videos', ext, mime);
+    if (videoFile) {
+      const mime = videoFile.mimetype || 'video/mp4';
+      const ext = videoFile.originalname.split('.').pop() || 'mp4';
+      const s3Result = await StorageFactory.uploadMedia(videoFile.buffer, 'videos', ext, mime);
       finalVideoUrl = `/api/assets/file/${s3Result.key}`;
-      finalFileSize = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+      finalFileSize = `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    // If a thumbnail image was uploaded directly
+    if (thumbFile) {
+      const mime = thumbFile.mimetype || 'image/jpeg';
+      const ext = thumbFile.originalname.split('.').pop() || 'jpg';
+      const s3Thumb = await StorageFactory.uploadMedia(thumbFile.buffer, 'images', ext, mime);
+      finalThumbUrl = `/api/assets/file/${s3Thumb.key}`;
     }
 
     if (!finalVideoUrl) {
@@ -419,7 +431,7 @@ router.post('/:id/episodes/:epId/render-versions', upload.single('file'), async 
       resolution: req.body.resolution || '1080x1920 (9:16 Vertical HD)',
       video_url: finalVideoUrl,
       url: finalVideoUrl,
-      thumbnail_url: req.body.thumbnail_url || ep.cover_image || ep.scenes?.[0]?.storyboard_frame_url || '/images/dashboard/poster-1.jpg',
+      thumbnail_url: finalThumbUrl || ep.cover_image || ep.scenes?.[0]?.storyboard_frame_url || '/images/dashboard/poster-1.jpg',
       duration: Number(req.body.duration) || (ep.scenes?.reduce((acc: number, sc: any) => acc + (sc.duration_seconds || 5), 0)) || 60,
       file_size: finalFileSize || req.body.file_size || '24.5 MB',
       rendered_at: new Date().toISOString(),
@@ -529,8 +541,8 @@ router.patch('/:id/episodes/:epId', async (req: Request, res: Response): Promise
   }
 });
 
-// GET /api/series/:id/episodes/:epId/script - Get or auto-generate full screenplay for episode
-router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Promise<void> => {
+// GET /api/series/:id/episodes/:epId - Get or auto-generate full screenplay for episode
+router.get('/:id/episodes/:epId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: seriesId, epId } = req.params;
     const db = await getDatabaseProvider();
@@ -574,23 +586,26 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
       if (sceneSum > 0 && (ep.duration !== sceneSum || ep.duration_seconds !== sceneSum)) {
         await db.updateEpisode(ep.id, { duration: totalDur, duration_seconds: totalDur }).catch(() => {});
       }
-      ok(res, {
-        episode: `EP ${String(ep.episode_number).padStart(2, '0')}`,
-        episode_number: ep.episode_number,
-        title: ep.title,
-        synopsis: ep.synopsis,
+      // const normalizedScenes: SceneEntity[] = (ep.scenes || []).map((s: any, idx: number) => normalizeSceneEntity(s, idx + 1)).filter((s): s is SceneEntity => s !== null);
+      // const epDuration = normalizedScenes.reduce((sum, sc) => sum + (Number(sc.duration_seconds) || 0), 0) || 60;
+      ok(res, {...ep,
         screenplay,
-        scenes: ep.scenes || [],
-        total_duration_seconds: totalDur,
+        // episode: `EP ${String(ep.episode_number).padStart(2, '0')}`,
+        // episode_number: ep.episode_number,
+        // title: ep.title,
+        // synopsis: ep.synopsis,
+        // screenplay,
+        // scenes: ep.scenes || [],
+        // // total_duration_seconds: totalDur,
         duration_seconds: totalDur,
         duration: totalDur,
         characters,
         locations,
         props,
-        dubbing_settings: (ep as any).dubbing_settings || {},
-        caption_settings: (ep as any).caption_settings || {},
-        caption_languages: (ep as any).caption_languages || [],
-        dubbing_languages: (ep as any).dubbing_languages || [],
+        dubbing_settings: ep.dubbing_settings || {},
+        caption_settings: ep.caption_settings || {},
+        caption_languages: ep.caption_languages || [],
+        dubbing_languages: ep.dubbing_languages || [],
       });
       return;
     }
@@ -629,11 +644,11 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
         },
         duration: epDuration,
         duration_seconds: epDuration,
-        script: JSON.stringify({
-          ...scriptRes,
-          scenes: normalizedScenes,
-          total_duration_seconds: epDuration,
-        }),
+        // script: JSON.stringify({
+        //   ...scriptRes,
+        //   scenes: normalizedScenes,
+        //   total_duration_seconds: epDuration,
+        // }),
       });
 
       await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[Auto-Script] Timeline sync error: ${e.message}`));
@@ -641,7 +656,7 @@ router.get('/:id/episodes/:epId/script', async (req: Request, res: Response): Pr
 
       ok(res, {
         ...updatedEp,
-        total_duration_seconds: epDuration,
+        // total_duration_seconds: epDuration,
         duration_seconds: epDuration,
         duration: epDuration,
         scenes: normalizedScenes,
@@ -716,11 +731,11 @@ router.post('/:id/episodes/:epId/generate-script', async (req: Request, res: Res
         },
         duration: epDuration,
         duration_seconds: epDuration,
-        script: JSON.stringify({
-          ...scriptRes,
-          scenes: normalizedScenes,
-          total_duration_seconds: epDuration,
-        }),
+        // script: JSON.stringify({
+        //   ...scriptRes,
+        //   scenes: normalizedScenes,
+        //   total_duration_seconds: epDuration,
+        // }),
       });
 
       await TimelineService.getOrBuildEpisodeTimeline(ep.id).catch((e: any) => Logger.warn(`[Generate-Script] Timeline sync error: ${e.message}`));
@@ -728,7 +743,7 @@ router.post('/:id/episodes/:epId/generate-script', async (req: Request, res: Res
 
       ok(res, {
         ...scriptRes,
-        total_duration_seconds: epDuration,
+        // total_duration_seconds: epDuration,
         duration_seconds: epDuration,
         duration: epDuration,
         scenes: normalizedScenes,

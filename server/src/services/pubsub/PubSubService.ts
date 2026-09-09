@@ -531,12 +531,35 @@ export class PubSubService {
           pJob.step_progress.render.status = 'completed';
           pJob.step_progress.render.progress = 100;
           pJob.step_progress.render.message = 'Render completed successfully';
+        } else if (pJob.step_progress?.b6) {
+          pJob.step_progress.b6.status = 'completed';
+          pJob.step_progress.b6.progress = 100;
+          pJob.step_progress.b6.message = 'Render completed successfully';
         }
         await db.savePipelineJob(pJob);
         const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
         PatchSyncService.broadcast(job.seriesId, 'pipeline_job:completed', pJob);
         PatchSyncService.broadcast(job.seriesId, 'pipeline_job:updated', pJob);
       }
+
+      // Notify CompositorWorker of completion so RenderToolExecutors promise resolves immediately
+      try {
+        const { compositorWorker } = await import('../compositor/CompositorWorker.js');
+        const completedRenderState = {
+          jobId: job.pipelineJobId,
+          seriesId: job.seriesId,
+          episodeId: job.episodeId,
+          status: 'completed' as const,
+          progress: 100,
+          outputUrl: fileEndpointUrl,
+          outputsByLang: { [job.combKey]: fileEndpointUrl },
+        };
+        (compositorWorker as any).jobs?.set(job.pipelineJobId, completedRenderState);
+        compositorWorker.emit('completed', completedRenderState);
+      } catch (workerNotifyErr: any) {
+        Logger.warn(`[PubSubService] Failed to notify CompositorWorker of completion: ${workerNotifyErr.message}`);
+      }
+
       Logger.info(`[PubSubService] Video render completed & saved: ${fileEndpointUrl}`);
     } catch (err: any) {
       Logger.error(`[PubSubService] Failed to finalize completed render job ${remoteJobId}: ${err.message}`);
@@ -560,10 +583,31 @@ export class PubSubService {
         if (pJob.step_progress?.render) {
           pJob.step_progress.render.status = 'failed';
           pJob.step_progress.render.message = errorMsg || 'Render failed';
+        } else if (pJob.step_progress?.b6) {
+          pJob.step_progress.b6.status = 'failed';
+          pJob.step_progress.b6.message = errorMsg || 'Render failed';
         }
         await db.savePipelineJob(pJob);
         const { PatchSyncService } = await import('@/realtime/PatchSyncService.js');
         PatchSyncService.broadcast(job.seriesId, 'pipeline_job:updated', pJob);
+      }
+
+      // Notify CompositorWorker of failure
+      try {
+        const { compositorWorker } = await import('../compositor/CompositorWorker.js');
+        const failedRenderState = {
+          jobId: job.pipelineJobId,
+          seriesId: job.seriesId,
+          episodeId: job.episodeId,
+          status: 'failed' as const,
+          progress: 0,
+          error: errorMsg || 'Render job failed on worker',
+          outputUrl: null,
+        };
+        (compositorWorker as any).jobs?.set(job.pipelineJobId, failedRenderState);
+        compositorWorker.emit('status', failedRenderState);
+      } catch (workerNotifyErr: any) {
+        Logger.warn(`[PubSubService] Failed to notify CompositorWorker of failure: ${workerNotifyErr.message}`);
       }
     } catch {}
   }

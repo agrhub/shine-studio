@@ -35,16 +35,16 @@ export class VideoToolExecutors {
 
       let targets = scenes;
       if (params.sceneIndex !== undefined) {
-        targets = scenes.filter((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
+        targets = scenes.filter((s: SceneEntity) => Number(s.index ?? s.scene_number) === Number(params.sceneIndex));
         if (targets.length === 0) {
           return { success: false, message: `Scene #${params.sceneIndex} not found in Episode "${episode.title}".` };
         }
       }
 
       // Validate visual prerequisites
-      const unready = targets.filter((s: SceneEntity) => !s.storyboard_frame_url && !s.image_url);
+      const unready = targets.filter((s: SceneEntity) => !s.storyboard_frame_url);
       if (unready.length > 0) {
-        const missingList = unready.map((s: SceneEntity) => `#${s.index || s.scene_number || '?'}`).join(', ');
+        const missingList = unready.map((s: SceneEntity) => `#${s.index ?? s.scene_number ?? '?'}`).join(', ');
         return {
           success: false,
           message: `Cannot generate video: Prerequisite storyboard image(s) for scene(s) ${missingList} are not ready. Please generate storyboard frames first (b2).`,
@@ -55,8 +55,8 @@ export class VideoToolExecutors {
       const updatedScenes: SceneEntity[] = [...scenes];
 
       for (const sc of targets) {
-        const scIndex = Number(sc.index || sc.scene_number);
-        const startFrame = sc.storyboard_frame_url || sc.image_url;
+        const scIndex = Number(sc.index ?? sc.scene_number);
+        const startFrame = sc.storyboard_frame_url;
         const endFrame = sc.storyboard_end_frame_url;
         const customPrompt = `${sc.visual_prompt || ''}, ${sc.end_frame_prompt || ''}, ${sc.action || ''}`;
 
@@ -96,7 +96,7 @@ export class VideoToolExecutors {
           });
 
           const videoUrl = result?.url;
-          const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
+          const idx = updatedScenes.findIndex((s) => Number(s.index ?? s.scene_number) === scIndex);
           if (idx >= 0 && videoUrl) {
             const curVidVersions: AssetVersion[] = Array.isArray(updatedScenes[idx].video_versions) ? [...(updatedScenes[idx].video_versions as AssetVersion[])] : [];
             if (curVidVersions.length === 0 && updatedScenes[idx].video_url && updatedScenes[idx].video_url !== videoUrl) {

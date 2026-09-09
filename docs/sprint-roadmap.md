@@ -21,6 +21,7 @@ This document outlines the Agile Sprint Framework for building, testing, and rel
 | **Sprint 5** | Weeks 9–10 | Real-Time WebSocket Patches & Code Guardrails | `v0.9 Enterprise RC2` | WebSocket patch broadcast < 50ms, Pre-commit guard PASS |
 | **Sprint 6** | Weeks 11–12 | Smart Publishing, Growth Innovations & Launch | `v1.0 Production Launch` | E2E test suite PASS, Multi-platform publish verified |
 | **Sprint 7** | Weeks 13–14 | Full Backend REST API Integration, Dynamic Pinia Binding, Real Error Handling & Interactive E2E Testing | `v1.1 Production-Ready Commercial` | Live API data connected, Zero mock arrays, Full interactive click E2E PASS |
+| **Sprint 8** | Weeks 15–16 | Bulk Social Publishing Center B9, Sets & Props Continuity Engine, Antigravity OAuth Account Pool, Grafana MCP Observability & 44-Screen Production Audit | `v1.2 Enterprise Production Gold 🏆` | Live YouTube Shorts playback verified, 44 production screenshots mapped, rate-limit auto-rotation active |
 
 ---
 
@@ -203,3 +204,31 @@ Instantiate the OpenVideo core libraries (`@openvideo/video-renderer`, `@openvid
 
 #### Deliverable & Release
 - **Release Version:** `v1.1 Production-Ready Commercial App & Cloud Run Ecosystem 🚀`.
+
+---
+
+### Sprint 8: Bulk Social Publishing Center, Continuity Engines, Account Pools & Production Visual Audit (Weeks 15–16)
+
+#### Goals
+Ship the dedicated Bulk Social Publishing Center B9 with 3-step wizard and verified live multi-platform deployment (demonstrated live on YouTube Shorts `@TanDo-o9u`). Implement cross-scene physical continuity via Sets & Props engine and Cast Wardrobe locking. Deploy the Antigravity Google OAuth Account Pool with rate-limit failover and integrate Grafana MCP two-way observability. Complete the comprehensive visual audit with 44 production-verified screenshots across all studio modules.
+
+#### Feature Tasks
+- **Bulk Social Publishing Center (B9):** 3-step publishing modal (`PublishWizardModal.vue`) supporting multi-version selection, Gemini platform-tailored SEO metadata and hashtag generation, channel destination picker (YouTube Shorts, TikTok, Instagram Reels, Douyin), and immediate or scheduled dispatch.
+- **Live Social Dispatch & Real-Time SSE Streams:** Background Task Manager with streaming SSE logs (`GET /api/publish/render/stream`), real HTTP dispatch, and live playback verification on YouTube Shorts (`https://youtube.com/shorts/...`).
+- **Sets, Locations & Narrative Props Engine:** Physical environment configuration (Penthouse, Neon Alley, Cyberpunk Lab) and story props (encrypted drive, vintage dagger) linked directly to scene visual prompts to eliminate world drift alongside facial LoRAs.
+- **Cast Wardrobe Locking:** Persona Studio extension locking character outfits and style parameters across multiple episodes.
+- **Antigravity Google OAuth Account Pool:** Enterprise credential management (`/api/antigravity-accounts`) with automated token rotation upon encountering HTTP 429 rate limits, health monitoring, and model quota tracking.
+- **Grafana MCP Two-Way Observability Portal:** Settings integration (`/admin/observability`) visualizing subagent P95/P99 latency traces, token meters, and Cloud Run render cluster worker utilization.
+- **Dual-Mode Video Export & Interactive Review Player:** Modal presets for client-side WebCodecs canvas rendering vs Cloud Run headless Playwright batch rendering, paired with `ReviewVideoModal.vue` for scrubbing and 1-click publishing.
+- **44-Screen Visual Verification Audit:** Complete visual documentation archived in `docs/assets/screenshots/` (01 to 44) representing 100% verified UI workflows with zero mockups.
+
+#### Testing & QA
+- `TC-PUB-001` ~ `TC-PUB-006` (Bulk Social Publishing & live YouTube Shorts playback verified).
+- `TC-SET-001` ~ `TC-SET-003` (Sets, Props, and wardrobe consistency tests).
+- `TC-ACC-001` ~ `TC-ACC-003` & `TC-OBS-001` (Account Pool auto-rotation & Grafana telemetry).
+- API-018 ~ API-025 integration test suite execution.
+- 44 production screenshots mapped and audited.
+
+#### Deliverable & Release
+- **Release Version:** `v1.2 Enterprise Production Gold 🏆`.
+

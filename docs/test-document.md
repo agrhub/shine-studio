@@ -142,6 +142,12 @@ A hybrid testing approach will be utilized, combining automated testing (Unit, I
 | EP-008 | Concurrent exports | Performance| P2 | Multiple tabs | 1. Start render in 2 tabs. | Both queue and process successfully. | | TBD |
 | EP-009 | Cancel render | Functional | P2 | Rendering | 1. Click 'Cancel'. | Render job aborted on backend. | | TBD |
 | EP-010 | Download MP4 | Functional | P0 | Render complete | 1. Click 'Download'. | MP4 file downloaded to local machine. | | TBD |
+| EP-011 | Bulk Publishing Step 1: Version Selection | Functional | P0 | Series has renders | 1. Open Publish Wizard. 2. Select rendered versions. | Versions highlighted with resolution badge. | | TBD |
+| EP-012 | Bulk Publishing Step 2: AI Metadata Gen | Functional | P0 | Versions selected | 1. Click Next. 2. Trigger AI metadata generator. | Gemini returns SEO titles, hashtags, description. | | TBD |
+| EP-013 | Bulk Publishing Step 3: Target Channels | Functional | P0 | Metadata confirmed | 1. Select YouTube Shorts, TikTok, Reels. | Channels selected with connected account status. | | TBD |
+| EP-014 | Post Scheduling & Queue Dispatch | Functional | P1 | Wizard Step 3 | 1. Choose 'Schedule for later'. 2. Set time. | Job queued in Task Manager with schedule timestamp. | | TBD |
+| EP-015 | Live YouTube Shorts Verification | E2E | P0 | Publish dispatched | 1. Trigger YouTube Shorts deployment. 2. Open link. | Live YouTube Shorts playback URL verified on YouTube. | | TBD |
+| EP-016 | Task Manager Real-Time SSE Logs | UI / API | P1 | Task running | 1. Open Task Manager sidebar. 2. View logs. | Streaming SSE log entries update without page refresh. | | TBD |
 
 ### 2.6 Voice & Dubbing (8 Test Cases)
 | TC-ID | Title | Type | Priority | Preconditions | Steps | Expected Result | Actual | Status |
@@ -372,14 +378,34 @@ A hybrid testing approach will be utilized, combining automated testing (Unit, I
 | TC-PPL-001 | Monetization | AI In-Video Product Placement Layer Compositing | 1. Supply 3D product PNG 2. Trigger `/environments/product-placement` | Composites sponsored product onto coffee table layer with matching lighting, perspective skew, and affiliate link | P1 |
 | TC-OFF-001 | Infrastructure | Offline IndexedDB Command Queueing & Reconnection Sync | 1. Disconnect internet 2. Edit timeline clips 3. Reconnect network | Stores OpenVideo patches in IndexedDB offline; automatically dispatches `/collaboration/sync-offline-patches` on reconnection | P0 |
 
+### 2.29 Bulk Social Publishing & Multi-Platform Channel Distribution Tests
+| TC ID | Module | Test Name | Steps | Expected Result | Priority |
+|-------|--------|-----------|-------|-----------------|----------|
+| TC-PUB-001 | Social Publishing | Fetch rendered versions | 1. Open Publish Wizard with seriesId 2. Query rendered versions | Returns all available MP4 versions with resolution, bitrate, timestamp | P0 |
+| TC-PUB-002 | Social Publishing | AI Cover Thumbnail Generation | 1. Select rendered version 2. Click 'Generate AI Cover' | Returns 9:16 high CTR thumbnail with title typography | P1 |
+| TC-PUB-003 | Social Publishing | Platform-specific metadata generation | 1. Select target YouTube Shorts & TikTok 2. Click Generate Metadata | Returns platform-tailored titles, hashtags, description blocks via Gemini | P0 |
+| TC-PUB-004 | Social Publishing | Multi-platform batch deployment | 1. Select 2 channels 2. Click 'Publish Now' | Dispatches background jobs; returns taskId and monitoring link | P0 |
+| TC-PUB-005 | Social Publishing | Real-time SSE render/publish stream | 1. Connect to `/api/publish/render/stream` 2. Monitor events | Receives progress percentage and status events without timeouts | P0 |
+| TC-PUB-006 | Social Publishing | Live YouTube Shorts verification | 1. Deploy to YouTube Shorts 2. Follow returned video URL | Video plays live on YouTube Shorts (@TanDo-o9u) with correct audio & title | P0 |
+
+### 2.30 Sets, Narrative Props & Wardrobe Consistency Tests
+| TC ID | Module | Test Name | Steps | Expected Result | Priority |
+|-------|--------|-----------|-------|-----------------|----------|
+| TC-SET-001 | Sets & Props | Set location environment creation | 1. Open Sets tab 2. Add 'Neon Alley' with prompt & lighting | Set persisted and linked to series scenes | P1 |
+| TC-SET-002 | Sets & Props | Narrative prop assignment to scene | 1. Create prop 'Encrypted Flash Drive' 2. Assign to Scene 4 | Visual prompt includes prop description for Veo 3.1 generation | P1 |
+| TC-SET-003 | Sets & Props | Wardrobe consistency check across episodes | 1. Lock character wardrobe in Cast panel 2. Generate Episode 2 | Character wardrobe tags propagate into image/video prompts | P0 |
+
+### 2.31 Antigravity Google OAuth Account Pool & Observability Tests
+| TC ID | Module | Test Name | Steps | Expected Result | Priority |
+|-------|--------|-----------|-------|-----------------|----------|
+| TC-ACC-001 | Account Pool | List active OAuth pool accounts | 1. Navigate to Settings > AI Models 2. View account table | Lists connected accounts with email, token health, quotas, active status | P0 |
+| TC-ACC-002 | Account Pool | Health check & token sync | 1. Trigger 'Sync Accounts' | Refreshes OAuth tokens; updates quota remaining meters | P1 |
+| TC-ACC-003 | Account Pool | Rate-limit auto-rotation | 1. Simulate 429 quota exhaustion on Account A | Router automatically switches to Account B with zero request drops | P0 |
+| TC-OBS-001 | Observability | Grafana MCP telemetry check | 1. Open Settings > Grafana Observability | Displays latency charts, subagent token meters, and cluster health | P1 |
+
 ---
 
 ## 3. API Test Cases
-
-
-
-
-
 
 | APIT-ID | Endpoint | Method | Request Body / Params | Expected Status | Expected Response | Type |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -400,9 +426,14 @@ A hybrid testing approach will be utilized, combining automated testing (Unit, I
 | API-015 | `/api/ai/agentic/adapt-from-feedback` | POST | `{ "seriesId": "s1", "targetEpisodeNumber": 6 }` | 200 OK | `{ adaptationSummary: "...", revisedScript: {} }` | Script Feedback Loop |
 | API-016 | `/api/admin/flow-accounts/status` | GET | Admin JWT | 200 OK | `{ poolSize: 5, activeAccounts: 5, captchaHealth: "ok" }` | Google Flow Pool |
 | API-017 | `/api/health` | GET | None | 200 OK | `{ status: "ok", primaryDatabase: "sqlite" }` | DB Provider Check |
-
-
-
+| API-018 | `/api/publish/rendered-versions/:seriesId` | GET | None | 200 OK | `{ success: true, versions: [{ id: "...", url: "..." }] }` | Publish Version Query |
+| API-019 | `/api/publish/generate-cover` | POST | `{ "seriesId": "s1", "episodeId": "ep1" }` | 200 OK | `{ success: true, coverUrl: "..." }` | AI Cover Gen |
+| API-020 | `/api/publish/generate-metadata` | POST | `{ "seriesId": "s1", "targetPlatforms": ["youtube_shorts"] }` | 200 OK | `{ success: true, metadata: {...} }` | Platform SEO Gen |
+| API-021 | `/api/publish/schedule` | POST | `{ "seriesId": "s1", "scheduledAt": "2026-09-10T12:00:00Z" }` | 200 OK | `{ success: true, scheduleId: "..." }` | Post Scheduling |
+| API-022 | `/api/publish/connected-channels` | GET | None | 200 OK | `{ success: true, channels: [{ platform: "youtube", connected: true }] }` | Channel Query |
+| API-023 | `/api/publish/multi-platform` | POST | `{ "seriesId": "s1", "platforms": ["youtube_shorts"], "metadata": {...} }` | 200 OK | `{ success: true, taskId: "...", results: [...] }` | Multi-Platform Publish |
+| API-024 | `/api/antigravity-accounts` | GET | None | 200 OK | `{ success: true, accounts: [{ email: "...", status: "active" }] }` | Account Pool Query |
+| API-025 | `/api/antigravity-accounts/sync` | POST | None | 200 OK | `{ success: true, message: "Synced" }` | Account Pool Sync |
 
 ---
 

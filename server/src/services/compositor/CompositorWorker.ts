@@ -29,7 +29,7 @@ export class CompositorWorker extends EventEmitter {
   private jobs: Map<string, RenderJobState> = new Map();
 
   createJob(payload: CompositorPayload): RenderJobState {
-    const jobId = `job_${Date.now()}_${nanoid(6)}`;
+    const jobId = payload.pipeline_job_id || `job_${Date.now()}_${nanoid(6)}`;
     const job: RenderJobState = {
       jobId: jobId,
       seriesId: payload.series_id,
@@ -40,43 +40,45 @@ export class CompositorWorker extends EventEmitter {
     };
     this.jobs.set(jobId, job);
 
-    // Persist PipelineJobEntity into database so it appears in JobStatusPopover
-    (async () => {
-      try {
-        const db = await getDatabaseProvider();
-        const episode = await db.getEpisodeById(payload.episode_id);
-        const series = payload.series_id ? await db.getSeriesById(payload.series_id) : null;
-        const jobTitle = `Cloud Render: EP #${episode?.episode_number || 1} - ${episode?.title || 'Episode'}`;
-        const newJob: PipelineJobEntity = {
-          id: jobId,
-          user_id: series?.user_id || 'system',
-          series_id: payload.series_id,
-          episode_id: payload.episode_id,
-          type: 'render',
-          title: jobTitle,
-          status: 'running',
-          progress: 5,
-          current_step: 'Initializing Cloud Video Compositor...',
-          step_progress: {
-            render: { status: 'running', progress: 5, message: 'Queueing render worker...', assets: [] },
-          },
-          outputs: {},
-          logs: [
-            {
-              timestamp: new Date().toISOString(),
-              level: 'info',
-              message: `Cloud render job created for EP #${episode?.episode_number || 1}`,
+    // Persist PipelineJobEntity into database only if this is a standalone render (not part of an existing pipeline job)
+    if (!payload.pipeline_job_id) {
+      (async () => {
+        try {
+          const db = await getDatabaseProvider();
+          const episode = await db.getEpisodeById(payload.episode_id);
+          const series = payload.series_id ? await db.getSeriesById(payload.series_id) : null;
+          const jobTitle = `Cloud Render: EP #${episode?.episode_number || 1} - ${episode?.title || 'Episode'}`;
+          const newJob: PipelineJobEntity = {
+            id: jobId,
+            user_id: series?.user_id || 'system',
+            series_id: payload.series_id,
+            episode_id: payload.episode_id,
+            type: 'render',
+            title: jobTitle,
+            status: 'running',
+            progress: 5,
+            current_step: 'Initializing Cloud Video Compositor...',
+            step_progress: {
+              render: { status: 'running', progress: 5, message: 'Queueing render worker...', assets: [] },
             },
-          ],
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        await db.savePipelineJob(newJob);
-        PatchSyncService.broadcast(payload.series_id, 'pipeline_job:updated', newJob);
-      } catch (err: any) {
-        Logger.warn(`[CompositorWorker] Failed to create pipeline job record: ${err.message}`);
-      }
-    })();
+            outputs: {},
+            logs: [
+              {
+                timestamp: new Date().toISOString(),
+                level: 'info',
+                message: `Cloud render job created for EP #${episode?.episode_number || 1}`,
+              },
+            ],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          await db.savePipelineJob(newJob);
+          PatchSyncService.broadcast(payload.series_id, 'pipeline_job:updated', newJob);
+        } catch (err: any) {
+          Logger.warn(`[CompositorWorker] Failed to create pipeline job record: ${err.message}`);
+        }
+      })();
+    }
 
     // Dispatch background headless render
     this.processJob(jobId, payload);
@@ -188,6 +190,9 @@ export class CompositorWorker extends EventEmitter {
             if (activeJob.step_progress?.render) {
               activeJob.step_progress.render.progress = safePct;
               activeJob.step_progress.render.message = stepMsg;
+            } else if (activeJob.step_progress?.b6) {
+              activeJob.step_progress.b6.progress = safePct;
+              activeJob.step_progress.b6.message = stepMsg;
             }
             await db.savePipelineJob(activeJob);
             PatchSyncService.broadcast(payload.series_id, 'pipeline_job:updated', activeJob);
@@ -270,7 +275,7 @@ export class CompositorWorker extends EventEmitter {
             }
           }
 
-          const projectData: IProject = {
+          let projectData: IProject = {
             settings: {
               width: baseTimeline.settings?.width || 1080,
               height: baseTimeline.settings?.height || 1920,
@@ -551,6 +556,10 @@ export class CompositorWorker extends EventEmitter {
             finishedJob.step_progress.render.status = 'completed';
             finishedJob.step_progress.render.progress = 100;
             finishedJob.step_progress.render.message = `Rendered ${combinations.length} version(s)`;
+          } else if (finishedJob.step_progress?.b6) {
+            finishedJob.step_progress.b6.status = 'completed';
+            finishedJob.step_progress.b6.progress = 100;
+            finishedJob.step_progress.b6.message = `Rendered ${combinations.length} version(s)`;
           }
           await db.savePipelineJob(finishedJob);
           PatchSyncService.broadcast(payload.series_id, 'pipeline_job:completed', finishedJob);

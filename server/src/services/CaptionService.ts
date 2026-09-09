@@ -432,7 +432,7 @@ Respond with ONLY a JSON object matching this schema:
       try {
         const ep = await db.getEpisodeById(episodeId);
         if (ep) {
-          const rawScenes: SceneEntity[] = ep.scenes || (typeof ep.script === 'object' ? (ep.script as any)?.scenes : []);
+          const rawScenes: SceneEntity[] = ep.scenes || [];
           const scenes: SceneEntity[] = Array.isArray(rawScenes) ? rawScenes : [];
           const scene = scenes.find((s: SceneEntity) => (sceneId && s.id === sceneId) || s.index === sceneIndex || s.id === `scene_${sceneIndex}`);
 
@@ -525,7 +525,7 @@ Respond with ONLY a JSON object matching this schema:
     if (episodeId) {
       try {
         const ep = await db.getEpisodeById(episodeId);
-        const rawScenes: SceneEntity[] = ep?.scenes || (typeof ep?.script === 'object' ? (ep?.script as any)?.scenes : []);
+        const rawScenes: SceneEntity[] = ep?.scenes || [];
         const scenes: SceneEntity[] = Array.isArray(rawScenes) ? rawScenes : [];
         const sc = scenes.find((s: SceneEntity) => (sceneId && s.id === sceneId) || s.index === sceneIndex || s.id === `scene_${sceneIndex}`);
         existingBgm = sc?.bgm_url || '';

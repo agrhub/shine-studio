@@ -619,8 +619,9 @@ const handleVideoGeneration = async (req: Request, res: Response) => {
 app.post('/v1/video/generations', handleVideoGeneration);
 app.post('/v1/videos/generations', handleVideoGeneration);
 
-app.get('/v1/jobs', (_req: Request, res: Response) => {
-  const jobs = accountPool.listAllJobs();
+app.get('/v1/jobs', (req: Request, res: Response) => {
+  const accountId = (req.query.account_id || req.query.accountId || req.headers['x-account-id']) as string | undefined;
+  const jobs = accountPool.listAllJobs(accountId);
   res.json({ code: 200, data: jobs, ...jobs });
 });
 
@@ -638,8 +639,9 @@ app.get('/v1/queue', (_req: Request, res: Response) => {
   res.json({ code: 200, data: stats });
 });
 
-app.get('/v1/history', (_req: Request, res: Response) => {
-  const jobs = accountPool.listAllJobs();
+app.get('/v1/history', (req: Request, res: Response) => {
+  const accountId = (req.query.account_id || req.query.accountId || req.headers['x-account-id']) as string | undefined;
+  const jobs = accountPool.listAllJobs(accountId);
   const history = jobs.history
     .filter(h => h.status === 'SUCCESS' && (h.mediaUrl || h.base64Data))
     .map(h => ({
@@ -656,9 +658,14 @@ app.get('/v1/history', (_req: Request, res: Response) => {
   res.json({ code: 200, history, data: history });
 });
 
-app.delete('/v1/history', (_req: Request, res: Response) => {
-  accountPool.clearJobHistory();
-  res.json({ code: 200, success: true, message: 'Jobs history cleared' });
+app.delete('/v1/history', (req: Request, res: Response) => {
+  const accountId = (req.query.account_id || req.query.accountId || req.headers['x-account-id']) as string | undefined;
+  accountPool.clearJobHistory(accountId);
+  res.json({
+    code: 200,
+    success: true,
+    message: accountId ? `Jobs history for account ${accountId} cleared` : 'Jobs history cleared',
+  });
 });
 
 // ── 6. Dashboard & Extension Download Endpoints ───────────────────────────────
@@ -822,8 +829,9 @@ app.post(['/v1/accounts/:id/sync-credits', '/v1/accounts/:id/check-credits'], as
 
 // ── 8. Job Management & Asset History ────────────────────────────────────────
 
-app.get('/v1/jobs', (_req: Request, res: Response) => {
-  const data = accountPool.listAllJobs();
+app.get('/v1/jobs', (req: Request, res: Response) => {
+  const accountId = (req.query.account_id || req.query.accountId || req.headers['x-account-id']) as string | undefined;
+  const data = accountPool.listAllJobs(accountId);
   res.json({ code: 200, data });
 });
 
@@ -836,9 +844,13 @@ app.get('/v1/jobs/:id', (req: Request, res: Response) => {
   res.json({ code: 200, data: status });
 });
 
-app.delete('/v1/jobs', (_req: Request, res: Response) => {
-  accountPool.clearJobHistory();
-  res.json({ code: 200, message: 'All job history cleared successfully' });
+app.delete('/v1/jobs', (req: Request, res: Response) => {
+  const accountId = (req.query.account_id || req.query.accountId || req.headers['x-account-id']) as string | undefined;
+  accountPool.clearJobHistory(accountId);
+  res.json({
+    code: 200,
+    message: accountId ? `Job history for account ${accountId} cleared successfully` : 'All job history cleared successfully',
+  });
 });
 
 server.listen(PORT, () => {

@@ -233,10 +233,10 @@ export interface SceneEntity {
   frame_description: string;
   duration_seconds: number;
   // shots?: ShotFrame[];
-  image_url?: string;
+  // image_url?: string;
   storyboard_frame_url?: string;
   storyboard_end_frame_url?: string;
-  prompt?: string;
+  // prompt?: string;
   versions?: AssetVersion[];
   end_frame_versions?: AssetVersion[];
   video_versions?: AssetVersion[];
@@ -576,7 +576,7 @@ export interface EpisodeEntity {
   phase?: string;
   reference_assets?: EpisodeReferenceAssets;
   scenes: SceneEntity[];
-  script?: string;
+  // script?: string;
   cover_image?: string;
   duration: number;
   duration_seconds?: number;
@@ -1215,6 +1215,7 @@ export interface CompositorTrack {
 export interface CompositorPayload {
   series_id: string;
   episode_id: string;
+  pipeline_job_id?: string;
   dubbing_languages?: string[];
   caption_languages?: string[];
   resolution?: string;

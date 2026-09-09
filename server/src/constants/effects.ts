@@ -2,6 +2,8 @@
  * OpenVideo Built-in GLSL & Pixi Filter Effects Catalog
  * Reference: https://docs.openvideo.dev/core/03-creative/effects
  */
+import { GL_EFFECT_OPTIONS } from '@openvideo/engine-pixi';
+import { effect } from 'zod';
 export const OPENVIDEO_EFFECTS: Record<string, string> = {
   // Color Effects
   grayscale: 'grayscale',
@@ -121,8 +123,11 @@ export const OPENVIDEO_EFFECTS: Record<string, string> = {
 export function normalizeEffectKey(raw?: string): string | null {
   if (!raw) return null;
   const clean = raw.toLowerCase().trim().replace(/[\s_-]+/g, '');
-  if (['', 'none', 'normal', 'noneeffect', 'default', 'raw'].includes(clean)) {
-    return null;
-  }
-  return OPENVIDEO_EFFECTS[clean] || null;
+  const effect = GL_EFFECT_OPTIONS.find(effect => effect.key.toLowerCase() == clean);
+  return effect?.key || 'fadeIn';
+  // const clean = raw.toLowerCase().trim().replace(/[\s_-]+/g, '');
+  // if (['', 'none', 'normal', 'noneeffect', 'default', 'raw'].includes(clean)) {
+  //   return null;
+  // }
+  // return OPENVIDEO_EFFECTS[clean] || null;
 }

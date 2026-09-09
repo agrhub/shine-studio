@@ -51,6 +51,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentServerHttpUrl = 'http://localhost:8088';
   let isWorkerEnabled = true;
+  let currentActiveAccountId = '';
+
+  function isSameAccount(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return a.replace(/^google_acc_/, '').toLowerCase().trim() === b.replace(/^google_acc_/, '').toLowerCase().trim();
+  }
 
   // ── Toast Helper ───────────────────────────────────────────────────────────
   let toastTimer = null;
@@ -88,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (data.serverUrl) currentServerHttpUrl = data.serverUrl;
     isWorkerEnabled = data.isWorkerEnabled !== false;
+    if (data.accountId) currentActiveAccountId = data.accountId;
 
     // Header values
     const deviceId = (data.accountId || '—').replace(/^google_acc_/, '');
@@ -196,16 +204,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderHistoryTasks(history) {
-    if (!history || history.length === 0) {
+    const activeAcc = currentActiveAccountId || (valDevice ? valDevice.textContent : '');
+    const filtered = (history || []).filter(task => {
+      if (!task) return false;
+      if (!activeAcc || activeAcc === '—') return true;
+      return isSameAccount(task.accountId, activeAcc);
+    });
+
+    if (!filtered || filtered.length === 0) {
       historyTasksList.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">📋</div>
-          <div>No completed tasks yet.</div>
+          <div>No completed tasks yet for this account.</div>
         </div>`;
       return;
     }
 
-    historyTasksList.innerHTML = history.slice(0, 10).map(task => {
+    historyTasksList.innerHTML = filtered.slice(0, 10).map(task => {
       const isOk = task.status === 'SUCCESS';
       const statusClass = isOk ? 'success' : 'failed';
       const badgeClass = isOk ? 'badge-success' : 'badge-failed';
@@ -348,16 +363,32 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadMedia() {
     mediaGrid.innerHTML = '<div class="empty-state">Loading media from server...</div>';
     try {
-      const resp = await fetch(`${currentServerHttpUrl}/v1/history`);
+      const activeAcc = currentActiveAccountId || (inputAccountId ? inputAccountId.value.trim() : '') || (valDevice && valDevice.textContent !== '—' ? valDevice.textContent : '');
+      let fetchUrl = `${currentServerHttpUrl}/v1/history`;
+      const headers = {};
+      if (activeAcc && activeAcc !== '—') {
+        const urlObj = new URL(fetchUrl);
+        urlObj.searchParams.set('account_id', activeAcc);
+        fetchUrl = urlObj.toString();
+        headers['x-account-id'] = activeAcc;
+      }
+
+      const resp = await fetch(fetchUrl, { headers });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      const items = Array.isArray(data.history) ? data.history : (data.data || []);
+      let items = Array.isArray(data.history) ? data.history : (data.data || []);
+
+      // Strict account filtering on client side
+      if (activeAcc && activeAcc !== '—') {
+        items = items.filter(item => isSameAccount(item.accountId, activeAcc));
+      }
 
       if (items.length === 0) {
+        const label = (valDevice && valDevice.textContent !== '—') ? valDevice.textContent : (activeAcc || 'this account');
         mediaGrid.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">🖼</div>
-            <div>No generated media found in history.</div>
+            <div>No generated media found for account: <b>${escapeHtml(label)}</b>.</div>
           </div>`;
         return;
       }
@@ -391,10 +422,20 @@ document.addEventListener('DOMContentLoaded', () => {
   btnRefreshMedia.addEventListener('click', loadMedia);
 
   btnDeleteAllMedia.addEventListener('click', async () => {
-    if (!confirm('Clear all media and generation history?')) return;
+    const activeAcc = currentActiveAccountId || (inputAccountId ? inputAccountId.value.trim() : '') || (valDevice && valDevice.textContent !== '—' ? valDevice.textContent : '');
+    const label = (valDevice && valDevice.textContent !== '—') ? valDevice.textContent : (activeAcc || 'this account');
+    if (!confirm(`Clear media and generation history for account "${label}"?`)) return;
     try {
-      await fetch(`${currentServerHttpUrl}/v1/history`, { method: 'DELETE' });
-      showToast('Media history cleared', 'success');
+      let fetchUrl = `${currentServerHttpUrl}/v1/history`;
+      const headers = {};
+      if (activeAcc && activeAcc !== '—') {
+        const urlObj = new URL(fetchUrl);
+        urlObj.searchParams.set('account_id', activeAcc);
+        fetchUrl = urlObj.toString();
+        headers['x-account-id'] = activeAcc;
+      }
+      await fetch(fetchUrl, { method: 'DELETE', headers });
+      showToast(`Media history cleared for ${label}`, 'success');
       loadMedia();
     } catch (err) {
       showToast(`Delete failed: ${err.message}`, 'error');
@@ -509,12 +550,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   clearHistoryBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY' }, () => {
+    const activeAcc = currentActiveAccountId || (inputAccountId ? inputAccountId.value.trim() : '') || (valDevice && valDevice.textContent !== '—' ? valDevice.textContent : '');
+    const label = (valDevice && valDevice.textContent !== '—') ? valDevice.textContent : (activeAcc || 'current account');
+    chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY', accountId: activeAcc }, () => {
       renderHistoryTasks([]);
       metricTotal.textContent = '0';
       metricSuccess.textContent = '0';
       metricFailed.textContent = '0';
-      showToast('History cleared');
+      showToast(`History cleared for ${label}`);
     });
   });
 

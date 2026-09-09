@@ -57,6 +57,18 @@ GEMINI_MODEL_VIDEO="veo-3.1-generate-001"
 GEMINI_MODEL_TTS="gemini-3.1-flash-tts-preview"
 GEMINI_MODEL_VOICE="gemini-live-2.5-flash-native-audio"
 GEMINI_MODEL_MUSIC="lyria-3-clip-preview"
+
+# --- 5. Stock Media & Search Engines ---
+PARALLEL_API_KEY="your-parallel-search-mcp-key"
+PEXELS_API_KEY="your-pexels-api-key"
+PIXABAY_API_KEY="your-pixabay-api-key"
+FREESOUND_API_KEY="your-freesound-api-key"
+
+# --- 6. Social Publishing OAuth ---
+YOUTUBE_CLIENT_ID="your-google-oauth-client-id"
+YOUTUBE_CLIENT_SECRET="your-google-oauth-client-secret"
+TIKTOK_CLIENT_KEY="your-tiktok-open-api-client-key"
+TIKTOK_CLIENT_SECRET="your-tiktok-client-secret"
 ```
 
 ### 3. Run Development Servers

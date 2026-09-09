@@ -4,66 +4,69 @@ import { Logger } from '../utils/logger.js';
 import { normalizeSceneEntity } from '../utils/sceneNormalizer.js';
 import { OPENVIDEO_EFFECTS } from '../constants/effects.js';
 import { CaptionService } from './CaptionService.js';
+import { PatchSyncService } from '~/realtime/PatchSyncService.js';
+import { normalizeTransitionKey } from '../constants/transitions.js';
+import { normalizeEffectKey } from '../constants/effects.js';
 
 export class TimelineService {
   /**
    * Normalize arbitrary transition strings from AI to canonical gl-transitions keys
    */
-  public static normalizeTransitionKey(raw?: string): string | null {
-    if (!raw) return null;
-    const clean = raw.toLowerCase().trim().replace(/[\-_]/g, ' ');
-    if (['cut', 'direct cut', 'smash cut', 'match cut', 'none', 'null', ''].includes(clean)) {
-      return null;
-    }
-    if (['fade', 'dissolve', 'crossfade', 'cross fade', 'fade to black', 'fade to white', 'wipe to black'].includes(clean)) {
-      return 'fade';
-    }
-    if (['wipeleft', 'wipe left', 'wipe_left'].includes(clean)) return 'wipeLeft';
-    if (['wiperight', 'wipe right', 'wipe_right'].includes(clean)) return 'wipeRight';
-    if (['wipeup', 'wipe up', 'wipe_up'].includes(clean)) return 'wipeUp';
-    if (['wipedown', 'wipe down', 'wipe_down'].includes(clean)) return 'wipeDown';
-    if (['cube'].includes(clean)) return 'cube';
-    if (['zoom', 'crosszoom', 'cross zoom', 'simplezoom', 'simple zoom'].includes(clean)) return 'CrossZoom';
-    if (['dreamy', 'dreamyzoom', 'dreamy zoom'].includes(clean)) return 'dreamy';
-    if (['glitch', 'glitchmemories', 'glitch memories', 'glitchdisplace', 'glitch displace'].includes(clean)) return 'glitchMemories';
-    if (['swirl'].includes(clean)) return 'Swirl';
-    if (['ripple', 'waterdrop', 'water drop'].includes(clean)) return 'ripple';
-    if (['wind'].includes(clean)) return 'wind';
-    if (['blur', 'linearblur', 'linear blur'].includes(clean)) return 'LinearBlur';
-    if (['mosaic', 'pixelize', 'pixel'].includes(clean)) return 'Mosaic';
-    if (['doorway'].includes(clean)) return 'doorway';
-    if (['burn', 'filmburn', 'film burn'].includes(clean)) return 'burn';
-    if (['circleopen', 'circle open'].includes(clean)) return 'circleopen';
-    if (['windowslice', 'window slice'].includes(clean)) return 'windowslice';
+  // public static normalizeTransitionKey(raw?: string): string | null {
+  //   if (!raw) return null;
+  //   const clean = raw.toLowerCase().trim().replace(/[\-_]/g, ' ');
+  //   if (['cut', 'direct cut', 'smash cut', 'match cut', 'none', 'null', ''].includes(clean)) {
+  //     return null;
+  //   }
+  //   if (['fade', 'dissolve', 'crossfade', 'cross fade', 'fade to black', 'fade to white', 'wipe to black'].includes(clean)) {
+  //     return 'fade';
+  //   }
+  //   if (['wipeleft', 'wipe left', 'wipe_left'].includes(clean)) return 'wipeLeft';
+  //   if (['wiperight', 'wipe right', 'wipe_right'].includes(clean)) return 'wipeRight';
+  //   if (['wipeup', 'wipe up', 'wipe_up'].includes(clean)) return 'wipeUp';
+  //   if (['wipedown', 'wipe down', 'wipe_down'].includes(clean)) return 'wipeDown';
+  //   if (['cube'].includes(clean)) return 'cube';
+  //   if (['zoom', 'crosszoom', 'cross zoom', 'simplezoom', 'simple zoom'].includes(clean)) return 'CrossZoom';
+  //   if (['dreamy', 'dreamyzoom', 'dreamy zoom'].includes(clean)) return 'dreamy';
+  //   if (['glitch', 'glitchmemories', 'glitch memories', 'glitchdisplace', 'glitch displace'].includes(clean)) return 'glitchMemories';
+  //   if (['swirl'].includes(clean)) return 'Swirl';
+  //   if (['ripple', 'waterdrop', 'water drop'].includes(clean)) return 'ripple';
+  //   if (['wind'].includes(clean)) return 'wind';
+  //   if (['blur', 'linearblur', 'linear blur'].includes(clean)) return 'LinearBlur';
+  //   if (['mosaic', 'pixelize', 'pixel'].includes(clean)) return 'Mosaic';
+  //   if (['doorway'].includes(clean)) return 'doorway';
+  //   if (['burn', 'filmburn', 'film burn'].includes(clean)) return 'burn';
+  //   if (['circleopen', 'circle open'].includes(clean)) return 'circleopen';
+  //   if (['windowslice', 'window slice'].includes(clean)) return 'windowslice';
 
-    // Fallback: check if raw itself is standard camelCase gl-transition key
-    const knownKeys = ['fade', 'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'cube', 'CrossZoom', 'SimpleZoom', 'DreamyZoom', 'glitchMemories', 'GlitchDisplace', 'dreamy', 'Swirl', 'waterDrop', 'ripple', 'wind', 'LinearBlur', 'Mosaic', 'pixelize', 'circleopen', 'windowslice', 'doorway', 'burn', 'InvertedPageCurl'];
-    const matched = knownKeys.find(k => k.toLowerCase() === clean.replace(/\s+/g, ''));
-    return matched || 'fade';
-  }
+  //   // Fallback: check if raw itself is standard camelCase gl-transition key
+  //   const knownKeys = ['fade', 'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'cube', 'CrossZoom', 'SimpleZoom', 'DreamyZoom', 'glitchMemories', 'GlitchDisplace', 'dreamy', 'Swirl', 'waterDrop', 'ripple', 'wind', 'LinearBlur', 'Mosaic', 'pixelize', 'circleopen', 'windowslice', 'doorway', 'burn', 'InvertedPageCurl'];
+  //   const matched = knownKeys.find(k => k.toLowerCase() === clean.replace(/\s+/g, ''));
+  //   return matched || 'fade';
+  // }
 
-  /**
-   * Normalize arbitrary video effect strings from AI to supported OpenVideo Pixi effect keys
-   */
-  public static normalizeEffectKey(raw?: string): string | null {
-    if (!raw) return null;
-    const clean = raw.toLowerCase().trim().replace(/[\-_]/g, ' ');
-    if (['none', 'null', '', 'normal', 'rain overlay', 'overlay', 'noneeffect', 'default', 'raw'].includes(clean)) {
-      return null;
-    }
-    const cleanNoSpace = clean.replace(/\s+/g, '');
-    if (OPENVIDEO_EFFECTS[cleanNoSpace]) {
-      return OPENVIDEO_EFFECTS[cleanNoSpace];
-    }
-    if (['glow', 'glowfilter', 'glow filter'].includes(clean)) return 'glowFilter';
-    if (['vignette', 'vignette filter'].includes(clean)) return 'vignette';
-    if (['blur', 'depthblur', 'depth blur', 'blur filter', 'depth'].includes(clean)) return 'depthBlur';
-    if (['noise', 'noise filter'].includes(clean)) return 'noiseFilter';
-    if (['crt', 'crt filter', 'retro'].includes(clean)) return 'crtFilter';
-    if (['rgb', 'rgbsplitter', 'rgb split', 'rgbglitch'].includes(clean)) return 'rgbSplitter';
-    if (['godray', 'godray filter', 'sunray'].includes(clean)) return 'godrayFilter';
-    return null;
-  }
+  // /**
+  //  * Normalize arbitrary video effect strings from AI to supported OpenVideo Pixi effect keys
+  //  */
+  // public static normalizeEffectKey(raw?: string): string | null {
+  //   if (!raw) return null;
+  //   const clean = raw.toLowerCase().trim().replace(/[\-_]/g, ' ');
+  //   if (['none', 'null', '', 'normal', 'rain overlay', 'overlay', 'noneeffect', 'default', 'raw'].includes(clean)) {
+  //     return null;
+  //   }
+  //   const cleanNoSpace = clean.replace(/\s+/g, '');
+  //   if (OPENVIDEO_EFFECTS[cleanNoSpace]) {
+  //     return OPENVIDEO_EFFECTS[cleanNoSpace];
+  //   }
+  //   if (['glow', 'glowfilter', 'glow filter'].includes(clean)) return 'glowFilter';
+  //   if (['vignette', 'vignette filter'].includes(clean)) return 'vignette';
+  //   if (['blur', 'depthblur', 'depth blur', 'blur filter', 'depth'].includes(clean)) return 'depthBlur';
+  //   if (['noise', 'noise filter'].includes(clean)) return 'noiseFilter';
+  //   if (['crt', 'crt filter', 'retro'].includes(clean)) return 'crtFilter';
+  //   if (['rgb', 'rgbsplitter', 'rgb split', 'rgbglitch'].includes(clean)) return 'rgbSplitter';
+  //   if (['godray', 'godray filter', 'sunray'].includes(clean)) return 'godrayFilter';
+  //   return null;
+  // }
   /**
    * Helper to resolve canvas dimensions from series ratio
    */
@@ -94,17 +97,106 @@ export class TimelineService {
         rawScenes = [];
       }
     }
-    if (!rawScenes || rawScenes.length === 0) {
-      if (episode?.script) {
-        try {
-          const parsedScript = typeof episode.script === 'string' ? JSON.parse(episode.script) : episode.script;
-          if (Array.isArray(parsedScript.scenes)) {
-            rawScenes = parsedScript.scenes;
-          }
-        } catch {}
+    // if (!rawScenes || rawScenes.length === 0) {
+    //   if (episode?.script) {
+    //     try {
+    //       const parsedScript = typeof episode.script === 'string' ? JSON.parse(episode.script) : episode.script;
+    //       if (Array.isArray(parsedScript.scenes)) {
+    //         rawScenes = parsedScript.scenes;
+    //       }
+    //     } catch {}
+    //   }
+    // }
+    return Array.isArray(rawScenes) ? rawScenes : [];
+  }
+
+  /**
+   * Robustly check whether a scene has spoken dialogue lines, translations, or TTS voiceover
+   */
+  static checkSceneHasDialogue(scene: SceneEntity): boolean {
+    if (!scene) return false;
+    const hasScriptDialogue = Array.isArray(scene.dialogue) && scene.dialogue.length > 0 && scene.dialogue.some((d: any) => {
+      const text = typeof d === 'string' ? d : (d?.line || d?.dialogue || d?.text || '');
+      return Boolean(text && text.trim());
+    });
+    const hasVoiceover = Boolean(scene.voiceover_url);
+    const hasTranslations = Boolean(
+      scene.translations && Object.values(scene.translations).some((t: any) => {
+        if (!t) return false;
+        if (t.voiceover_url) return true;
+        if (Array.isArray(t.dialogue) && t.dialogue.length > 0) {
+          return t.dialogue.some((td: any) => {
+            const text = typeof td === 'string' ? td : (td?.line || td?.dialogue || td?.text || '');
+            return Boolean(text && text.trim());
+          });
+        }
+        return false;
+      })
+    );
+    return Boolean(hasScriptDialogue || hasVoiceover || hasTranslations);
+  }
+
+  /**
+   * Sanitizes all clips in timeline:
+   * 1. If any track_video clip corresponds to a scene with dialogue, or overlaps with any active voiceover clip, mute video audio (volume = 0).
+   * 2. Normalize transition & effect keys.
+   */
+  static sanitizeTimelineClips(timelineData: IProject, episode?: EpisodeEntity | null): IProject {
+    if (!timelineData || !timelineData.clips) {
+      return timelineData;
+    }
+    const rawScenes = episode ? this.extractScenes(episode) : [];
+    const clips: Record<string, any> = { ...timelineData.clips };
+
+    // Find all active voiceover time intervals
+    const voIntervals: Array<{ from: number; to: number }> = [];
+    for (const clip of Object.values<any>(clips)) {
+      if (clip && (clip.trackId?.startsWith('track_voiceover') || clip.type === 'Audio' && clip.id?.startsWith('clip_vo_'))) {
+        const from = Number(clip.timing?.display?.from ?? clip.display?.from ?? 0);
+        const to = Number(clip.timing?.display?.to ?? clip.display?.to ?? 0);
+        if (to > from) {
+          voIntervals.push({ from, to });
+        }
       }
     }
-    return Array.isArray(rawScenes) ? rawScenes : [];
+
+    for (const [clipId, clip] of Object.entries<any>(clips)) {
+      if (clip.type === 'Transition') {
+        clip.transitionKey = normalizeTransitionKey(clip.transitionKey) || 'fade';
+      } else if (clip.type === 'Effect') {
+        clip.effectKey = normalizeEffectKey(clip.effectKey) || 'fadeIn';
+      } else if (clip.type === 'Video' || clip.trackId === 'track_video') {
+        // Check scene dialogue status
+        let hasDialogue = false;
+        const match = clipId.match(/_s(\d+)/) || clip.name?.match(/#?(\d+)/);
+        if (match && rawScenes.length > 0) {
+          const scIdx = Number(match[1]);
+          const sc = rawScenes.find((s, i) => (s.index || i + 1) === scIdx);
+          if (sc) {
+            hasDialogue = this.checkSceneHasDialogue(sc);
+          }
+        }
+        // Also check overlap with any voiceover
+        if (!hasDialogue && voIntervals.length > 0) {
+          const vFrom = Number(clip.timing?.display?.from ?? clip.display?.from ?? 0);
+          const vTo = Number(clip.timing?.display?.to ?? clip.display?.to ?? 0);
+          hasDialogue = voIntervals.some(vo => Math.max(vFrom, vo.from) < Math.min(vTo, vo.to));
+        }
+        if (hasDialogue) {
+          clip.volume = 0;
+        }
+      }
+      clips[clipId] = clip;
+    }
+
+    return {
+      ...timelineData,
+      clips,
+    };
+  }
+
+  static sanitizeEffectAndTransitionKeys(timelineData: IProject) {
+    return this.sanitizeTimelineClips(timelineData);
   }
 
   /**
@@ -138,7 +230,7 @@ export class TimelineService {
       const vClipId = `clip_v_${episodeId}_s${scIdx}`;
       const srcUrl = scene.video_url || scene.storyboard_frame_url || '/images/dashboard/poster-1.jpg';
       const isVideo = !!scene.video_url;
-      const hasDialogue = (scene.dialogue && scene.dialogue.length > 0) || Boolean(scene.voiceover_url);
+      const hasDialogue = this.checkSceneHasDialogue(scene);
       const volume = hasDialogue ? 0 : 1;
 
       clips[vClipId] = {
@@ -169,7 +261,7 @@ export class TimelineService {
       videoClipIds.push(vClipId);
 
       // 2. Transition between visual clips
-      const normalizedTransKey = TimelineService.normalizeTransitionKey(scene.transition_effect as string);
+      const normalizedTransKey = normalizeTransitionKey(scene.transition_effect as string);
       if (scIdx > 1 && normalizedTransKey) {
         const transClipId = `clip_trans_${episodeId}_s${scIdx - 1}`;
         clips[transClipId] = {
@@ -184,7 +276,7 @@ export class TimelineService {
       }
 
       // 3. Visual Effect Clip on track_effects
-      const normalizedEffKey = TimelineService.normalizeEffectKey(scene.video_effect as string);
+      const normalizedEffKey = normalizeEffectKey(scene.video_effect as string);
       if (normalizedEffKey) {
         const effClipId = `clip_eff_${episodeId}_s${scIdx}`;
         clips[effClipId] = {
@@ -222,7 +314,7 @@ export class TimelineService {
             duration: sceneDurUs,
             playbackRate: 1,
           },
-          volume: 0.35,
+          volume: hasDialogue ? 0.35 : 0,
           style: {},
           locked: false,
           transform: {
@@ -244,35 +336,35 @@ export class TimelineService {
     const totalDurationUs = Math.max(targetDurationUs, currentTimelineUs);
 
     // Fallback: If episode has bgm_url and no per-scene BGM was added, add a global episode BGM clip
-    if (episode.bgm_url && bgmClipIds.length === 0) {
-      const epBgmClipId = `clip_bgm_${episodeId}_main`;
-      clips[epBgmClipId] = {
-        id: epBgmClipId,
-        trackId: 'track_bgm',
-        type: 'Audio',
-        name: 'Episode BGM',
-        src: episode.bgm_url,
-        timing: {
-          display: { from: 0, to: totalDurationUs },
-          trim: { from: 0, to: totalDurationUs },
-          duration: totalDurationUs,
-          playbackRate: 1,
-        },
-        volume: 0.35,
-        style: {},
-        locked: false,
-        transform: {
-          x: 0,
-          y: 0,
-          width: 0,
-          height: 0,
-          angle: 0,
-          zIndex: 0,
-          opacity: 1,
-        },
-      };
-      bgmClipIds.push(epBgmClipId);
-    }
+    // if (episode.bgm_url && bgmClipIds.length === 0) {
+    //   const epBgmClipId = `clip_bgm_${episodeId}_main`;
+    //   clips[epBgmClipId] = {
+    //     id: epBgmClipId,
+    //     trackId: 'track_bgm',
+    //     type: 'Audio',
+    //     name: 'Episode BGM',
+    //     src: episode.bgm_url,
+    //     timing: {
+    //       display: { from: 0, to: totalDurationUs },
+    //       trim: { from: 0, to: totalDurationUs },
+    //       duration: totalDurationUs,
+    //       playbackRate: 1,
+    //     },
+    //     volume: 0.35,
+    //     style: {},
+    //     locked: false,
+    //     transform: {
+    //       x: 0,
+    //       y: 0,
+    //       width: 0,
+    //       height: 0,
+    //       angle: 0,
+    //       zIndex: 0,
+    //       opacity: 1,
+    //     },
+    //   };
+    //   bgmClipIds.push(epBgmClipId);
+    // }
 
     const projectData: IProject = {
       settings: {
@@ -292,7 +384,7 @@ export class TimelineService {
 
     // Synchronize language tracks (voiceover & subtitles) directly for series.language
     const primaryLang = (series?.language || 'en-US').trim();
-    this.syncLanguageTracksIntoTimeline(projectData, episode, primaryLang);
+    this.syncLanguageTracksIntoTimeline(projectData, episode, primaryLang, series);
 
     return projectData;
   }
@@ -303,7 +395,8 @@ export class TimelineService {
   static syncLanguageTracksIntoTimeline(
     timeline: IProject,
     episode: EpisodeEntity,
-    primaryLang = 'en-US'
+    primaryLang = 'en-US',
+    series?: SeriesEntity | null
   ): void {
     if (!timeline.tracks) timeline.tracks = [];
     if (!timeline.clips) timeline.clips = {};
@@ -395,14 +488,87 @@ export class TimelineService {
       }
 
       // 2. Ensure Caption Track exists with episode caption_settings
-      const capSettings: CaptionSettings | undefined = episode.caption_settings;
+      let capSettings: any = episode.caption_settings;
+      if (typeof capSettings === 'string') {
+        try {
+          capSettings = JSON.parse(capSettings);
+        } catch {}
+      }
+      if (!capSettings && (series as any)?.caption_settings) {
+        try {
+          const sCap = (series as any).caption_settings;
+          capSettings = typeof sCap === 'string' ? JSON.parse(sCap) : sCap;
+        } catch {}
+      }
+
+      // Resolve preset styling defaults if a preset is selected
+      const stylePreset = capSettings?.caption_style;
+      let presetFont = 'Outfit-Bold';
+      let presetSize = 44;
+      let presetColor = '#ffffff';
+      let presetActiveColor = '#FFD700';
+      let presetStrokeWeight = 3;
+      let presetStrokeColor = '#000000';
+      let presetCase = 'uppercase';
+      let presetBgBox = false;
+      let presetBgColor = 'rgba(0, 0, 0, 0.7)';
+      let presetPos = 80;
+
+      if (stylePreset === 'pop') {
+        presetFont = 'Bangers-Regular';
+        presetSize = 46;
+        presetColor = '#FFFFFF';
+        presetActiveColor = '#FFD700';
+        presetStrokeWeight = 4;
+        presetStrokeColor = '#000000';
+        presetCase = 'uppercase';
+        presetPos = 80;
+      } else if (stylePreset === 'minimal') {
+        presetFont = 'Inter-Regular';
+        presetSize = 36;
+        presetColor = '#FFFFFF';
+        presetActiveColor = '#67C23A';
+        presetStrokeWeight = 0;
+        presetCase = 'none';
+        presetBgBox = true;
+        presetBgColor = 'rgba(0, 0, 0, 0.6)';
+        presetPos = 85;
+      } else if (stylePreset === 'comic') {
+        presetFont = 'Bangers-Regular';
+        presetSize = 48;
+        presetColor = '#FFFF00';
+        presetActiveColor = '#FF3366';
+        presetStrokeWeight = 5;
+        presetStrokeColor = '#000000';
+        presetCase = 'uppercase';
+        presetPos = 78;
+      } else if (stylePreset === 'neon') {
+        presetFont = 'Outfit-Bold';
+        presetSize = 44;
+        presetColor = '#00FFFF';
+        presetActiveColor = '#FF00FF';
+        presetStrokeWeight = 3;
+        presetStrokeColor = '#001A33';
+        presetCase = 'uppercase';
+        presetPos = 80;
+      } else if (stylePreset === 'karaoke') {
+        presetFont = 'Outfit-Bold';
+        presetSize = 44;
+        presetColor = '#FFFFFF';
+        presetActiveColor = '#00FF66';
+        presetStrokeWeight = 3;
+        presetStrokeColor = '#111111';
+        presetCase = 'uppercase';
+        presetPos = 82;
+      }
+
       const captionWidth = Math.round(canvasWidth * 0.86);
       const captionHeight = 120;
       const left = Math.round((canvasWidth - captionWidth) / 2);
 
       const verticalPosPercent = typeof capSettings?.vertical_pos === 'number'
         ? capSettings.vertical_pos
-        : (capSettings?.vertical_align === 'top' ? 15 : (capSettings?.vertical_align === 'center' ? 50 : 80));
+        : (capSettings?.vertical_align === 'top' ? 15 : (capSettings?.vertical_align === 'center' ? 50 : presetPos));
       const top = Math.round((canvasHeight * (verticalPosPercent / 100)) - captionHeight / 2);
 
       const CAPTION_FONT_URL_MAP: Record<string, string> = {
@@ -419,19 +585,19 @@ export class TimelineService {
         'Inter-Bold': 'https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZg.ttf',
       };
 
-      const fontFamily = capSettings?.font_family || 'Outfit-Regular';
-      const fontSize = typeof capSettings?.font_size === 'number' ? capSettings.font_size : 44;
-      const textColor = capSettings?.text_color || '#ffffff';
-      const activeColor = capSettings?.word_highlight_color || '#FFD700';
-      const outlineWeight = typeof capSettings?.outline_weight === 'number' ? capSettings.outline_weight : 3;
-      const outlineColor = capSettings?.outline_color || '#000000';
+      const fontFamily = capSettings?.font_family || presetFont;
+      const fontSize = typeof capSettings?.font_size === 'number' ? capSettings.font_size : presetSize;
+      const textColor = capSettings?.text_color || presetColor;
+      const activeColor = capSettings?.word_highlight_color || presetActiveColor;
+      const outlineWeight = typeof capSettings?.outline_weight === 'number' ? capSettings.outline_weight : presetStrokeWeight;
+      const outlineColor = capSettings?.outline_color || presetStrokeColor;
       const textAlign = capSettings?.text_align || 'center';
-      const textCase = capSettings?.text_case || 'uppercase';
+      const textCase = capSettings?.text_case || presetCase;
       const wordsPerLine = capSettings?.words_per_line || 'multiple';
-      const bgBox = Boolean(capSettings?.enable_background_box);
-      const bgColor = capSettings?.bg_color || 'rgba(0, 0, 0, 0.7)';
+      const bgBox = capSettings?.enable_background_box !== undefined ? Boolean(capSettings.enable_background_box) : presetBgBox;
+      const bgColor = capSettings?.bg_color || presetBgColor;
       const isVisible = isPrimary && (capSettings?.enable_caption !== false);
-      const fontUrl = CAPTION_FONT_URL_MAP[fontFamily] || CAPTION_FONT_URL_MAP['Outfit-Regular'];
+      const fontUrl = capSettings?.font_url || CAPTION_FONT_URL_MAP[fontFamily] || CAPTION_FONT_URL_MAP['Outfit-Bold'];
 
       const defaultCaptionConfig = {
         captions: {
@@ -441,6 +607,7 @@ export class TimelineService {
             fontWeight: '700',
             fontStyle: 'normal',
             color: textColor,
+            fill: textColor,
             align: textAlign,
             textAlign,
             textCase,
@@ -448,19 +615,34 @@ export class TimelineService {
             wordWrapWidth: captionWidth,
             breakWords: true,
             fontUrl,
-            stroke: outlineWeight > 0 ? { color: outlineColor, width: outlineWeight } : undefined,
-            shadow: { color: '#000000', alpha: 0.5, blur: 4, offsetX: 2, offsetY: 2 },
-            background: bgBox ? { color: bgColor } : undefined,
+            stroke: outlineWeight > 0 ? { color: outlineColor, width: outlineWeight, join: 'round' } : undefined,
+            strokeWidth: outlineWeight,
+            shadow: { color: '#000000', alpha: 0.6, blur: 4, offsetX: 2, offsetY: 2 },
+            background: bgBox ? { color: bgColor, opacity: 0.7, borderRadius: 8, paddingX: 10, paddingY: 6 } : undefined,
             backgroundColor: bgBox ? bgColor : undefined,
+            padding: bgBox ? 10 : undefined,
+            borderRadius: bgBox ? 8 : undefined,
+            appeared: textColor,
+            active: activeColor,
+            activeFill: activeColor,
+            keyword: activeColor,
           },
           colors: {
-            active: { color: activeColor, background: '#FF5700' },
+            active: { color: activeColor, background: bgBox ? bgColor : undefined },
             future: { color: textColor },
             keyword: { color: activeColor, preserveAfterSpoken: true },
+          },
+          states: {
+            default: { color: textColor },
+            active: { color: activeColor, background: bgBox ? bgColor : undefined },
+            future: { color: textColor },
           },
           positioning: {
             videoWidth: canvasWidth,
             videoHeight: canvasHeight,
+            bottomOffset: Math.round(canvasHeight - (top + captionHeight)),
+            vertical: capSettings?.vertical_align || 'bottom',
+            horizontal: 'center',
           },
           wordsPerLine,
           wordAnimation: capSettings?.highlight_animate !== false ? {
@@ -500,8 +682,19 @@ export class TimelineService {
         const sceneFromUs = vClip?.timing?.display?.from ?? (idx * 6_000_000);
         const sceneDurUs = vClip?.timing?.duration ?? ((Number(scene.duration_seconds) || 6) * 1_000_000);
         const sceneEndUs = sceneFromUs + sceneDurUs;
-        const hasDialogue = (scene.dialogue && scene.dialogue.length > 0);
-        const characterDialogue = hasDialogue ? scene.dialogue[0].character : '';
+        const hasDialogue = this.checkSceneHasDialogue(scene);
+        if (vClip) {
+          vClip.volume = hasDialogue ? 0 : 1;
+        }
+        // Also ensure any matching scene clip on track_video has volume properly set
+        Object.values(timeline.clips || {}).forEach((c: any) => {
+          if (c && (c.trackId === 'track_video' || c.type === 'Video')) {
+            if (c.id === vClipId || c.id?.endsWith(`_s${scIdx}`) || c.name?.includes(`Scene #${scIdx}`) || c.name?.includes(`Scene ${scIdx}`)) {
+              c.volume = hasDialogue ? 0 : 1;
+            }
+          }
+        });
+        const characterDialogue = hasDialogue && scene.dialogue?.[0] ? scene.dialogue[0].character : '';
         const trans = scene.translations?.[langCode];
 
         const voClipId = `clip_vo_${episodeId}_s${scIdx}_${safeLang}`;
@@ -780,6 +973,7 @@ export class TimelineService {
       const sceneDurUs = sceneDurSeconds * 1_000_000;
       const fromUs = currentTimelineUs;
       const toUs = fromUs + sceneDurUs;
+      const hasDialogue = this.checkSceneHasDialogue(scene);
 
       // 1. Video / Visual Clip
       if (clips[vClipId]) {
@@ -789,6 +983,11 @@ export class TimelineService {
         } else if (scene.storyboard_frame_url) {
           clips[vClipId].src = scene.storyboard_frame_url;
           clips[vClipId].type = 'Image';
+        }
+        clips[vClipId].volume = hasDialogue ? 0 : 1;
+        if (clips[vClipId].timing) {
+          clips[vClipId].timing.display = { from: fromUs, to: toUs };
+          clips[vClipId].timing.duration = sceneDurUs;
         }
       } else {
         const srcUrl = scene.video_url || scene.storyboard_frame_url || '/images/dashboard/poster-1.jpg';
@@ -804,7 +1003,7 @@ export class TimelineService {
             duration: sceneDurUs,
             playbackRate: 1,
           },
-          volume: 1,
+          volume: hasDialogue ? 0 : 1,
           style: {},
           locked: false,
           transform: {
@@ -823,7 +1022,7 @@ export class TimelineService {
       }
 
       // 2. Transition between visual clips
-      const normalizedTransKey = TimelineService.normalizeTransitionKey(scene.transition_effect as string);
+      const normalizedTransKey = normalizeTransitionKey(scene.transition_effect as string);
       if (scIdx > 1 && normalizedTransKey) {
         const transClipId = `clip_trans_${episodeId}_s${scIdx - 1}`;
         clips[transClipId] = {
@@ -838,7 +1037,7 @@ export class TimelineService {
       }
 
       // 3. Visual Effect Clip on track_effects
-      const normalizedEffKey = TimelineService.normalizeEffectKey(scene.video_effect as string);
+      const normalizedEffKey = normalizeEffectKey(scene.video_effect as string);
       if (normalizedEffKey) {
         const effClipId = `clip_eff_${episodeId}_s${scIdx}`;
         clips[effClipId] = {
@@ -868,6 +1067,11 @@ export class TimelineService {
         const bgmClipId = `clip_bgm_${episodeId}_s${scIdx}`;
         if (clips[bgmClipId]) {
           clips[bgmClipId].src = scene.bgm_url;
+          clips[bgmClipId].volume = hasDialogue ? 0.15 : 0;
+          if (clips[bgmClipId].timing) {
+            clips[bgmClipId].timing.display = { from: fromUs, to: toUs };
+            clips[bgmClipId].timing.duration = sceneDurUs;
+          }
         } else {
           clips[bgmClipId] = {
             id: bgmClipId,
@@ -881,7 +1085,7 @@ export class TimelineService {
               duration: sceneDurUs,
               playbackRate: 1,
             },
-            volume: 0.35,
+            volume: hasDialogue ? 0.15 : 0,
             style: {},
             locked: false,
             transform: {
@@ -904,41 +1108,41 @@ export class TimelineService {
     });
 
     // Fallback: If episode has bgm_url and no per-scene BGM was added, add a global episode BGM clip
-    if (episode.bgm_url && bgmTrack && bgmTrack.clipIds.length === 0) {
-      const epBgmClipId = `clip_bgm_${episodeId}_main`;
-      clips[epBgmClipId] = {
-        id: epBgmClipId,
-        trackId: 'track_bgm',
-        type: 'Audio',
-        name: 'Episode BGM',
-        src: episode.bgm_url,
-        timing: {
-          display: { from: 0, to: currentTimelineUs },
-          trim: { from: 0, to: currentTimelineUs },
-          duration: currentTimelineUs,
-          playbackRate: 1,
-        },
-        volume: 0.35,
-        style: {},
-        locked: false,
-        transform: {
-          x: 0,
-          y: 0,
-          width: 0,
-          height: 0,
-          angle: 0,
-          zIndex: 0,
-          opacity: 1,
-        },
-      };
-      bgmTrack.clipIds.push(epBgmClipId);
-    }
+    // if (episode.bgm_url && bgmTrack && bgmTrack.clipIds.length === 0) {
+    //   const epBgmClipId = `clip_bgm_${episodeId}_main`;
+    //   clips[epBgmClipId] = {
+    //     id: epBgmClipId,
+    //     trackId: 'track_bgm',
+    //     type: 'Audio',
+    //     name: 'Episode BGM',
+    //     src: episode.bgm_url,
+    //     timing: {
+    //       display: { from: 0, to: currentTimelineUs },
+    //       trim: { from: 0, to: currentTimelineUs },
+    //       duration: currentTimelineUs,
+    //       playbackRate: 1,
+    //     },
+    //     volume: 0.35,
+    //     style: {},
+    //     locked: false,
+    //     transform: {
+    //       x: 0,
+    //       y: 0,
+    //       width: 0,
+    //       height: 0,
+    //       angle: 0,
+    //       zIndex: 0,
+    //       opacity: 1,
+    //     },
+    //   };
+    //   bgmTrack.clipIds.push(epBgmClipId);
+    // }
 
     timeline.tracks = tracks;
     timeline.clips = clips;
     const primaryLang = episode.dubbing_languages?.[0] || episode.caption_languages?.[0] || series?.language || 'en-US';
-    this.syncLanguageTracksIntoTimeline(timeline, episode, primaryLang);
-    return timeline;
+    this.syncLanguageTracksIntoTimeline(timeline, episode, primaryLang, series);
+    return this.sanitizeTimelineClips(timeline, episode);
   }
 
   /**
@@ -953,23 +1157,28 @@ export class TimelineService {
     const latest = await db.getLatestTimeline(episodeId);
 
     if (latest?.tracks && latest?.clips) {
-      const updatedTimeline = this.syncTimelineWithScenes(episode, { ...latest }, series);
+      let updatedTimeline = this.syncTimelineWithScenes(episode, { ...latest }, series);
+      updatedTimeline = TimelineService.sanitizeTimelineClips(updatedTimeline, episode);
       try {
         await db.saveTimeline(episodeId, updatedTimeline, { id: 'system', name: 'Studio System' }, 'Synchronized timeline with latest scene media');
       } catch (saveErr) {
         Logger.warn(`[TimelineService] Failed to auto-save synchronized timeline: ${saveErr}`);
       }
+
+      PatchSyncService.broadcast(episode.series_id, 'timeline:updated', updatedTimeline);
       return updatedTimeline;
     }
 
     // Build fresh initial timeline
-    const freshTimeline = this.buildInitialTimelineData(episode, series);
+    let freshTimeline = this.buildInitialTimelineData(episode, series);
     try {
+      freshTimeline = TimelineService.sanitizeTimelineClips(freshTimeline, episode);
       await db.saveTimeline(episodeId, freshTimeline, { id: 'system', name: 'Studio System' }, 'Auto-generated initial timeline from episode scenes');
     } catch (saveErr) {
       Logger.warn(`[TimelineService] Failed to auto-save initial timeline version: ${saveErr}`);
     }
 
+    PatchSyncService.broadcast(episode.series_id, 'timeline:updated', freshTimeline);
     return freshTimeline;
   }
 }

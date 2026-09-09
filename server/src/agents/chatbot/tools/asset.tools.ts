@@ -315,7 +315,7 @@ export class AssetToolExecutors {
 
       let targets = scenes;
       if (params.sceneIndex !== undefined) {
-        targets = scenes.filter((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.sceneIndex));
+        targets = scenes.filter((s: SceneEntity) => Number(s.index ?? s.scene_number) === Number(params.sceneIndex));
         if (targets.length === 0) {
           return { success: false, message: `Scene #${params.sceneIndex} not found in Episode "${episode.title}".` };
         }
@@ -327,18 +327,24 @@ export class AssetToolExecutors {
       const failureReasons: string[] = [];
 
       for (const sc of targets) {
-        const scIndex = Number(sc.index || sc.scene_number);
-        const existingUrl = sc.storyboard_frame_url || sc.image_url;
-        if (!params.forceRegenerate && existingUrl) {
-          results.push({ sceneIndex: scIndex, status: 'already_exists', image_url: existingUrl });
+        const scIndex = Number(sc.index ?? sc.scene_number);
+        const existingStartUrl = sc.storyboard_frame_url;
+        const existingEndUrl = sc.storyboard_end_frame_url;
+        const needEndFrame = Boolean(EnvConfig.generateEndFrame);
+
+        const hasStart = Boolean(existingStartUrl);
+        const hasEnd = !needEndFrame || Boolean(existingEndUrl);
+
+        if (!params.forceRegenerate && hasStart && hasEnd) {
+          results.push({ sceneIndex: scIndex, status: 'already_exists', image_url: existingStartUrl });
           await params.onItemProgress?.({
             asset: {
               id: `sb_${params.episodeId}_s${scIndex}`,
               name: `Scene #${scIndex} Storyboard`,
               type: 'storyboard',
               status: 'completed',
-              url: existingUrl,
-              thumbnail: existingUrl,
+              url: existingStartUrl,
+              thumbnail: existingStartUrl,
               scene_index: scIndex,
             },
             current: results.length,
@@ -349,29 +355,33 @@ export class AssetToolExecutors {
         }
 
         try {
-          // const generate_end_frame = EnvConfig.generateEndFrame;
+          const shouldGenStart = params.forceRegenerate ? true : !hasStart;
+          const shouldGenEnd = needEndFrame && (params.forceRegenerate ? true : !existingEndUrl);
+
           const { result } = await executeWithRetry(`Generate Storyboard Frame for Scene #${scIndex}`, async () => {
             return await AssetService.generateStoryboardShot({
               series_id: params.seriesId,
               episode_id: params.episodeId,
               scene_index: scIndex,
               // custom_prompt: params.visualPrompt,
-              generate_start_frame: true,
-              generate_end_frame: EnvConfig.generateEndFrame,
+              generate_start_frame: shouldGenStart,
+              generate_end_frame: shouldGenEnd,
               user_id: params.userId,
+              force_regenerate: params.forceRegenerate,
             });
           });
 
-          if (!result?.image_url) {
+          const resolvedImageUrl = result?.image_url || existingStartUrl || result?.end_frame_url;
+          if (!resolvedImageUrl) {
             throw new Error(`AI generated an empty storyboard image URL for scene #${scIndex}`);
           }
 
-          const idx = updatedScenes.findIndex((s) => Number(s.index || s.scene_number) === scIndex);
+          const idx = updatedScenes.findIndex((s) => Number(s.index ?? s.scene_number) === scIndex);
           if (idx >= 0 && result.scene) {
             updatedScenes[idx] = result.scene;
           }
 
-          results.push({ sceneIndex: scIndex, status: 'generated', image_url: result.image_url });
+          results.push({ sceneIndex: scIndex, status: 'generated', image_url: resolvedImageUrl });
 
           await params.onItemProgress?.({
             asset: {
@@ -379,8 +389,8 @@ export class AssetToolExecutors {
               name: `Scene #${scIndex} Storyboard`,
               type: 'storyboard',
               status: 'completed',
-              url: result.image_url,
-              thumbnail: result.image_url,
+              url: resolvedImageUrl,
+              thumbnail: resolvedImageUrl,
               scene_index: scIndex,
             },
             current: results.length,

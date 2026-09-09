@@ -28,17 +28,23 @@ To be the ultimate AI Director and Production Studio for vertical micro-dramas, 
 | Feature Module | Description | Priority | Phase | Status |
 | :--- | :--- | :---: | :---: | :---: |
 | **Project Hub & Series Studio** | Dashboard for all drama series, episode management, and creation wizards. | P0 | V1 | Active |
-| **Onboarding Wizard** | 3-step genre selection, AI story skeleton adaptation, and trend detection. | P1 | V1 | Active |
+| **AI Series Wizard (4 Steps)** | Launch mode (Viral vs Manual), 6 archetypes, 32+ visual styles, AI master plan & 95% safety scan. | P0 | V1 | Active |
 | **Script & Scene Assembly** | AI screenplay breakdown, dialog cue generator, and storyboard panel creation. | P0 | V1 | Active |
 | **OpenVideo WebGL Timeline** | Vertical 9:16 canvas preview, multi-track timeline, clip trimming/splitting. | P0 | V1 | Active |
+| **Sets & Key Props Engine** | Persistent virtual environments & key narrative props management for visual consistency. | P1 | V1 | Active |
 | **Auto-Captions & Translation** | Word-level kinetic subtitles, karaoke timing, translation, and SRT export. | P0 | V1 | Active |
 | **Dual-Mode Video Export** | Client WebCodecs render & Cloud Run headless Playwright WebCodecs worker. | P0 | V1 | Active |
+| **Bulk Social Publishing (B9)** | AI viral metadata, cover generator, 1-click multi-deploy to YouTube Shorts, TikTok, Reels. | P0 | V1 | Active |
+| **Pipeline Task Manager** | Background job execution tracking, produced assets repository (22+ items), and live logs. | P0 | V1 | Active |
 | **Voice Casting & Dubbing** | Multi-speaker neural TTS, granular emotion/pitch control, multi-lang tracks. | P0 | V1 | Active |
 | **AI Audio Stem Separation** | Meta Demucs v4 on Cloud Run for vocal isolation and clean BGM extraction. | P0 | V1 | Active |
 | **AI Director Copilot (Chatbot)** | Interactive sidebar agent executing natural language timeline operations. | P0 | V1 | Active |
-| **Persona & Cast Studio** | Character visual consistency reference sheets and avatar generators. | P0 | V1 | Active |
+| **Persona & Cast Studio** | Character visual consistency reference sheets and avatar generators with LoRA anchors. | P0 | V1 | Active |
 | **Asset Library (GCS / B2 / S3)**| Media management with Pexels stock video/photo & Freesound SFX search. | P0 | V1 | Active |
 | **Analytics & Retention Engine** | Granular KPI tracking, episode retention curves, and platform export stats. | P1 | V1 | Active |
+| **Antigravity AI Accounts Pool**| Google OAuth session rotation pool for resilient high-throughput Gemini & Veo generation. | P0 | V1 | Active |
+| **Grafana Observability Portal** | Real-time Prometheus metrics, P99 API latency (142ms), subagent execution tracing, and cluster telemetry. | P1 | V1 | Active |
+| **User Management & RBAC** | Multi-tenant user directory, 2FA security, role-based access control, and credit allocations. | P1 | V1 | Active |
 | **Multi-DB Architecture** | Firestore Native (`shine-db`), MongoDB, SQLite, MapDB abstraction. | P0 | V1 | Active |
 | **Cloud Run Infrastructure** | Serverless scale-to-zero microservices in `us-central1` with Cloud Scheduler. | P0 | V1 | Active |
 
@@ -48,12 +54,25 @@ To be the ultimate AI Director and Production Studio for vertical micro-dramas, 
 The central command center for all productions. Provides a high-level overview of active series, produced episodes, average retention, and total revenue.
 *   **Key Capabilities:** Project cards with genre tags and progress bars, 'New Series' creation CTA, Grid/List views, and sidebar navigation (My Projects, Team Shared, Asset Library).
 
-### 2. Onboarding / Drama Genre Wizard 🧙‍♂️
-A streamlined 3-step setup to define the core DNA of a new series.
-*   **Key Capabilities:** 
-    - Genre selection (Suspense, Romance, Action, Satire) that automatically configures the AI engine's visual and script logic (e.g., moody lighting for suspense, warm palettes for romance).
-    - **Multi-Region Geo-Targeted Viral Trend & Competitor Script Hunting (Parallel MCP):** Auto-scans TikTok, Douyin, Kuaishou, YouTube Shorts, X, and App Store top charts filtered by country/region (`US` North America, `SEA_VN` Vietnam/Southeast Asia, `CN` China, `LATAM` Latin America, `JP_KR` East Asia, `EU` Europe) to discover real-time regional viral drama topics, hashtag velocity, high-retention hooks, and competitor script tropes.
-    - **Cultural Compliance & Copyright Safety Engine (Parallel MCP / Gemini Guardrails):** Evaluates sensitive micro-drama themes (revenge, psychological drama, romantic tension) for multi-region content safety, age classification, and script/audio/image IP compliance before distribution.
+### 2. AI Series Creation Wizard (4-Step Pipeline) 🧙‍♂️
+An end-to-end 4-step wizard architected to transform high-level concepts or market trends into production-ready drama series:
+*   **Step 1: Launch Mode & Target Market:**
+    - **Viral Trend Mode:** Real-time trend scraper detecting trending tropes across global markets (US, Vietnam, China, Japan, South Korea, Thailand, etc.) with auto-filled title, genre, and audience hooks.
+    - **Manual Mode:** Full creative freedom to define custom premise, original characters, and bespoke narrative constraints.
+*   **Step 2: Series Configuration & Visual Styles:**
+    - **6 Psychological Story Archetypes:** Revenge/Drama, Romance/Contract, Suspense/Mystery, Satire/Comedy, Fantasy/Rebirth, Sci-Fi/Cyberpunk.
+    - **32+ AI Video Visual Rendering Styles:** Realistic, Illustration, Anime, Cinematic, 2-Tone Minimalist, 3D Kawaii Chibi, Cute Minimalism, Chaotic Red Ink, B&W Film Noir, 90s Comic Book, Surrealism, etc.
+    - **Format & Pacing Parameters:** 9:16 vertical (TikTok/Shorts/Reels) or 16:9 cinematic, target episode duration (30s–10m), and total series episode count (10–100 episodes).
+*   **Step 3: AI Master Plan & Script Consultant:**
+    - **Story Core & Franchise Attraction:** Series synopsis, logline, key leverage & rule boundary, and psychological catharsis design.
+    - **Consistent Cast Persona DNA:** Protagonist, antagonist, and supporting roles with personality traits, dialogue styles, signature wardrobe, and LoRA visual continuity anchors.
+    - **Three-Act Structure:** Thematic core questions, rising tension, and act-level climaxes.
+    - **24-Episode Production Blueprint:** Granular scene core, conflict escalation, and high-retention cliffhanger hooks.
+    - **Interactive AI Script Consultant:** In-wizard conversational assistant for real-time adjustments, plot twist additions, and pacing audits.
+*   **Step 4: AI Safety, Commercial Compliance & Regulatory Grounding:**
+    - **Multi-Dimensional Pre-Production Scan:** Evaluates Violence/Gore (98%), Adult Content (96%), Cultural Sensitivity (94%), and Copyright/IP (92%) resulting in a verified 95% SAFE commercial readiness score.
+    - **Parallel MCP Grounding & Web Citations:** Real-time web search grounding for competitor script similarity, regional platform censorship redlines, and verified citations.
+    - **AI Transparency & Watermarking:** Automated cryptographic metadata and Google SynthID watermarking toggle.
 
 
 ### 3. Script & Scene Assembly 📝
@@ -216,9 +235,24 @@ The web-based timeline video editor and rendering engine operate on a standardiz
 Essential for sound-off viewing and international reach.
 *   **Key Capabilities:** Live caption overlay on the 9:16 preview. Transcription tab with speaker/emotion tags. Dynamic styles (Pop-up, Minimal, Comic Action) and Auto-Translation to multiple languages (e.g., Spanish LatAm).
 
-### 6. Export & Smart Publishing 🚀
-Frictionless distribution pipeline.
-*   **Key Capabilities:** Smart Cover Generator with A/B options. Platform Targets integration (TikTok API, IG Reels auto-sync, YT Shorts 4K). AI Viral Caption generator with SEO hashtags. Cloud rendering engine.
+### 6. Dual-Mode Video Export & Review Player 🚀
+High-performance rendering architecture supporting both local instant generation and scalable cloud jobs.
+*   **Key Capabilities:**
+    - **Dual-Mode Rendering Engine:**
+        - **Local In-Browser Render:** Zero-server-cost client rendering powered by WebCodecs (`mediabunny` / `ExportModal`) with live frame-by-frame progress, resolution selector (720p, 1080p, 1440p 2K, 2160p 4K Ultra HD), and ETA countdown.
+        - **Cloud Serverless Queue:** Asynchronous headless rendering via `@openvideo/video-renderer` Playwright WebCodecs workers on Google Cloud Run + Pub/Sub, featuring a managed `VideoRendererPool` (1–100 instances) with Out of Memory (OOM) protection.
+    - **Post-Render Review Player:** Integrated in-app video preview player rendering burned-in kinetic subtitles, audio tracks, instant local MP4 download, direct Cloud Storage upload, and Cloud Render escalation triggers.
+
+### 6.1 Bulk Export & Social Publishing Center (B9) 🌐
+End-to-end automated 3-step publishing pipeline delivering content directly to short-form video platforms:
+*   **Step 1: Available Rendered Versions:** Selection of multi-language rendered master video versions (e.g. `en-US` audio with burned-in subtitles, 1080×1920 9:16 Vertical HD) or local video file uploads.
+*   **Step 2: AI Social Optimizer & Poster Cover:**
+    - **Keyframe & AI Cover Generator:** 1-click extraction of high-impact keyframes from scene clips or custom AI-synthesized promotional posters.
+    - **Viral Hook Title Generator:** Generates click-worthy, algorithm-optimized titles with expressive emojis and auto-filled trending hashtags.
+*   **Step 3: Platform Channels & 1-Click Multi-Deploy:**
+    - Direct OAuth channel dispatching to **YouTube Shorts**, **TikTok for Creators**, and **Meta Reels**.
+    - Flexible scheduling modes: **Deploy Now** for immediate distribution or **Schedule Later** for release calendar alignment.
+    - Live deployment confirmation with direct viewing links and Pipeline Task Manager stream upload activity logs (live-tested and verified on YouTube Shorts).
 
 ### 7. Voice & Dubbing 🎙️
 Advanced neural voice synthesis and performance control.

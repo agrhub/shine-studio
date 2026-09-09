@@ -999,7 +999,7 @@ export class AssetService {
 
     // 4. Match by scene description / visual prompt text keywords (e.g. "janitor", "jumpsuit", "uniform", "suit")
     if (!matchedVariant && variants.length > 0) {
-      const sceneText = `${scene?.description || ''} ${scene?.action || ''} ${scene?.visual_prompt || ''} ${scene?.prompt || ''} ${scene?.end_frame_prompt || ''} ${scene?.frame_description || ''}`.toLowerCase();
+      const sceneText = `${scene?.description || ''} ${scene?.action || ''} ${scene?.visual_prompt || ''} ${scene?.end_frame_prompt || ''} ${scene?.frame_description || ''}`.toLowerCase();
       matchedVariant = variants.find(v => {
         const vName = (v.name || '').toLowerCase().trim();
         const vClothing = (v.clothing_and_accessories || '').toLowerCase().trim();
@@ -1132,9 +1132,10 @@ export class AssetService {
     scene_index: number;
     custom_prompt?: string;
     user_id: string;
-    generate_start_frame: boolean;
-    generate_end_frame: boolean;
+    generate_start_frame?: boolean;
+    generate_end_frame?: boolean;
     use_reference_frame?: string;
+    force_regenerate?: boolean;
   }): Promise<{ image_url: string; end_frame_url?: string; scene: SceneEntity; prompt?: string; version?: AssetVersion }> {
     Logger.info(`generateStoryboardShot: ${JSON.stringify(params)}`);
     const db = await getDatabaseProvider();
@@ -1146,10 +1147,23 @@ export class AssetService {
     
     const episode = await db.getEpisodeById(params.episode_id);
     const scenesList: SceneEntity[] = Array.isArray(episode?.scenes) ? episode!.scenes : [];
-    const sceneIdx = scenesList.findIndex((s: SceneEntity) => Number(s.index || s.scene_number) === Number(params.scene_index));
+    const sceneIdx = scenesList.findIndex((s: SceneEntity) => Number(s.index ?? s.scene_number) === Number(params.scene_index));
     if (sceneIdx === -1) throw new Error(`Scene #${params.scene_index} not found in episode`);
 
     const scene = scenesList[sceneIdx];
+    const existingStart = scene.storyboard_frame_url;
+    const existingEnd = scene.storyboard_end_frame_url;
+
+    // Only generate if explicitly requested AND (forced OR custom prompt OR asset is missing)
+    const actuallyGenStart = Boolean(
+      params.generate_start_frame &&
+      (params.force_regenerate || params.custom_prompt || !existingStart)
+    );
+    const actuallyGenEnd = Boolean(
+      params.generate_end_frame &&
+      (params.force_regenerate || params.custom_prompt || !existingEnd)
+    );
+
     const stylePrompt = getVisualStylePrompt(series.visual_style || 'realistic');
 
     // Collect all reference_assets exactly: wardrobe variants, location, props
@@ -1159,30 +1173,32 @@ export class AssetService {
     Logger.info(`generateStoryboardShot resolveSceneReferenceAssets: ${JSON.stringify({ referenceImages, characterContextList, locationContext, propContextList })}`);
 
     const targetAspect: '9:16' | '16:9' | '4:3' | '1:1' = (series.ratio === '1:1' || series.ratio === '16:9' || series.ratio === '4:3') ? series.ratio : '9:16';
-    let startImageUrl: string | '' = '';
-    let endImageUrl: string | '' = '';
+    let startImageUrl: string | '' = existingStart || '';
+    let endImageUrl: string | '' = existingEnd || '';
     let fullPrompt: string | '' = '';
     let version: AssetVersion | undefined = undefined;
     
-    // Deduct credits
-    if(params.generate_start_frame){
+    // Deduct credits only for frames that actually need AI generation
+    if (actuallyGenStart) {
       const deduct = await CreditService.deductUserCredits(params.user_id, 'sceneImage', 'Storyboard Start Frame Generation', `Generated storyboard keyframe for Scene #${params.scene_index}`);
       if (!deduct.success) {
         throw new Error(deduct.error || 'Credit deduction failed');
       }
     }
 
-    if(params.generate_end_frame){
+    if (actuallyGenEnd) {
       const deduct = await CreditService.deductUserCredits(params.user_id, 'sceneImage', 'Storyboard End Frame Generation', `Generated storyboard keyframe for Scene #${params.scene_index}`);
       if (!deduct.success) {
-        await CreditService.refundUserCredits(params.user_id, 'sceneImage', 'Storyboard Start Frame Generation', `Generated storyboard keyframe for Scene #${params.scene_index}`);
+        if (actuallyGenStart) {
+          await CreditService.refundUserCredits(params.user_id, 'sceneImage', 'Storyboard Start Frame Generation', `Generated storyboard keyframe for Scene #${params.scene_index}`);
+        }
         throw new Error(deduct.error || 'Credit deduction failed');
       }
     }
 
     // Build prompt for Start Frame
     let storePrompt = '';
-    if (params.generate_start_frame) {
+    if (actuallyGenStart) {
       const visualDesc = params.custom_prompt || scene.visual_prompt || scene.frame_description || scene.description || scene.action || '';
       const prompt = PromptLoader.render('scene/scene_image_final', {
         locationContext: locationContext || undefined,
@@ -1225,18 +1241,21 @@ export class AssetService {
         version,
       ];
       // scene.prompt = fullPrompt;
-      scene.image_url = startImageUrl;
+      // scene.image_url = startImageUrl;
       scene.storyboard_frame_url = startImageUrl;
       scene.status = 'image_ready';
-    }
-    else{
-      startImageUrl = scene.storyboard_frame_url || '';
+
+      if(sceneIdx == 0 && episode && !episode.cover_image){
+        episode.cover_image = startImageUrl;
+      }
+    } else {
+      startImageUrl = existingStart || '';
     }
 
-    if(params.generate_end_frame){
+    if (actuallyGenEnd) {
       try {
         let endFrameUrl: string | undefined;
-        const reserveEndPrompt = params.generate_start_frame && params.generate_start_frame;
+        const reserveEndPrompt = actuallyGenStart;
         Logger.info(`[AssetService.generateStoryboardShot] GENERATE_START_END_FRAME=true: Generating end frame for Scene #${params.scene_index}`);
         const originVisualDesc = scene.end_frame_prompt || scene.frame_description || scene.description || scene.action || '';
         const endPrompt = PromptLoader.render('scene/scene_image_final', {
@@ -1281,7 +1300,7 @@ export class AssetService {
             endVersion,
           ];
 
-          if (!params.generate_start_frame) {
+          if (!actuallyGenStart) {
             version = endVersion;
           }
 
@@ -1290,10 +1309,16 @@ export class AssetService {
       } catch (endErr: any) {
         Logger.warn(`[AssetService.generateStoryboardShot] End frame generation skipped for Scene #${params.scene_index}: ${endErr.message}`);
       }
+    } else {
+      endImageUrl = existingEnd || '';
+    }
+
+    if (!version) {
+      version = scene.versions?.find((v) => v.is_selected) || scene.end_frame_versions?.find((v) => v.is_selected);
     }
 
     scenesList[sceneIdx] = scene;
-    await db.updateEpisode(params.episode_id, { scenes: scenesList });
+    await db.updateEpisode(params.episode_id, { scenes: scenesList, cover_image: episode?.cover_image });
     try {
       await TimelineService.getOrBuildEpisodeTimeline(params.episode_id);
     } catch (tlErr: any) {
@@ -1359,9 +1384,9 @@ export class AssetService {
         if (params.reference_image_url) {
           use_reference_frame = params.reference_image_url;
         } else if (isEndFrame) {
-          use_reference_frame = scene.storyboard_end_frame_url || scene.storyboard_frame_url || scene.image_url;
+          use_reference_frame = scene.storyboard_end_frame_url || scene.storyboard_frame_url;
         } else {
-          use_reference_frame = scene.storyboard_frame_url || scene.image_url;
+          use_reference_frame = scene.storyboard_frame_url;
         }
       }
 
@@ -1678,7 +1703,7 @@ export class AssetService {
         if (!targetVer) throw new Error(`Version ${params.version_id} not found`);
 
         scene.versions = versions.map((v: AssetVersion) => ({ ...v, is_selected: v.id === targetVer!.id }));
-        scene.image_url = targetVer.image_url;
+        // scene.image_url = targetVer.image_url;
         scene.storyboard_frame_url = targetVer.image_url;
         // if (targetVer.prompt) scene.prompt = targetVer.prompt;
         activeImageUrl = targetVer.image_url;

@@ -1,8 +1,7 @@
-FROM node:20-slim
+FROM node:22-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PORT=8080 \
-    NODE_ENV=production
+    PORT=8080
 
 WORKDIR /app
 
@@ -31,6 +30,8 @@ COPY public ./public
 
 # Build TypeScript to dist/
 RUN npm run build
+
+ENV NODE_ENV=production
 
 EXPOSE 8080
 

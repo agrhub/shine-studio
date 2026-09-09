@@ -44,3 +44,4 @@ scratch/test-gemini-tts.mjs
 scripts/export_presentation.mjs
 scripts/generate_mcp_trend_slide.mjs
 services/flow-worker/data/
+tmp-cloudrun-env.yaml

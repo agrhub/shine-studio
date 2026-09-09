@@ -1038,7 +1038,7 @@ export class SQLiteProvider implements IDatabaseProvider {
       episode.synopsis || '',
       episode.duration || 90,
       typeof episode.scenes === 'object' ? JSON.stringify(episode.scenes) : (episode.scenes || '[]'),
-      episode.script || '',
+      // episode.script || '',
       episode.cover_image || '',
       episode.scene_core || '',
       episode.conflict_escalation || '',

@@ -66,3 +66,57 @@ For EVERY page implemented or refactored, the 3-step Google Stitch HTML Conversi
 | 17 | `src/views/workspace/VoiceDubbingPage.vue` | Tab 3 in `StudioWorkspaceModal` | `Voice & Music - Shadows in the Code` | `25df126fad9b4e709ae3037c88d44744` |
 | 18 | `src/views/workspace/CaptionsPage.vue` | Tab 4 in `StudioWorkspaceModal` | `Caption Management - Shadows in the Code` | `b3a499baa5ff44d686ca59ab589b61d8` |
 | 19 | `src/views/workspace/PublishPage.vue` | Tab 5 in `StudioWorkspaceModal` | `Export & Publish - Shadows in the Code` | `169c2eb110124f1c91ffbe9ceeb372ad` |
+
+---
+
+## 3. Production 44-Screen Visual Verification Registry (Live Assets)
+
+The studio has evolved beyond initial Stitch prototypes into 44 production-verified application screens, archived under `docs/assets/screenshots/`:
+
+| # | Screenshot Filename | Studio Module & Feature | Corresponding Frontend Component | Verification Evidence |
+| :- | :--- | :--- | :--- | :--- |
+| 01 | `01_landing_page.png` | Landing & Hero Section | `src/pages/Home.vue` | Marketing hero, CTA, feature highlights |
+| 02 | `02_auth_signin.png` | Studio Authentication | `src/pages/auth/Login.vue` | Email/Pass & Google OAuth login form |
+| 03 | `03_studio_dashboard.png` | Series Hub Dashboard | `src/pages/dashboard/index.vue` | Active series list, quick actions, stats |
+| 04 | `04_viral_trends.png` | Viral Trends Radar | `src/views/trends/ViralTrendsPage.vue` | Real-time trending tropes & hashtag velocity |
+| 05 | `05_asset_library.png` | Global Asset Library | `src/views/assets/AssetLibraryPage.vue` | Media assets, SFX, LoRA models, tags |
+| 06 | `06_analytics_retention.png` | Analytics Audience Retention | `src/views/analytics/AnalyticsPage.vue` | 3-second dropoff graphs & retention curves |
+| 07 | `07_analytics_heatmap_directives.png` | Engagement Heatmap & Screenplay Directives | `src/views/analytics/AnalyticsPage.vue` | Second-by-second viewer engagement heatmap & AI rewrite directives |
+| 08 | `08_analytics_character_feedback.png` | Character Sentiment Feedback & Paywall Placement | `src/views/analytics/AnalyticsPage.vue` | Audience feedback clusters on characters & cliffhanger monetization |
+| 09 | `09_settings_profile_channels.png` | User Profile & Connected Channels | `src/pages/settings/SettingsPage.vue` | Profile details, credentials, social distribution accounts |
+| 10 | `10_settings_billing_plans.png` | Subscription Billing & Plans | `src/pages/settings/SettingsPage.vue` | Tier pricing (Free, Creator, Studio) |
+| 11 | `11_settings_ai_models.png` | AI Model Pool & Antigravity Accounts | `src/pages/settings/SettingsPage.vue` | Gemini 3.5, Veo, Antigravity OAuth pool |
+| 12 | `12_settings_credits_stock.png` | AI Credits & Stock Providers | `src/pages/settings/SettingsPage.vue` | Credit balances, Pexels/Pixabay API keys |
+| 13 | `13_settings_platform_integrations.png` | Social Platform OAuth Accounts | `src/pages/settings/SettingsPage.vue` | YouTube, TikTok, Instagram OAuth connections |
+| 14 | `14_settings_render_cluster.png` | Cloud Run Render Cluster FinOps | `src/pages/settings/SettingsPage.vue` | Autoscaling workers, vCPU/RAM utilization |
+| 15 | `15_settings_grafana_observability.png` | Grafana Observability Dashboard | `src/pages/settings/SettingsPage.vue` | P95/P99 latency traces, token meters |
+| 16 | `16_settings_user_management.png` | Enterprise RBAC User Management | `src/pages/settings/SettingsPage.vue` | Team member roles, permissions, audit log |
+| 17 | `17_wizard_step1_launch_mode.png` | Series Wizard Step 1: Launch Mode & Trend Tropes | `src/components/wizard/SeriesWizardModal.vue` | Launch mode, trend selection, target market |
+| 18 | `18_wizard_step2_genre_styles.png` | Series Wizard Step 2: Genre & 32+ Visual Styles | `src/components/wizard/SeriesWizardModal.vue` | 6 psychological story archetypes & visual styles |
+| 19 | `19_wizard_step2_series_config.png` | Series Wizard Step 2: Series Parameter Config | `src/components/wizard/SeriesWizardModal.vue` | Aspect ratio, episode count, duration pacing |
+| 20 | `20_wizard_step3_ai_master_plan.png` | Series Wizard Step 3: Master Blueprint | `src/components/wizard/SeriesWizardModal.vue` | Series narrative arc breakdown |
+| 21 | `21_wizard_step3_characters.png` | Wizard Cast Persona Configuration | `src/components/wizard/SeriesWizardModal.vue` | Character roster, visual traits, voice bindings |
+| 22 | `22_wizard_step3_three_act_structure.png` | Wizard 3-Act Structure Plan | `src/components/wizard/SeriesWizardModal.vue` | Act-by-act pacing & cliffhanger milestones |
+| 23 | `23_wizard_step3_episodes_blueprint.png` | 24-Episode Production Blueprint | `src/components/wizard/SeriesWizardModal.vue` | Granular episode breakdown with cliffhangers |
+| 24 | `24_wizard_step4_compliance_safety.png` | 95% Safety Compliance Check | `src/components/wizard/SeriesWizardModal.vue` | Safety verification score & green checkmark |
+| 25 | `25_wizard_step4_grounding_citations.png` | Grounding & Search Citations | `src/components/wizard/SeriesWizardModal.vue` | Grounding search citations & provenance |
+| 26 | `26_editor_agent_pipeline.png` | Episode NLE Timeline & Pipeline Status | `src/views/workspace/EditPage.vue` | Multitrack timeline with 9:16 preview |
+| 27 | `27_editor_viral_trends_pipeline.png` | Live Viral Trends & Auto-Gen Sequence | `src/views/workspace/EditPage.vue` | Trend tracking & batch auto-generation pipeline |
+| 28 | `28_editor_character_persona_modal.png` | Character Persona & LoRA Configuration | `src/components/modals/CharacterPersonaModal.vue` | Real-time avatar re-rendering & prompt anchors |
+| 29 | `29_editor_screenplay_tab.png` | Screenplay Script Tab | `src/pages/script/ScriptStudio.vue` | Structured screenplay blocks, dialogues |
+| 30 | `30_editor_cast_wardrobe_panel.png` | Cast & Wardrobe Consistency Panel | `src/views/workspace/EditPage.vue` | Character wardrobe locking & LoRA anchors |
+| 31 | `31_editor_sets_props.png` | Sets & Narrative Props Engine | `src/views/workspace/EditPage.vue` | Physical location sets and story props |
+| 32 | `32_editor_storyboard_scenes.png` | Visual Storyboard Frame Gallery | `src/views/workspace/EditPage.vue` | Keyframe image gallery per scene |
+| 33 | `33_editor_neural_voices_dubbing.png` | Voice Dubbing & Speech Affect | `src/views/workspace/VoiceDubbingPage.vue` | Multi-speaker TTS & pitch/speed tuning |
+| 34 | `34_editor_kinetic_subtitles.png` | Dynamic Kinetic Captions Studio | `src/views/workspace/CaptionsPage.vue` | Subtitle styling presets & karaoke bounce |
+| 35 | `35_editor_pipeline_task_manager.png` | Pipeline Background Task Manager | `src/views/workspace/EditPage.vue` | Real-time generation job status & logs |
+| 36 | `36_export_modal_presets.png` | Dual-Mode Video Export Modal | `src/components/export/ExportModal.vue` | WebCodecs vs Headless presets & resolutions |
+| 37 | `37_export_in_progress_webcodecs.png` | Client WebCodecs In-Progress Rendering | `src/components/export/ExportModal.vue` | Canvas frame-by-frame encoding progress |
+| 38 | `38_review_rendered_video.png` | Video Review Player Modal | `src/components/export/ReviewVideoModal.vue` | High-res MP4 inspection with scrub controls |
+| 39 | `39_publish_wizard_step1_versions.png` | Publish Wizard Step 1: Version Picker | `src/components/publish/PublishWizardModal.vue` | Rendered MP4 version selection |
+| 40 | `40_publish_wizard_step2_metadata_cover.png` | Publish Wizard Step 2: AI SEO Metadata & Cover | `src/components/publish/PublishWizardModal.vue` | Platform-tailored title, cover art, tags |
+| 41 | `41_publish_wizard_step3_deploy.png` | Publish Wizard Step 3: Target Channels & Deploy | `src/components/publish/PublishWizardModal.vue` | YouTube Shorts, TikTok, Instagram Reels |
+| 42 | `42_publish_wizard_success.png` | Live Deployment Confirmation | `src/components/publish/PublishWizardModal.vue` | Instant deployment verification with live links |
+| 43 | `43_publish_task_manager_logs.png` | Publishing Background Dispatch Logs | `src/components/publish/PublishWizardModal.vue` | Streaming task execution & API dispatch logs |
+| 44 | `44_live_youtube_shorts_published.png` | Live Verified YouTube Shorts Deployment | External YouTube Production Channel | Verified live playback on YouTube Shorts (`@TanDo-o9u`) |
+

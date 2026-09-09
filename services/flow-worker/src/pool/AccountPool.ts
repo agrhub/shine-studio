@@ -1083,17 +1083,25 @@ export class AccountPool {
     };
   }
 
-  public listAllJobs(): {
+  private matchesAccount(recordAccountId?: string, targetAccountId?: string): boolean {
+    if (!recordAccountId || !targetAccountId) return false;
+    if (recordAccountId === targetAccountId) return true;
+    const a = recordAccountId.replace(/^google_acc_/, '').toLowerCase().trim();
+    const b = targetAccountId.replace(/^google_acc_/, '').toLowerCase().trim();
+    return a === b;
+  }
+
+  public listAllJobs(accountId?: string): {
     running: FlowJobRecord[];
     queued: FlowJobRecord[];
     history: FlowJobRecord[];
   } {
-    const running = Array.from(this.activeJobRecords.values()).map(r => ({
+    let running = Array.from(this.activeJobRecords.values()).map(r => ({
       ...r,
       durationMs: Date.now() - (r.startedAt || r.createdAt),
     }));
 
-    const queued = this.jobQueue.map(q => ({
+    let queued = this.jobQueue.map(q => ({
       jobId: q.job.jobId,
       type: q.job.type,
       model: q.job.model || 'veo_3_1_t2v_fast_landscape',
@@ -1103,19 +1111,37 @@ export class AccountPool {
       referenceImages: q.job.referenceImages,
       status: 'QUEUED' as const,
       createdAt: q.enqueuedAt,
+      accountId: q.job.accountId,
     }));
+
+    let history = this.jobsHistory;
+
+    if (accountId && accountId.trim()) {
+      const target = accountId.trim();
+      running = running.filter(r => this.matchesAccount(r.accountId, target));
+      queued = queued.filter(q => this.matchesAccount(q.accountId, target));
+      history = history.filter(h => this.matchesAccount(h.accountId, target));
+    }
 
     return {
       running,
       queued,
-      history: this.jobsHistory,
+      history,
     };
   }
 
-  public clearJobHistory(): void {
-    this.jobsHistory = [];
-    this.persistJobsHistory();
-    console.log('[AccountPool] 🧹 Cleared jobs history.');
+  public clearJobHistory(accountId?: string): void {
+    if (accountId && accountId.trim()) {
+      const target = accountId.trim();
+      const beforeCount = this.jobsHistory.length;
+      this.jobsHistory = this.jobsHistory.filter(h => !this.matchesAccount(h.accountId, target));
+      this.persistJobsHistory();
+      console.log(`[AccountPool] 🧹 Cleared ${beforeCount - this.jobsHistory.length} jobs history for account ${target}.`);
+    } else {
+      this.jobsHistory = [];
+      this.persistJobsHistory();
+      console.log('[AccountPool] 🧹 Cleared all jobs history.');
+    }
   }
 }
 

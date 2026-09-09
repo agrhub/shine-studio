@@ -76,7 +76,7 @@ export function normalizeSceneEntity(s: any, idx?: number): SceneEntity | null {
     transition_effect: transitionEffect,
     effects: Array.isArray(s.effects) ? s.effects : [],
     video_effect: videoEffect,
-    image_url: storyboardFrameUrl,
+    // image_url: storyboardFrameUrl,
     storyboard_frame_url: storyboardFrameUrl,
     storyboard_end_frame_url: storyboardEndFrameUrl,
     video_url: videoUrl,

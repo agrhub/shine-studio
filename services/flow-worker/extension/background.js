@@ -116,7 +116,17 @@ function addLog(entry) {
   chrome.runtime.sendMessage({ type: 'LOG_UPDATE', log: requestLog }).catch(() => {});
 }
 
+function isSameAccount(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.replace(/^google_acc_/, '').toLowerCase().trim() === b.replace(/^google_acc_/, '').toLowerCase().trim();
+}
+
 function getStatusPayload() {
+  const filteredHistory = currentAccountId
+    ? taskHistory.filter(t => isSameAccount(t.accountId, currentAccountId))
+    : taskHistory;
+
   return {
     isConnected,
     isWorkerEnabled,
@@ -129,7 +139,7 @@ function getStatusPayload() {
       ...t,
       elapsedSeconds: Math.floor((Date.now() - (t.startTime || Date.now())) / 1000),
     })),
-    taskHistory: taskHistory.slice(0, 30),
+    taskHistory: filteredHistory.slice(0, 30),
     credits: currentCredits,
     userPaygateTier: currentPaygateTier,
     tokenAge: lastTokenCapturedAt ? Date.now() - lastTokenCapturedAt : null,
@@ -588,6 +598,8 @@ async function handleJobDispatch(job) {
     model: job.model || (jobType === 'VIDEO' ? 'veo_3_1_fast' : 'Nano Banana 2'),
     aspectRatio: job.aspectRatio || '9:16',
     prompt: job.prompt || '',
+    accountId: currentAccountId,
+    accountLabel: currentAccountLabel || currentAccountId,
     status: 'RUNNING',
     startTime,
     referenceImages: job.referenceImages || [],
@@ -709,6 +721,8 @@ async function handleJobDispatch(job) {
 
     const completedRecord = {
       ...taskRecord,
+      accountId: taskRecord.accountId || currentAccountId,
+      accountLabel: taskRecord.accountLabel || currentAccountLabel || currentAccountId,
       status: finalStatus,
       mediaUrl,
       base64Data,
@@ -875,7 +889,12 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   }
 
   if (req.type === 'CLEAR_HISTORY') {
-    taskHistory = [];
+    const targetAccountId = req.accountId || currentAccountId;
+    if (targetAccountId) {
+      taskHistory = taskHistory.filter(t => !isSameAccount(t.accountId, targetAccountId));
+    } else {
+      taskHistory = [];
+    }
     metrics = { total: 0, success: 0, failed: 0 };
     saveState();
     broadcastStatus();
