@@ -258,6 +258,13 @@ for (const dir of engineCandidateDirs) {
       let content = fs.readFileSync(filePath, 'utf8');
       let changed = false;
 
+      // Clean up any legacy reassignment of const variables
+      if (content.includes('__alt;') || content.includes('__opusAlt;')) {
+        content = content.replace(/([a-zA-Z0-9_$]+)\s*=\s*__alt;/g, 'Object.assign($1, __alt);');
+        content = content.replace(/([a-zA-Z0-9_$]+)\s*=\s*__opusAlt;/g, 'Object.assign($1, __opusAlt);');
+        changed = true;
+      }
+
       const audioEncoderRegex = /if\s*\(\s*!\s*\(\s*await\s+AudioEncoder\.isConfigSupported\(([a-zA-Z0-9_$]+)\)\s*\)\.supported\s*\)\s*throw\s+new\s+Error\s*\(\s*`This specific encoder configuration[\s\S]*?`\s*\);?/g;
 
       if (audioEncoderRegex.test(content)) {
@@ -269,7 +276,7 @@ for (const dir of engineCandidateDirs) {
             if (!__audioSupp && ${varName}.sampleRate !== 44100) {
               const __alt = { ...${varName}, sampleRate: 44100 };
               if ((await AudioEncoder.isConfigSupported(__alt))?.supported) {
-                ${varName} = __alt;
+                Object.assign(${varName}, __alt);
                 __audioSupp = true;
               }
             }
@@ -277,7 +284,7 @@ for (const dir of engineCandidateDirs) {
               const __opusAlt = { ...${varName}, codec: "opus", sampleRate: 48000 };
               if ((await AudioEncoder.isConfigSupported(__opusAlt))?.supported) {
                 console.warn("[AudioEncoder] WebCodecs AAC encoder not supported in this environment (" + ${varName}?.codec + "). Falling back to WebCodecs Opus encoder...");
-                ${varName} = __opusAlt;
+                Object.assign(${varName}, __opusAlt);
                 this.encodingConfig.codec = "opus";
                 if (this.source) this.source._codec = "opus";
                 if (this.source?._connectedTrack?.source) this.source._connectedTrack.source._codec = "opus";

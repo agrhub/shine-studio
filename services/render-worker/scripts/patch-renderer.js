@@ -136,7 +136,7 @@ for (const dir of engineCandidateDirs) {
             if (!__audioSupp && ${varName}.sampleRate !== 44100) {
               const __alt = { ...${varName}, sampleRate: 44100 };
               if ((await AudioEncoder.isConfigSupported(__alt))?.supported) {
-                ${varName} = __alt;
+                Object.assign(${varName}, __alt);
                 __audioSupp = true;
               }
             }
@@ -144,7 +144,7 @@ for (const dir of engineCandidateDirs) {
               const __opusAlt = { ...${varName}, codec: "opus", sampleRate: 48000 };
               if ((await AudioEncoder.isConfigSupported(__opusAlt))?.supported) {
                 console.warn("[AudioEncoder] WebCodecs AAC encoder not supported in this environment (" + ${varName}?.codec + "). Falling back to WebCodecs Opus encoder...");
-                ${varName} = __opusAlt;
+                Object.assign(${varName}, __opusAlt);
                 this.encodingConfig.codec = "opus";
                 if (this.source) this.source._codec = "opus";
                 if (this.source?._connectedTrack?.source) this.source._connectedTrack.source._codec = "opus";
