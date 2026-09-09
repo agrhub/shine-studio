@@ -169,7 +169,20 @@ export function useExport() {
 
       await compositor.loadFromJSON(json as any);
       const stream = compositor.output();
-      const blob = await new Response(stream).blob();
+      let blob: Blob;
+      try {
+        const reader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        blob = new Blob(chunks as any, { type: `video/${activeFormat}` });
+      } catch (streamErr) {
+        Log.warn('Stream reader fallback to Response.blob:', streamErr);
+        blob = await new Response(stream).blob();
+      }
       const blobUrl = URL.createObjectURL(blob);
 
       downloadStore.updateDownload(downloadId, {
@@ -228,19 +241,31 @@ export function useExport() {
       downloadStore.markDownloaded(downloadId);
       toast.success('Rendering complete! Your video has been saved.');
       exportVideo = finalDownloadUrl;
-      const exportFile = new File([blob], exportFileName(activeFormat), { type: blob.type });
-      thumbnail = await generateThumbnail(exportFile);
+      try {
+        const exportFile = new File([blob], exportFileName(activeFormat), { type: blob.type });
+        const thumbBlob = await generateThumbnail(exportFile);
+        if (thumbBlob) {
+          thumbnail = URL.createObjectURL(thumbBlob);
+        }
+      } catch (thumbErr) {
+        console.warn('Thumbnail generation failed, continuing:', thumbErr);
+      }
     } catch (error: any) {
       Log.error('Export error:', error);
       const message = error.message || 'Unknown error';
       downloadStore.updateDownload(downloadId, { status: 'failed', error: message });
       toast.error(`Export failed: ${message}`);
+      throw error;
     } finally {
       restoreRAF();
       (studio as any).resumeRendering?.();
       if (wasPlaying) (studio as any).play?.().catch?.(() => undefined);
       if (compositor) {
-        compositor.destroy();
+        try {
+          compositor.destroy();
+        } catch (e) {
+          // ignore destroy errors
+        }
       }
     }
     if (!exportVideo) {

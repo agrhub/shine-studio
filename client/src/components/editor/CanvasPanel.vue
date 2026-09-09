@@ -100,6 +100,89 @@ const initializeStudio = async () => {
   }));
   studioRef.value = instance;
 
+  // Defensive patch for TimelineModel to prevent recursive reentrancy in reconcileTracks
+  // and protect against undefined tracks or missing clipIds during studio sync.
+  // if (instance && (instance as any).timeline) {
+  //   const tmProto = Object.getPrototypeOf((instance as any).timeline);
+  //   if (tmProto && !tmProto._reconcileTracksPatched) {
+  //     tmProto._reconcileTracksPatched = true;
+
+  //     const origSetTracks = tmProto.setTracks;
+  //     if (typeof origSetTracks === 'function') {
+  //       tmProto.setTracks = async function (tracks: any[]) {
+  //         const safeTracks = Array.isArray(tracks)
+  //           ? tracks.filter(Boolean).map((t: any) => ({
+  //               ...t,
+  //               clipIds: Array.isArray(t?.clipIds) ? t.clipIds : [],
+  //             }))
+  //           : [];
+  //         return origSetTracks.call(this, safeTracks);
+  //       };
+  //     }
+
+  //     tmProto.reconcileTracks = function () {
+  //       if (this._isReconciling) return;
+  //       this._isReconciling = true;
+  //       try {
+  //         if (!Array.isArray(this.tracks)) {
+  //           this.tracks = [];
+  //           return;
+  //         }
+  //         const existingClipIds = new Set((this.clips || []).map((c: any) => c?.id).filter(Boolean));
+  //         for (let i = this.tracks.length - 1; i >= 0; i--) {
+  //           const track = this.tracks[i];
+  //           if (!track) {
+  //             this.tracks.splice(i, 1);
+  //             continue;
+  //           }
+  //           if (!Array.isArray(track.clipIds)) {
+  //             track.clipIds = [];
+  //           }
+  //           const validClipIds = track.clipIds.filter((id: string) => existingClipIds.has(id));
+  //           if (validClipIds.length !== track.clipIds.length) {
+  //             track.clipIds = validClipIds;
+  //           }
+  //           if (track.clipIds.length === 0) {
+  //             this.tracks.splice(i, 1);
+  //             if (!this.studio?.isRestoring) {
+  //               this.studio?.emit?.('track:removed', { trackId: track.id });
+  //             }
+  //           }
+  //         }
+  //         if (this.tracks.length === 0 && !this.studio?.isRestoring) {
+  //           this.studio?.emit?.('track:order-changed', { tracks: this.tracks });
+  //         }
+  //       } finally {
+  //         this._isReconciling = false;
+  //       }
+  //     };
+  //   }
+  // }
+
+  // // Defensive patch for Studio.applyGlobalEffects & updateFrame to prevent rendering pipeline crashes
+  // if (instance) {
+  //   if (typeof (instance as any).applyGlobalEffects === 'function') {
+  //     const origApplyGlobalEffects = (instance as any).applyGlobalEffects;
+  //     (instance as any).applyGlobalEffects = async function (time: number) {
+  //       try {
+  //         return await origApplyGlobalEffects.call(this, time);
+  //       } catch (effErr) {
+  //         console.warn('[Studio] applyGlobalEffects caught error, continuing safely:', effErr);
+  //       }
+  //     };
+  //   }
+  //   if (typeof (instance as any).updateFrame === 'function') {
+  //     const origUpdateFrame = (instance as any).updateFrame;
+  //     (instance as any).updateFrame = async function (time: number) {
+  //       try {
+  //         return await origUpdateFrame.call(this, time);
+  //       } catch (frameErr) {
+  //         console.warn('[Studio] updateFrame caught error, continuing safely:', frameErr);
+  //       }
+  //     };
+  //   }
+  // }
+
   try {
     await Promise.all([
       fontManager.loadFonts([

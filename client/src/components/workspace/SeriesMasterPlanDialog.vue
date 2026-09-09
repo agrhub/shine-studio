@@ -27,11 +27,18 @@ const isOpen = computed({
   set: (val) => emit('update:modelValue', val),
 });
 
+const tabs = computed(() => [
+  { id: 'overview', label: t('workspace.masterPlanDialog.seriesOverview'), icon: 'Film' },
+  { id: 'masterplan', label: t('workspace.masterPlanDialog.masterplanEpisodes'), icon: 'Document' },
+  { id: 'characters', label: t('workspace.masterPlanDialog.castCharacters'), icon: 'User' },
+  { id: 'viral', label: t('workspace.masterPlanDialog.viralTrendHooks'), icon: 'TrendCharts' },
+]);
+
 function copyHashtags() {
   const title = (series.value?.title || 'Series').replace(/\s+/g, '');
   const tags = `#${title} #ShortDrama #TikTokSeries #DramaHay #ReelsViral #ShineAI`;
   navigator.clipboard.writeText(tags);
-  toast.success(t('toast.copied', 'Copied viral hashtags to clipboard!'));
+  toast.success(t('workspace.masterPlanDialog.copiedHashtags'));
 }
 </script>
 
@@ -52,17 +59,17 @@ function copyHashtags() {
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-base font-bold" style="color: var(--el-text-color-primary);">
-                {{ series?.title || 'Series Title' }}
+                {{ series?.title || t('workspace.masterPlanDialog.title') }}
               </h2>
               <el-tag size="small" type="success" effect="plain" round class="font-bold uppercase">
                 {{ series?.status || 'ACTIVE' }}
               </el-tag>
               <el-tag size="small" type="primary" effect="dark" round class="font-bold">
-                9:16 Vertical
+                {{ series?.ratio || '9:16' }}
               </el-tag>
             </div>
             <p class="text-xs mt-0.5" style="color: var(--el-text-color-secondary);">
-              {{ series?.genre || 'Drama' }} • {{ episodes.length || series?.episode_count || 100 }} Episodes • {{ series?.language || 'vi-VN' }}
+              {{ series?.genre || 'Drama' }} • {{ episodes.length || series?.episode_count || 100 }} {{ t('workspace.masterPlanDialog.episodes') }} • {{ series?.language || 'vi-VN' }}
             </p>
           </div>
         </div>
@@ -73,12 +80,7 @@ function copyHashtags() {
       <!-- Tabs Navigation -->
       <div class="flex items-center gap-1.5 p-1 rounded-xl border" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
         <button
-          v-for="tab in [
-            { id: 'overview', label: 'Series Overview', icon: 'Film' },
-            { id: 'masterplan', label: 'Master Plan & Episodes', icon: 'Document' },
-            { id: 'characters', label: 'Cast & Characters', icon: 'User' },
-            { id: 'viral', label: 'Viral Trend & Hooks', icon: 'TrendCharts' },
-          ]"
+          v-for="tab in tabs"
           :key="tab.id"
           class="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer border"
           :style="activeTab === tab.id
@@ -97,10 +99,10 @@ function copyHashtags() {
         <div class="p-4 rounded-xl border" style="background-color: var(--el-card-bg-color); border-color: var(--el-border-color-light);">
           <div class="text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5" style="color: var(--el-color-primary);">
             <el-icon><Document /></el-icon>
-            <span>Synopsis & Core Premise</span>
+            <span>{{ t('workspace.masterPlanDialog.synopsisPremise') }}</span>
           </div>
           <p class="text-xs leading-relaxed" style="color: var(--el-text-color-primary);">
-            {{ series?.synopsis || 'No synopsis available yet.' }}
+            {{ series?.synopsis || t('workspace.masterPlanDialog.noSynopsis') }}
           </p>
         </div>
 
@@ -109,20 +111,20 @@ function copyHashtags() {
           <div class="p-4 rounded-xl border" style="background-color: var(--el-card-bg-color); border-color: var(--el-border-color-light);">
             <div class="text-xs font-bold uppercase tracking-wider mb-1.5 text-amber-500 flex items-center gap-1.5">
               <el-icon><Lightning /></el-icon>
-              <span>Viral Hook / Core Conflict</span>
+              <span>{{ t('workspace.masterPlanDialog.viralHookConflict') }}</span>
             </div>
             <p class="text-xs leading-relaxed" style="color: var(--el-text-color-secondary);">
-              {{ series?.viral_hook || 'Dynamic conflict escalation with cliffhanger hook calibration on every micro-episode.' }}
+              {{ series?.viral_hook || t('workspace.masterPlanDialog.defaultViralHook') }}
             </p>
           </div>
 
           <div class="p-4 rounded-xl border" style="background-color: var(--el-card-bg-color); border-color: var(--el-border-color-light);">
             <div class="text-xs font-bold uppercase tracking-wider mb-1.5 flex items-center gap-1.5" style="color: var(--el-color-primary);">
               <el-icon><UserFilled /></el-icon>
-              <span>Target Audience & Tone</span>
+              <span>{{ t('workspace.masterPlanDialog.targetAudienceTone') }}</span>
             </div>
             <p class="text-xs leading-relaxed" style="color: var(--el-text-color-secondary);">
-              {{ series?.target_audience || 'Audience enthusiastic about dramatic, fast-paced vertical short dramas (18-35).' }}
+              {{ series?.target_audience || t('workspace.masterPlanDialog.defaultTargetAudience') }}
             </p>
           </div>
         </div>
@@ -131,10 +133,10 @@ function copyHashtags() {
         <div class="p-4 rounded-xl border" style="background-color: var(--el-card-bg-color); border-color: var(--el-border-color-light);">
           <div class="text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5" style="color: var(--el-color-primary);">
             <el-icon><PictureFilled /></el-icon>
-            <span>Visual Style & Aesthetics Prompt</span>
+            <span>{{ t('workspace.masterPlanDialog.visualStylePrompt') }}</span>
           </div>
           <div class="p-3 rounded-lg font-mono text-[11px] leading-relaxed border" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light); color: var(--el-text-color-primary);">
-            {{ series?.visual_style_prompt || series?.visual_style || 'Cinematic 9:16 vertical drama, high-contrast rim lighting, photorealistic 8k render, moody atmosphere.' }}
+            {{ series?.visual_style_prompt || series?.visual_style || t('workspace.masterPlanDialog.defaultVisualStyle') }}
           </div>
         </div>
       </div>
@@ -143,10 +145,10 @@ function copyHashtags() {
       <div v-else-if="activeTab === 'masterplan'" class="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
         <div class="flex items-center justify-between px-1">
           <div class="text-xs font-semibold" style="color: var(--el-text-color-secondary);">
-            Showing {{ episodes.length }} planned episodes
+            {{ t('workspace.masterPlanDialog.showingPlannedEpisodes', { count: episodes.length }) }}
           </div>
           <el-tag size="small" type="primary" effect="plain" round class="font-bold">
-            Pacing: Fast / Micro-Drama
+            {{ t('workspace.masterPlanDialog.pacingFast') }}
           </el-tag>
         </div>
 
@@ -173,22 +175,22 @@ function copyHashtags() {
                     {{ ep.status || 'DRAFT' }}
                   </el-tag>
                   <span v-if="ep.id === seriesStore.activeEpisodeId" class="text-[10px] font-bold text-primary">
-                    [ACTIVE]
+                    {{ t('workspace.masterPlanDialog.active') }}
                   </span>
                 </div>
                 <p class="text-[11px] mt-1 line-clamp-2" style="color: var(--el-text-color-secondary);">
-                  {{ ep.synopsis || ep.conflict_escalation || ep.cliffhanger_hook || 'Episode narrative breakdown & scene progression.' }}
+                  {{ ep.synopsis || ep.conflict_escalation || ep.cliffhanger_hook || t('workspace.masterPlanDialog.defaultEpSynopsis') }}
                 </p>
                 <div v-if="ep.cliffhanger_hook" class="mt-1.5 text-[10px] text-amber-500 font-semibold flex items-center gap-1">
                   <el-icon><Lightning /></el-icon>
-                  <span>Hook: {{ ep.cliffhanger_hook }}</span>
+                  <span>{{ t('workspace.masterPlanDialog.hookPrefix') }} {{ ep.cliffhanger_hook }}</span>
                 </div>
               </div>
             </div>
 
             <div class="shrink-0 flex items-center gap-2">
               <span class="text-[10px]" style="color: var(--el-text-color-placeholder);">
-                {{ ep.scenes_count || `${ep.scenes?.length || 0} scenes` }}
+                {{ ep.scenes_count || ep.scenes?.length || 0 }} {{ t('workspace.masterPlanDialog.scenes') }}
               </span>
               <el-icon :size="14" style="color: var(--el-text-color-secondary);"><ArrowRight /></el-icon>
             </div>
@@ -212,17 +214,17 @@ function copyHashtags() {
               <div class="flex items-center gap-1.5">
                 <h4 class="font-bold text-xs truncate" style="color: var(--el-text-color-primary);">{{ char.name }}</h4>
                 <el-tag size="small" type="warning" effect="plain" round class="text-[9px]">
-                  {{ (char as any).archetype || char.role || 'Protagonist' }}
+                  {{ char.role || t('workspace.masterPlanDialog.defaultRole') }}
                 </el-tag>
               </div>
               <p class="text-[11px] mt-1 line-clamp-2" style="color: var(--el-text-color-secondary);">
-                {{ (char as any).personality || char.traits || char.identity || (char as any).description || 'Core character in the vertical series narrative.' }}
+                {{ char.traits || char.identity || (char as any).description || t('workspace.masterPlanDialog.defaultCharacterDesc') }}
               </p>
             </div>
           </div>
         </div>
         <div v-if="characters.length === 0" class="text-center py-8 text-xs italic" style="color: var(--el-text-color-placeholder);">
-          No characters registered yet for this series.
+          {{ t('workspace.masterPlanDialog.noCharacters') }}
         </div>
       </div>
 
@@ -233,10 +235,10 @@ function copyHashtags() {
           <div class="flex items-center justify-between mb-3">
             <div class="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-primary">
               <el-icon><TrendCharts /></el-icon>
-              <span>Recommended Viral Hashtags</span>
+              <span>{{ t('workspace.masterPlanDialog.recommendedHashtags') }}</span>
             </div>
             <el-button size="small" plain round icon="DocumentCopy" @click="copyHashtags">
-              Copy Tags
+              {{ t('workspace.masterPlanDialog.copyTags') }}
             </el-button>
           </div>
           <div class="flex flex-wrap gap-2">
@@ -266,20 +268,20 @@ function copyHashtags() {
         <div class="grid grid-cols-3 gap-3">
           <div class="p-3.5 rounded-xl border flex flex-col items-center text-center" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
             <el-tag size="large" effect="dark" round class="font-bold mb-2">TikTok</el-tag>
-            <span class="text-xs font-semibold" style="color: var(--el-text-color-primary);">9:16 Vertical Feed</span>
-            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">Optimal duration: 60s - 90s</span>
+            <span class="text-xs font-semibold" style="color: var(--el-text-color-primary);">{{ t('workspace.masterPlanDialog.verticalFeed') }}</span>
+            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">{{ t('workspace.masterPlanDialog.optimalDuration') }}</span>
           </div>
 
           <div class="p-3.5 rounded-xl border flex flex-col items-center text-center" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
             <el-tag size="large" type="danger" effect="dark" round class="font-bold mb-2">Shorts</el-tag>
             <span class="text-xs font-semibold" style="color: var(--el-text-color-primary);">YouTube Shorts</span>
-            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">High retention loop</span>
+            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">{{ t('workspace.masterPlanDialog.highRetentionLoop') }}</span>
           </div>
 
           <div class="p-3.5 rounded-xl border flex flex-col items-center text-center" style="background-color: var(--el-fill-color-light); border-color: var(--el-border-color-light);">
             <el-tag size="large" type="warning" effect="dark" round class="font-bold mb-2">Reels</el-tag>
             <span class="text-xs font-semibold" style="color: var(--el-text-color-primary);">FB &amp; IG Reels</span>
-            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">Engagement &amp; Comments</span>
+            <span class="text-[10px] mt-1" style="color: var(--el-text-color-secondary);">{{ t('workspace.masterPlanDialog.engagementComments') }}</span>
           </div>
         </div>
       </div>
@@ -288,10 +290,10 @@ function copyHashtags() {
     <template #footer>
       <div class="flex items-center justify-between">
         <div class="text-xs" style="color: var(--el-text-color-placeholder);">
-          Powered by Shine Micro-Drama Orchestrator
+          {{ t('workspace.masterPlanDialog.poweredBy') }}
         </div>
         <el-button type="primary" round @click="isOpen = false">
-          Close
+          {{ t('workspace.masterPlanDialog.close') }}
         </el-button>
       </div>
     </template>

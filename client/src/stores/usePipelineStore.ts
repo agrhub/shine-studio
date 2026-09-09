@@ -13,6 +13,7 @@ import { normalizeEffectKey } from '@/constants/effects';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { VoicePreset } from '@/types';
 import { AssetJobItem, CaptionCue, CaptionsData, Character, LocationAsset, PipelineStep, PropAsset, Scene, SceneDialogue, SceneRenderStatus, StepStatus } from '@/types/api';
+import { IProject } from '@openvideo/core';
 export { normalizeTransitionKey, normalizeEffectKey };
 
 export const usePipelineStore = defineStore('pipeline', () => {
@@ -284,7 +285,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
       if (url) {
         updateSceneStatus(sceneIndex, { bg_status: 'done', storyboard_url: url });
         seriesStore.updateSceneStoryboard(epId, sceneIndex, url);
-        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
       } else {
         updateSceneStatus(sceneIndex, { bg_status: 'done' });
       }
@@ -303,7 +304,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     const epId = seriesStore.activeEpisodeId;
     if (!epId) return;
 
-    const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+    const allScenes = seriesStore.activeEpisode?.scenes || [];
     // Skip scenes that already have a background or video
     const scenes = allScenes.filter((s: Scene) => !s.storyboard_frame_url && !s.video_url);
 
@@ -348,22 +349,21 @@ export const usePipelineStore = defineStore('pipeline', () => {
     let hasError = false;
 
     try {
-      const ep = seriesStore.activeEpisode as any;
-      const sc = seriesStore.activeScript as any;
+      const ep = seriesStore.activeEpisode;
 
-      const characters: Character[] = (sc?.characters && sc.characters.length > 0)
-        ? sc.characters
+      const characters: Character[] = (ep?.characters && ep.characters.length > 0)
+        ? ep.characters
         : (seriesStore.currentSeries?.characters || seriesStore.charactersList || []);
 
-      const locations: LocationAsset[] = (sc?.locations && sc.locations.length > 0)
-        ? sc.locations
+      const locations: LocationAsset[] = (ep?.locations && ep.locations.length > 0)
+        ? ep.locations
         : (seriesStore.currentSeries?.locations || []);
 
-      const props: PropAsset[] = (sc?.props && sc.props.length > 0)
-        ? sc.props
+      const props: PropAsset[] = (ep?.props && ep.props.length > 0)
+        ? ep.props
         : (seriesStore.currentSeries?.props || []);
 
-      const scenes = sc?.scenes || ep?.scenes || [];
+      const scenes = ep?.scenes || [];
 
       // Calculate total work items for smooth percentage (only unrendered items)
       let totalItems = 0;
@@ -558,7 +558,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
       }
 
       setStepStatus('b2', hasError ? 'error' : 'done');
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
     } catch (err: any) {
       setStepStatus('b2', 'error');
       toast.error(err.message || 'Assets & Storyboard batch generation failed');
@@ -586,7 +586,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
       const targetCamera = scene.camera_movement || 'dolly_in';
       const lightingMood = scene.lighting_mood || "";
 
-      const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+      const allScenes = seriesStore.activeEpisode?.scenes || [];
       const nextScene = allScenes.find((s: Scene) => s.index === sceneIndex + 1) as any;
       const nextFrameUrl = nextScene?.storyboard_frame_url;
 
@@ -625,7 +625,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
           // });
         }
 
-        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
       } else {
         updateSceneStatus(sceneIndex, { video_status: 'done' });
       }
@@ -645,7 +645,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     const epId = seriesStore.activeEpisodeId;
     if (!epId) return;
 
-    const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+    const allScenes = seriesStore.activeEpisode?.scenes || [];
     const scenes = allScenes.filter((s: Scene) => s.storyboard_frame_url && !s.video_url);
 
     if (scenes.length === 0) {
@@ -720,11 +720,11 @@ export const usePipelineStore = defineStore('pipeline', () => {
         }
 
         // Sync Voiceover Audio and Captions on OpenVideo Timeline
-        const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+        const allScenes = seriesStore.activeEpisode?.scenes || [];
         const currentScene = allScenes.find((s: Scene) => s.index === sceneIndex) || { index: sceneIndex, dialogue };
         await syncSceneVoiceoverAndCaptionsToTimeline(sceneIndex, url, res?.data?.cues || dialogue, currentScene);
 
-        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
       } else {
         updateSceneStatus(sceneIndex, { voiceover_status: 'done' });
       }
@@ -744,7 +744,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     const epId = seriesStore.activeEpisodeId;
     if (!epId) return;
 
-    const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+    const allScenes = seriesStore.activeEpisode?.scenes || [];
 
     if (languageCode) {
       // Smart skip: only scenes not yet rendered for this language track
@@ -835,7 +835,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
   //       // Auto-save immediately
   //       const sId = seriesStore.currentSeries?.id;
   //       if (sId) await seriesStore.saveEpisodeScenes(sId, epId);
-  //       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+  //       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
   //     } else {
   //       updateSceneStatus(sceneIndex, { bgm_status: 'done' });
   //     }
@@ -891,7 +891,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     const sId = seriesStore.currentSeries?.id;
     if (!epId) return;
 
-    const scenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+    const scenes = seriesStore.activeEpisode?.scenes || [];
     setStepStatus('b5', 'running');
     isRendering.value = true;
     currentRenderingMessage.value = `Generating Captions (${langCode})`;
@@ -1011,7 +1011,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
 
           updateSceneStatus(scene.index, { caption_status: 'done' });
           seriesStore.updateLanguageTrackCaptions(epId, langCode, scene.index, cues);
-          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
         } catch (err) {
           console.warn(`[generateCaptionsForLanguage] scene ${scene.index} failed:`, err);
         }
@@ -1172,7 +1172,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
   ) {
     try {
       const epId = seriesStore.activeEpisodeId;
-      await seriesStore.loadEpisodeTimeline(epId, true);
+      await seriesStore.loadEpisodeTimeline(epId, { forceReset: true });
     } catch (e) {
       console.warn('[usePipelineStore] Failed to reload synchronized timeline:', e);
     }
@@ -1182,7 +1182,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
   async function reAlignDubbing(langCode: string) {
     const epId = seriesStore.activeEpisodeId;
     if (!epId) return;
-    const scenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+    const scenes = seriesStore.activeEpisode?.scenes || [];
     try {
       await http.post('/voices/dubbing/re-align', {
         episode_id: epId,
@@ -1279,7 +1279,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
       await saveCurrentTimeline(`Scene ${sceneIndex} BGM and audio synced`);
     }
 
-    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('job-completed'));
   }
 
   // ─── Separate Scene Audio (Extract Vocal vs BGM/Ambient with Timestamps) ───
@@ -1288,7 +1288,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     if (!epId || !videoUrl) return;
 
     try {
-      const allScenes = seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || [];
+      const allScenes = seriesStore.activeEpisode?.scenes || [];
       const currentScene = allScenes.find((s: any) => s.index === sceneIndex) || { index: sceneIndex, dialogue };
       const rawDialogue = dialogue || currentScene.dialogue || [];
 
@@ -1520,12 +1520,12 @@ export const usePipelineStore = defineStore('pipeline', () => {
           jobSyncDebounceTimeout = setTimeout(() => {
             seriesStore.loadWorkspaceData(currentSid).then(() => {
               if (currentEid && (!jobEid || jobEid === currentEid)) {
-                seriesStore.loadEpisodeScript(currentSid, currentEid);
+                seriesStore.loadEpisode(currentSid, currentEid);
               }
               if (seriesStore.activeEpisode) {
                 syncStepStatusesWithEpisode(seriesStore.activeEpisode, seriesStore.charactersList);
               }
-              window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+              window.dispatchEvent(new CustomEvent('job-completed'));
             });
           }, 300);
         }
@@ -1561,6 +1561,19 @@ export const usePipelineStore = defineStore('pipeline', () => {
           activeJobs.value = [{ ...completedJob, status: 'completed', progress: 100 }, ...activeJobs.value];
         }
         triggerFinishedJobSync(completedJob);
+		    window.dispatchEvent(new CustomEvent('timeline-updated'));
+      });
+
+      ws.onTimelineUpdated((data: { episodeId: string; timeline: IProject }) => {
+        if (data.episodeId === (seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId)) {
+          if (seriesStore.isEpisodeSwitching) {
+            console.log('[usePipelineStore] Skipping ws timeline:updated during episode switch:', data.episodeId);
+            return;
+          }
+          console.log('[usePipelineStore] Timeline updated in realtime for episode:', data.episodeId);
+          seriesStore.loadEpisodeTimeline(data.episodeId, { timeline: data.timeline, silent: true });
+          window.dispatchEvent(new CustomEvent('timeline-updated'));
+        }
       });
 
       ws.onEpisodeUpdated((latestEp: any) => {
@@ -1574,11 +1587,8 @@ export const usePipelineStore = defineStore('pipeline', () => {
           }
           if (latestEp.id === (seriesStore.activeEpisode?.id || seriesStore.activeEpisodeId)) {
             syncStepStatusesWithEpisode(latestEp, seriesStore.charactersList);
-            const currentSid = seriesStore.currentSeries?.id;
-            if (currentSid) {
-              seriesStore.loadEpisodeScript(currentSid, latestEp.id);
-            }
-            window.dispatchEvent(new CustomEvent('pipeline-asset-updated'));
+            // Update active episode in memory directly without triggering duplicate network reloads
+            seriesStore.updateEpisode(latestEp);
           }
         }
       });
@@ -1589,7 +1599,6 @@ export const usePipelineStore = defineStore('pipeline', () => {
           if (Array.isArray(updatedSeries.characters)) {
             seriesStore.charactersList = updatedSeries.characters;
           }
-          window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: { type: 'series_updated' } }));
         }
       });
     } catch (err) {
@@ -1663,6 +1672,180 @@ export const usePipelineStore = defineStore('pipeline', () => {
     stopJobPolling();
   }
 
+  async function runStep(stepId: string, context?: { seriesId?: string; episodeId?: string }) {
+    setStepStatus(stepId, 'running');
+    const epId = context?.episodeId || seriesStore.activeEpisodeId;
+    const sId = context?.seriesId || seriesStore.currentSeries?.id || '';
+
+    try {
+      if (stepId === 'b1') {
+        await renderAllCharacters();
+        toast.success(i18n.global.t('toast.b2CharRendered', 'All character avatars rendered!'));
+      } else if (stepId === 'b2') {
+        await renderAllAssetsAndStoryboard();
+        if (epId) await seriesStore.loadEpisodeTimeline(epId);
+        toast.success(i18n.global.t('toast.b1BgRendered', 'Assets & Storyboard generated successfully!'));
+      } else if (stepId === 'b3') {
+        await renderAllVideos();
+        if (epId) await seriesStore.loadEpisodeTimeline(epId);
+        toast.success(i18n.global.t('toast.b3VideoRendered', 'All scene videos generated!'));
+      } else if (stepId === 'b4') {
+        await renderAllVoiceovers('Puck', 85, 1.1);
+        if (epId) await seriesStore.loadEpisodeTimeline(epId);
+        toast.success(i18n.global.t('toast.b4TtsSynced', 'Voiceovers generated & synced!'));
+      } else if (stepId === 'b5') {
+        const defaultLang = seriesStore.currentSeries?.language || 'en-US';
+        await generateCaptionsForLanguage(defaultLang);
+        if (epId) await seriesStore.loadEpisodeTimeline(epId);
+        toast.success(i18n.global.t('toast.b6CaptionsSynced', 'Subtitles generated & synced!'));
+      } else if (stepId === 'b7') {
+        await seriesStore.saveWorkspaceSnapshot(sId, epId);
+        toast.success(i18n.global.t('toast.b7TimelineSaved', 'Timeline and workspace saved!'));
+      } else if (stepId === 'b8') {
+        await http.post('/publish/multi-platform', {
+          seriesId: sId,
+          episodeId: epId,
+          platforms: ['tiktok', 'youtube_shorts', 'reels'],
+        });
+        toast.success(i18n.global.t('toast.publishScheduled', 'Publishing scheduled!'));
+      }
+      setStepStatus(stepId, 'done');
+    } catch (err: any) {
+      setStepStatus(stepId, 'error');
+      toast.error(err?.message || `Step ${stepId.toUpperCase()} failed`);
+      throw err;
+    }
+  }
+
+  async function queueServerRender(seriesId: string, episodeId: string, options?: { resolution?: string; languages?: string[] }) {
+    setStepStatus('b8', 'running');
+    try {
+      const langs = options?.languages && options.languages.length > 0
+        ? options.languages
+        : (seriesStore.getLanguageTracks(episodeId) || []).map((t: any) => t.language_code).filter(Boolean);
+      const res: any = await http.post('/export/render-job', {
+        series_id: seriesId,
+        episode_id: episodeId,
+        resolution: options?.resolution || '1080x1920',
+        fps: 30,
+        format: 'mp4',
+        languages: langs.length > 0 ? langs : ['en-US'],
+        tracks: [],
+      });
+      const jobId = res?.data?.jobId;
+      toast.success(i18n.global.t('toast.b8JobQueued', 'Server render job queued!'));
+      setStepStatus('b8', 'done');
+      return jobId;
+    } catch (err: any) {
+      setStepStatus('b8', 'error');
+      toast.error(err?.message || 'Server render job failed');
+      throw err;
+    }
+  }
+
+  async function uploadRenderVersions(
+    seriesIdOrOptions: string | { seriesId: string; episodeId: string; outputs: Record<string, string>; thumbnail?: string | Blob; selectedLang?: string; uploadAll?: boolean },
+    episodeIdArg?: string,
+    outputsArg?: Record<string, string>,
+    thumbnailArg?: string | Blob,
+    uploadAllArg = false
+  ) {
+    let seriesId = '';
+    let episodeId = '';
+    let outputs: Record<string, string> = {};
+    let thumbnail: string | Blob | undefined = '';
+    let selectedLang = '';
+    let uploadAll = false;
+
+    if (typeof seriesIdOrOptions === 'object' && seriesIdOrOptions !== null) {
+      seriesId = seriesIdOrOptions.seriesId;
+      episodeId = seriesIdOrOptions.episodeId;
+      outputs = seriesIdOrOptions.outputs || {};
+      thumbnail = seriesIdOrOptions.thumbnail;
+      selectedLang = seriesIdOrOptions.selectedLang || '';
+      uploadAll = !!seriesIdOrOptions.uploadAll;
+    } else {
+      seriesId = seriesIdOrOptions;
+      episodeId = episodeIdArg || '';
+      outputs = outputsArg || {};
+      thumbnail = thumbnailArg;
+      uploadAll = uploadAllArg;
+    }
+
+    if (!episodeId) return;
+
+    if (uploadAll && Object.keys(outputs).length > 1) {
+      const entries = Object.entries(outputs);
+      for (const [lang, url] of entries) {
+        if (!url) continue;
+        let blob: Blob | undefined;
+        if (url.startsWith('blob:')) {
+          const resp = await fetch(url);
+          blob = await resp.blob();
+        }
+        let thumbBlob: Blob | undefined;
+        let thumbUrl = '';
+        if (thumbnail) {
+          if (thumbnail instanceof Blob) {
+            thumbBlob = thumbnail;
+          } else if (typeof thumbnail === 'string') {
+            if (thumbnail.startsWith('blob:')) {
+              try {
+                const tResp = await fetch(thumbnail);
+                thumbBlob = await tResp.blob();
+              } catch {}
+            } else if (thumbnail !== '[object Blob]') {
+              thumbUrl = thumbnail;
+            }
+          }
+        }
+        await seriesStore.addRenderVersion(seriesId, episodeId, {
+          language: lang,
+          voice: `Rendered Audio (${lang})`,
+          subtitles: [`Caption: ${lang} (Burned-in)`],
+          resolution: '1080x1920 (9:16 Vertical HD)',
+          thumbnail_url: thumbUrl,
+          video_url: url.startsWith('blob:') ? '' : url,
+        }, blob, thumbBlob);
+      }
+      toast.success(i18n.global.t('toast.allRenderVersionsUploaded', { count: entries.length }));
+    } else {
+      const targetLang = selectedLang || Object.keys(outputs)[0] || 'en-US';
+      const url = outputs[targetLang] || Object.values(outputs)[0] || '';
+      if (!url) return;
+      let blob: Blob | undefined;
+      if (url.startsWith('blob:')) {
+        const resp = await fetch(url);
+        blob = await resp.blob();
+      }
+      let thumbBlob: Blob | undefined;
+      let thumbUrl = '';
+      if (thumbnail) {
+        if (thumbnail instanceof Blob) {
+          thumbBlob = thumbnail;
+        } else if (typeof thumbnail === 'string') {
+          if (thumbnail.startsWith('blob:')) {
+            try {
+              const tResp = await fetch(thumbnail);
+              thumbBlob = await tResp.blob();
+            } catch {}
+          } else if (thumbnail !== '[object Blob]') {
+            thumbUrl = thumbnail;
+          }
+        }
+      }
+      await seriesStore.addRenderVersion(seriesId, episodeId, {
+        language: targetLang,
+        voice: `Rendered Audio (${targetLang})`,
+        subtitles: [`Caption: ${targetLang} (Burned-in)`],
+        resolution: '1080x1920 (9:16 Vertical HD)',
+        thumbnail_url: thumbUrl,
+        video_url: url.startsWith('blob:') ? '' : url,
+      }, blob, thumbBlob);
+      toast.success(i18n.global.t('toast.renderVersionUploaded', 'Render version uploaded!'));
+    }
+  }
+
   return {
     voicePresets,
     isVoicePresetsLoading,
@@ -1713,6 +1896,9 @@ export const usePipelineStore = defineStore('pipeline', () => {
     retrySingleAsset,
     startJobPolling,
     stopJobPolling,
+    runStep,
+    queueServerRender,
+    uploadRenderVersions,
     resetAll,
   };
 });

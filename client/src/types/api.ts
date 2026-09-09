@@ -561,13 +561,13 @@ export interface Episode {
   title: string;
   synopsis?: string;
   screenplay?: string;
-  script?: string;
+  // script?: string;
   scene_core?: string;
   conflict_escalation?: string;
   cliffhanger_hook?: string;
   duration?: string; // duration in minute string
   duration_seconds?: number;
-  scenes_count: string;
+  scenes_count: number;
   status: string;
   scenes?: Scene[];
   cover_image?: string;
@@ -576,9 +576,9 @@ export interface Episode {
   caption_settings?: CaptionSettings;
   caption_languages?: string[];
   dubbing_languages?: string[];
-  characters?: Character[] | string[];
-  locations?: LocationAsset[] | string[];
-  props?: PropAsset[] | string[];
+  characters?: Character[];
+  locations?: LocationAsset[];
+  props?: PropAsset[];
   video_url?: string;
   video_urls?: Record<string, string>;
   bgm_url?: string;
@@ -1132,19 +1132,14 @@ export interface EpisodeSkeleton {
 
 export interface MasterPlanOutput {
   series_id: string;
-  seriesId?: string;
   title: string;
   genre: string;
   visual_style: string;
-  visualStyle?: string;
   visual_style_prompt: string;
-  visualStylePrompt?: string;
   country: string;
   ratio: "9:16" | "16:9" | "4:3" | "1:1" | string;
   total_episodes: number;
-  totalEpisodes?: number;
   total_duration_seconds?: number;
-  totalDurationSeconds?: number;
   episode_duration?: number;
   language: string;
   setting_context?: {

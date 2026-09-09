@@ -18,7 +18,7 @@ const { t } = useI18n();
 const seriesStore = useSeriesStore();
 
 const dynamicScriptText = computed(() => {
-  const scenes = seriesStore.activeScript?.scenes;
+  const scenes = seriesStore.activeEpisode?.scenes;
   if (scenes && Array.isArray(scenes) && scenes.length > 0) {
     return scenes.map((scene: any, idx: number) => {
       const sceneHeader = `[SCENE ${String(scene.index || (idx + 1)).padStart(2, '0')} - ${scene.heading || scene.location || 'LOCATION'}]`;

@@ -285,7 +285,7 @@ function handleSeriesAction(command: string, series: any) {
             <el-image :src="series.image" 
               :alt="series.title"
               class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-              :preview-src-list="[series.image]">
+              >
               <template #error>
                 <img src="/images/dashboard/poster-1.jpg" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
               </template>

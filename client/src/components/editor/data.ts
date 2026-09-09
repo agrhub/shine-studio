@@ -17,9 +17,30 @@ export const data = {
 };
 
 import { normalizeTransitionKey, normalizeEffectKey } from '@/stores/usePipelineStore';
+import { IProject } from '@openvideo/core';
 
 export const SILENT_AUDIO_SAMPLE = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 const SAMPLE_IMAGE_BG = '/images/dashboard/poster-1.jpg';
+
+export function sanitizeEffectAndTransitionKeys(timelineData: IProject){
+  if(!timelineData || !timelineData.clips){
+    return timelineData;
+  }
+  const clips: Record<string, any> = {};
+  for (const [clipId, clip] of Object.entries<any>(timelineData.clips)) {
+    if (clip.type === 'Transition') {
+      clip.transitionKey = normalizeTransitionKey(clip.transitionKey) || 'fade';
+    } else if (clip.type === 'Effect') {
+      clip.effectKey = normalizeEffectKey(clip.effectKey) || 'fadeIn';
+    }
+    clips[clipId] = clip;
+  }
+
+  return {
+    ...timelineData,
+    clips
+  };
+}
 
 export function sanitizeTimelineData(timelineData: any) {
   if (!timelineData) {
@@ -206,14 +227,16 @@ export function sanitizeTimelineData(timelineData: any) {
       ? t.clipIds.filter((cid: any) => typeof cid === 'string' && cid in clips)
       : [];
 
-    tracks.push({
-      ...t,
-      id: trackId,
-      name: t.name || trackId,
-      type: trackType,
-      clipIds,
-      accepts: Array.isArray(t.accepts) ? t.accepts : [trackType],
-    });
+    if(clipIds && clipIds.length > 0){
+      tracks.push({
+        ...t,
+        id: trackId,
+        name: t.name || trackId,
+        type: trackType,
+        clipIds: clipIds || [],
+        accepts: Array.isArray(t.accepts) ? t.accepts : [trackType],
+      });
+    }
   }
 
   // Ensure every clip belongs to a valid track

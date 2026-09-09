@@ -23,6 +23,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Loader2, Video, Music, Clock, Settings, Mic, Subtitles, Globe, Layers } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
+import { sanitizeTimelineData } from './data';
 
 // ─── Option Definitions ─────────────────────────────────────────────────────
 
@@ -285,11 +286,13 @@ function buildCustomProjectData(voiceLang?: string, capLang?: string) {
     }
   });
 
-  return {
+  const timelineData = sanitizeTimelineData({
     settings: JSON.parse(JSON.stringify(state.settings || {})),
     tracks: filteredTracks,
     clips: filteredClips,
-  };
+  });
+
+  return timelineData;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -413,9 +416,11 @@ const startExport = async (targetPreset?: ResolutionPreset) => {
       const chosenLang = selectedVoiceLang.value || seriesStore.currentSeries?.language || 'en-US';
       const outputPayload = { [chosenLang]: result.video };
       emit('exported', outputPayload, result?.thumbnail);
+    } else {
+      step.value = 'advanced';
     }
   } catch (error: any) {
-    toast.error('Failed to export: ' + error.message);
+    toast.error('Failed to export: ' + (error?.message || 'Unknown error'));
     isExporting.value = false;
     step.value = 'advanced';
   }

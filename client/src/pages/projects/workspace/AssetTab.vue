@@ -14,9 +14,7 @@ const { t } = useI18n();
 const seriesStore = useSeriesStore();
 const pipelineStore = usePipelineStore();
 const scriptStore = useScriptStore();
-
 const activeEpisode = computed(() => seriesStore.activeEpisode);
-const activeScript = computed(() => seriesStore.activeScript);
 
 // ─── Assets State (Characters, Locations, Props) ─────────────────────────────
 const extractedCharacters = ref<any[]>([]);
@@ -26,22 +24,21 @@ const isGeneratingAssetImage = ref<Record<string, boolean>>({});
 const selectedWardrobeVariant = ref<Record<string, string>>({});
 
 watch(
-  () => [seriesStore.currentSeries, activeEpisode.value, activeScript.value],
+  () => [seriesStore.currentSeries, activeEpisode.value],
   () => {
     const s = seriesStore.currentSeries;
-    const ep = activeEpisode.value as any;
-    const sc = activeScript.value as any;
-    extractedCharacters.value = (sc?.characters && sc.characters.length > 0)
-      ? sc.characters
-      : (ep?.characters && ep.characters.length > 0 ? ep.characters : (s?.characters || seriesStore.charactersList || []));
+    const ep = activeEpisode.value;
+    extractedCharacters.value = (ep?.characters && ep.characters.length > 0)
+      ? ep.characters
+      : (s?.characters || seriesStore.charactersList || []);
 
-    extractedLocations.value = (sc?.locations && sc.locations.length > 0)
-      ? sc.locations
-      : (ep?.locations && ep.locations.length > 0 ? ep.locations : (s?.locations || []));
+    extractedLocations.value = (ep?.locations && ep.locations.length > 0)
+      ? ep.locations
+      : (s?.locations || []);
 
-    extractedProps.value = (sc?.props && sc.props.length > 0)
-      ? sc.props
-      : (ep?.props && ep.props.length > 0 ? ep.props : (s?.props || []));
+    extractedProps.value = (ep?.props && ep.props.length > 0)
+      ? ep.props
+      : (s?.props || []);
 
     // Auto-select first wardrobe variant if not selected
     for (const c of extractedCharacters.value) {

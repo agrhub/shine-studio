@@ -5,10 +5,15 @@ import type { CollaboratorSession, PatchEvent, Command } from '@/types/api';
 import i18n from '@/i18n';
 import { ElNotification } from 'element-plus';
 
+import http from '@/utils/http';
+import { toast } from 'vue-sonner';
+
 export const useCollaborationStore = defineStore('collaboration', {
   state: () => ({
     seriesId: 'series-001',
     activeUsers: [] as CollaboratorSession[],
+    teamMembersList: [] as any[],
+    isLoadingTeam: false,
     isConnected: false,
     wsComposable: null as any,
   }),
@@ -62,6 +67,41 @@ export const useCollaborationStore = defineStore('collaboration', {
       if (this.wsComposable) {
         this.wsComposable.broadcastPatch(this.seriesId, commands);
       }
+    },
+
+    async fetchTeamMembers() {
+      this.isLoadingTeam = true;
+      try {
+        const res: any = await http.get('/admin/team-members');
+        if (res?.data && Array.isArray(res.data)) {
+          this.teamMembersList = res.data;
+        }
+        return this.teamMembersList;
+      } catch (err) {
+        console.error('Failed to load team members', err);
+        return [];
+      } finally {
+        this.isLoadingTeam = false;
+      }
+    },
+
+    async inviteMember(email: string, role: string) {
+      if (!email.trim()) {
+        toast.error(i18n.global.t('toast.enterEmail', 'Please enter an email'));
+        return null;
+      }
+      try {
+        const res: any = await http.post('/admin/team-members', { email, role });
+        if (res?.data) {
+          this.teamMembersList.push(res.data);
+          toast.success(i18n.global.t('toast.teamMemberInvited', 'Team member invited successfully!'));
+          return res.data;
+        }
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to invite team member');
+        throw err;
+      }
+      return null;
     },
   },
 });

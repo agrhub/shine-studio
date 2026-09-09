@@ -16,19 +16,17 @@ const seriesStore = useSeriesStore();
 const scriptStore = useScriptStore();
 
 const activeEpisode = computed(() => seriesStore.activeEpisode);
-const activeScript = computed(() => seriesStore.activeScript);
 
 // ─── Screenplay Dynamic State ────────────────────────────────────────────────
 const screenplayText = ref('');
 const isExtracting = ref(false);
 
 watch(
-  () => [activeEpisode.value, activeScript.value],
+  () => [activeEpisode.value],
   () => {
-    const ep = activeEpisode.value as any;
-    const sc = activeScript.value as any;
-    if (ep || sc) {
-      screenplayText.value = ep?.screenplay || sc?.screenplay || ep?.script || '';
+    const ep = activeEpisode.value;
+    if (ep) {
+      screenplayText.value = ep.screenplay || '';
     } else {
       screenplayText.value = '';
     }
@@ -44,7 +42,7 @@ async function handleExtractAssets() {
   isExtracting.value = true;
   try {
     const sId = seriesStore.currentSeries?.id;
-    const ep = activeEpisode.value as any;
+    const ep = activeEpisode.value;
     const epId = ep?.id;
 
     toast.info(t('workspace.analyzingScreenplay', 'Analyzing screenplay, extracting assets & generating scenes...'));
@@ -65,45 +63,49 @@ async function handleExtractAssets() {
       const dur = result.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0) || Number(result.total_duration_seconds) || 60;
       if (ep) {
         ep.scenes = result.scenes;
-        ep.scenes_count = `${result.scenes.length} scenes`;
+        ep.scenes_count = result.scenes.length || 0;
         ep.screenplay = screenplayText.value;
         ep.duration_seconds = dur;
         ep.duration = seriesStore.formatTime(dur);
+        ep.props = result.props;
+        ep.locations = result.locations;
+        ep.characters = result.characters;
         seriesStore.episodesList = [...seriesStore.episodesList];
       }
-      seriesStore.activeScript = {
-        ...(seriesStore.activeScript || {}),
-        id: ep?.id || epId || '',
-        number: ep?.number || ep?.episode_number || 1,
-        title: ep?.title || '',
-        episode_number: ep?.episode_number || ep?.number || 1,
-        scenes_count: `${result.scenes.length} scenes`,
-        status: ep?.status || 'draft',
-        screenplay: screenplayText.value,
-        scenes: result.scenes,
-        characters: result.characters || [],
-        locations: result.locations || [],
-        props: result.props || [],
-        duration_seconds: dur,
-        duration: seriesStore.formatTime(dur),
-      };
+      // seriesStore.activeEpisode = {
+      //   ...(seriesStore.activeEpisode || {}),
+      //   id: ep?.id || epId || '',
+      //   number: ep?.number || ep?.episode_number || 1,
+      //   title: ep?.title || '',
+      //   episode_number: ep?.episode_number || ep?.number || 1,
+      //   scenes_count: `${result.scenes.length} scenes`,
+      //   status: ep?.status || 'draft',
+      //   screenplay: screenplayText.value,
+      //   script: ep?.script,
+      //   scenes: result.scenes,
+      //   characters: result.characters || [],
+      //   locations: result.locations || [],
+      //   props: result.props || [],
+      //   duration_seconds: dur,
+      //   duration: seriesStore.formatTime(dur),
+      // };
     }
 
     // Persist full episode state to database
-    if (sId && epId) {
-      try {
-        await http.patch(`/series/${sId}/episodes/${epId}`, {
-          screenplay: screenplayText.value,
-          characters: result.characters || [],
-          locations: result.locations || [],
-          props: result.props || [],
-          scenes: result.scenes || [],
-          duration: result.totalDurationSeconds,
-        });
-      } catch (dbErr) {
-        console.warn('[handleExtractAssets] Failed to patch episode:', dbErr);
-      }
-    }
+    // if (sId && epId) {
+    //   try {
+    //     await http.patch(`/series/${sId}/episodes/${epId}`, {
+    //       screenplay: screenplayText.value,
+    //       characters: result.characters || [],
+    //       locations: result.locations || [],
+    //       props: result.props || [],
+    //       scenes: result.scenes || [],
+    //       duration: result.total_duration_seconds,
+    //     });
+    //   } catch (dbErr) {
+    //     console.warn('[handleExtractAssets] Failed to patch episode:', dbErr);
+    //   }
+    // }
 
     if (sId) {
       await seriesStore.loadWorkspaceData(sId);

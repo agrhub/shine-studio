@@ -90,7 +90,7 @@ function playVoiceSample(voiceId: string) {
 }
 
 const characters = computed(() => seriesStore.charactersList);
-const scenes = computed(() => seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || []);
+const scenes = computed(() => seriesStore.activeEpisode?.scenes || []);
 
 const b4Step = computed(() => pipelineStore.pipelineSteps.find(s => s.id === 'b4'));
 const b5Step = computed(() => pipelineStore.pipelineSteps.find(s => s.id === 'b5'));
@@ -222,7 +222,7 @@ async function handleTranslateAndDubLanguage(targetLang: string) {
     });
 
     // 3. Reload authoritative episode data & timeline from backend
-    await seriesStore.loadEpisodeScript(seriesId, epId);
+    await seriesStore.loadEpisode(seriesId, epId);
     seriesStore.syncVoiceoverTrackToTimeline(epId, targetLang);
     seriesStore.syncCaptionTrackToTimeline(epId, targetLang);
     toast.success(t('toast.dubbingSuccess'));

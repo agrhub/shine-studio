@@ -13,8 +13,7 @@ const seriesStore = useSeriesStore();
 const pipelineStore = usePipelineStore();
 
 const activeEpisode = computed(() => seriesStore.activeEpisode);
-const activeScript = computed(() => seriesStore.activeScript);
-const scenes = computed(() => activeScript.value?.scenes || activeEpisode.value?.scenes || []);
+const scenes = computed(() => activeEpisode.value?.scenes || []);
 
 // ─── Video Preview Modal State ──────────────────────────────────────────────
 const isPreviewModalOpen = ref(false);

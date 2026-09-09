@@ -312,7 +312,7 @@ const mentionItems = computed<MentionItem[]>(() => {
   });
 
   // Scenes
-  const scs = activeEpisode.value?.scenes || seriesStore.activeScript?.scenes || [];
+  const scs = activeEpisode.value?.scenes || [];
   scs.forEach((s: any) => {
     const idx = s.index;
     items.push({
@@ -559,7 +559,7 @@ async function sendMessage(customText?: string) {
                   //   seriesStore.loadEpisodeScript(seriesId.value, episodeId.value);
                   // }
                   // if (typeof window !== 'undefined') {
-                  //   window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: parsed }));
+                  //   window.dispatchEvent(new CustomEvent('job-completed', { detail: parsed }));
                   // }
                 }
               } catch {}
@@ -577,13 +577,13 @@ async function sendMessage(customText?: string) {
       hasPendingWorkspaceSync = false;
       try {
         if (seriesId.value && episodeId.value) {
-          await seriesStore.loadEpisodeScript(seriesId.value, episodeId.value);
+          await seriesStore.loadEpisode(seriesId.value, episodeId.value);
         }
         if (seriesId.value) {
           await seriesStore.loadWorkspaceData(seriesId.value);
         }
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: { batch: true } }));
+          window.dispatchEvent(new CustomEvent('job-completed', { detail: { batch: true } }));
         }
       } catch (syncErr) {
         console.warn('[Chatbot] Batch sync error:', syncErr);

@@ -413,12 +413,12 @@ export const useChatStore = defineStore('chat', {
           try {
             if (this.scope === 'series' && this.activeSeriesId) {
               if (this.activeEpisodeId) {
-                await seriesStore.loadEpisodeScript(this.activeSeriesId, this.activeEpisodeId);
+                await seriesStore.loadEpisode(this.activeSeriesId, this.activeEpisodeId);
               }
               await seriesStore.loadWorkspaceData(this.activeSeriesId);
             }
             if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('pipeline-asset-updated', { detail: { batch: true } }));
+              window.dispatchEvent(new CustomEvent('job-completed', { detail: { batch: true } }));
             }
           } catch (syncErr) {
             console.warn('[ChatStore] Post-stream sync notice:', syncErr);

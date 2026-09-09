@@ -188,25 +188,32 @@ export const useScriptStore = defineStore('script', {
       locations: LocationAsset[];
       props: PropAsset[];
       scenes: Scene[];
+      script: string;
       total_duration_seconds: number;
-      totalDurationSeconds: number;
     }> {
       const seriesStore = useSeriesStore();
       const sId = payload.series_id || seriesStore.currentSeries?.id;
       const epId = payload.episode_id || seriesStore.activeEpisode?.id;
-      const res = await http.post<ApiResponse<{ characters: Character[]; locations: LocationAsset[]; props: PropAsset[]; scenes: Scene[]; total_duration_seconds: number; totalDurationSeconds?: number }>>('/assets/screenplay/analyze', {
+      const res = await http.post<ApiResponse<{ 
+        characters: Character[]; 
+        locations: LocationAsset[]; 
+        props: PropAsset[]; 
+        scenes: Scene[]; 
+        total_duration_seconds: number; 
+        script: string 
+      }>>('/assets/screenplay/analyze', {
         ...payload,
         series_id: sId,
         episode_id: epId,
       });
-      const raw = res.data as unknown as { characters?: Character[]; locations?: LocationAsset[]; props?: PropAsset[]; scenes?: Scene[]; total_duration_seconds?: number; totalDurationSeconds?: number };
+      const raw = res.data as any as { characters?: Character[]; locations?: LocationAsset[]; props?: PropAsset[]; scenes?: Scene[]; total_duration_seconds?: number, script?: string };
       const scenesSum = Array.isArray(raw?.scenes) ? raw.scenes.reduce((sum: number, sc: any) => sum + (Number(sc.duration_seconds) || 0), 0) : 0;
-      const dur = scenesSum > 0 ? scenesSum : Number(raw?.total_duration_seconds || raw?.totalDurationSeconds || 0);
+      const dur = scenesSum > 0 ? scenesSum : Number(raw?.total_duration_seconds || 0);
 
       const targetEp = seriesStore.episodesList.find(e => e.id === epId);
       if (targetEp && Array.isArray(raw?.scenes) && raw.scenes.length > 0) {
         targetEp.scenes = raw.scenes;
-        targetEp.scenes_count = `${raw.scenes.length} scenes`;
+        targetEp.scenes_count = raw.scenes?.length || 0;
         if (dur > 0) {
           targetEp.duration_seconds = dur;
           targetEp.duration = seriesStore.formatTime(dur);
@@ -220,7 +227,7 @@ export const useScriptStore = defineStore('script', {
         props: raw?.props || [],
         scenes: raw?.scenes || [],
         total_duration_seconds: dur,
-        totalDurationSeconds: dur,
+        script: raw?.script || '',
       };
     },
 

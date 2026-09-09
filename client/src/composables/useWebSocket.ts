@@ -1,6 +1,7 @@
 import { ref, shallowRef } from 'vue';
 import { io, Socket } from 'socket.io-client';
-import type { PatchEvent, Command, CollaboratorSession } from '@/types/api';
+import type { PatchEvent, Command, CollaboratorSession, Episode, Series } from '@/types/api';
+import { IProject } from '@openvideo/core';
 
 const socketRef = shallowRef<Socket | null>(null);
 const isConnected = ref(false);
@@ -99,14 +100,20 @@ export function useWebSocket() {
     s.off('pipeline_job:completed', callback);
     s.on('pipeline_job:completed', callback);
   };
+  
+  const onTimelineUpdated = (callback: (data: {episodeId: string; timeline: IProject}) => void) => {
+    const s = getSocket();
+    s.off('timeline:updated', callback);
+    s.on('timeline:updated', callback);
+  };
 
-  const onEpisodeUpdated = (callback: (episode: any) => void) => {
+  const onEpisodeUpdated = (callback: (episode: Episode) => void) => {
     const s = getSocket();
     s.off('episode:updated', callback);
     s.on('episode:updated', callback);
   };
 
-  const onSeriesUpdated = (callback: (series: any) => void) => {
+  const onSeriesUpdated = (callback: (series: Series) => void) => {
     const s = getSocket();
     s.off('series:updated', callback);
     s.on('series:updated', callback);
@@ -135,6 +142,7 @@ export function useWebSocket() {
     onPatchReceive,
     onPipelineJobUpdated,
     onPipelineJobCompleted,
+	onTimelineUpdated,
     onEpisodeUpdated,
     onSeriesUpdated,
     onChatMessage,

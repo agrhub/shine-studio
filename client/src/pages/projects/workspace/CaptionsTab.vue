@@ -165,7 +165,7 @@ function handleAddLanguage(code: string) {
   }
 }
 
-const scenes = computed(() => seriesStore.activeScript?.scenes || seriesStore.activeEpisode?.scenes || []);
+const scenes = computed(() => seriesStore.activeEpisode?.scenes || []);
 const b6Step = computed(() => pipelineStore.pipelineSteps.find(s => s.id === 'b6'));
 
 // Caption state per-scene — tracks whether captions are synced
@@ -605,8 +605,8 @@ async function handleTranslateActiveLanguage() {
     toast.info(t('toast.translatingCaptions', `Translating subtitles from ${getLanguageByCode(sourceLang).nativeName} to ${getLanguageByCode(targetLang).nativeName}...`));
     await pipelineStore.generateCaptionsForLanguage(targetLang, sourceLang);
     if (seriesStore.activeEpisodeId) {
-      await seriesStore.loadEpisodeScript(seriesStore.currentSeries!.id, seriesStore.activeEpisodeId);
-      await seriesStore.loadEpisodeTimeline(seriesStore.activeEpisodeId, true);
+      await seriesStore.loadEpisode(seriesStore.currentSeries!.id, seriesStore.activeEpisodeId);
+      await seriesStore.loadEpisodeTimeline(seriesStore.activeEpisodeId, { forceReset: true });
     }
     emit('apply-captions');
     applyStyleToTimeline();

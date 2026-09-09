@@ -1,3 +1,27 @@
+// Suppress repetitive frame dimension warnings from engine-pixi during render loops
+const origWarn = console.warn;
+console.warn = function (...args: any[]) {
+  if (typeof args[0] === 'string' && (
+    args[0].includes('PixiSpriteRenderer: Invalid frame dimensions') ||
+    args[0].includes('PixiSpriteRenderer: Texture has zero dimensions') ||
+    args[0].includes('WebGL: INVALID_VALUE: texSubImage2D: The source data has been detached.')
+  )) {
+    return;
+  }
+  origWarn.apply(console, args);
+};
+
+// const origLog = console.log;
+// console.log = function (...args: any[]) {
+//   if (typeof args[0] === 'string' && (
+//     args[0].includes('visibilitychange: hidden') ||
+//     args[0].includes('visibilitychange: visible')
+//   )) {
+//     return;
+//   }
+//   origLog.apply(console, args);
+// };
+
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import ElementPlus from 'element-plus';
 import { createPinia } from 'pinia';

@@ -210,5 +210,21 @@ export const usePublishStore = defineStore('publish', {
         this.generatingCover = false;
       }
     },
+    
+    async bulkPublish(seriesId: string, episodeId: string, platforms: string[], options?: { caption?: string; hashtags?: string[] }) {
+      this.publishing = true;
+      try {
+        const res: any = await http.post('/publish/multi-platform', {
+          episodeId,
+          seriesId,
+          platforms,
+          caption: options?.caption || '',
+          hashtags: options?.hashtags || ['MicroDrama', 'ShineStudio'],
+        });
+        return res?.data;
+      } finally {
+        this.publishing = false;
+      }
+    },
   },
 });
