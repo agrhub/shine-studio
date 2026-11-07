@@ -1,3 +1,4 @@
+import { seriesParamGuard, episodeParamGuard } from '@/middleware/Ownership.js';
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '../database/index.js';
 import { scriptAgent } from '../agents/ScriptAgent.js';
@@ -19,6 +20,10 @@ const upload = multer({
 });
 
 const router = Router();
+
+// Ownership: every :id / :epId param must belong to the authenticated user.
+router.param('id', seriesParamGuard);
+router.param('epId', episodeParamGuard);
 
 // Standardized response helpers
 function ok(res: Response, data: any, message = 'Success', statusCode = 200) {
@@ -801,6 +806,8 @@ router.post('/:id/episodes', async (req: Request, res: Response): Promise<void> 
 });
 
 export const episodesRouter = Router();
+episodesRouter.param('seriesId', seriesParamGuard);
+episodesRouter.param('episodeId', episodeParamGuard);
 
 // GET /api/episodes/series/:seriesId
 episodesRouter.get('/series/:seriesId', async (req: Request, res: Response): Promise<void> => {

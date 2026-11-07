@@ -4,12 +4,11 @@ EventEmitter.defaultMaxListeners = 100;
 import express, { Request, Response } from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import cors from 'cors';
 import './config/env.js';
 import authRoutes from './routes/auth.js';
 import seriesRoutes, { episodesRouter } from './routes/series';
 import flowAccountsRoutes from './routes/flow-accounts';
-import { antigravityAccountsRouter } from './routes/antigravity-accounts';
+import { antigravityAccountsRouter, antigravityOAuthCallbackRouter } from './routes/antigravity-accounts';
 import contactRoutes from './routes/contact';
 import { aiRouter } from './routes/ai';
 import { characterRouter } from './routes/characters';
@@ -57,53 +56,79 @@ getDatabaseProvider()
   })
   .catch((err) => console.warn('[Database] Provider initialization warning:', err));
 
-app.use(cors());
+import { requireAuth, requireAdmin, requireInternalOrAdmin } from './middleware/RequireAuth.js';
+import { corsMiddleware, securityHeaders, rateLimit, isOriginAllowed } from './middleware/Security.js';
+import { verifyAccessToken } from './utils/token.js';
+import { bodySeriesOwnershipGuard } from './middleware/Ownership.js';
+
+/** Authenticated user + ownership check for series/episode ids passed in body/query. */
+const authed = [requireAuth, bodySeriesOwnershipGuard];
+
+// Cloud Run / load balancers append the real client IP as the last X-Forwarded-For hop.
+app.set('trust proxy', process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY : 1);
+app.disable('x-powered-by');
+app.use(securityHeaders);
+app.use('/api', corsMiddleware());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-import { requireAuth, requireAdmin } from './middleware/RequireAuth.js';
+// Brute-force / abuse protection on unauthenticated entry points.
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 50, message: 'Too many authentication attempts, please try again later.' });
+const contactLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10 });
 
 import { jobsRouter } from './routes/jobs.js';
 
 // ─── Public API Routes ───────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/contact', contactRoutes);
-app.use('/api/pexels', pexelsRouter);
+app.use('/api/auth', (req, res, next) => (req.method === 'POST' ? authLimiter(req, res, next) : next()), authRoutes);
+app.use('/api/contact', (req, res, next) => (req.method === 'POST' ? contactLimiter(req, res, next) : next()), contactRoutes);
+// Google OAuth redirect target for the Antigravity pool (protected by signed state, see route).
+app.use('/api/antigravity-accounts', antigravityOAuthCallbackRouter);
+// Media files are loaded by <img>/<video> tags that cannot send an Authorization header.
+// Only GET /api/assets/file/* is public; every other /api/assets route requires a session.
+app.use('/api/assets', (req, res, next) => {
+  if (req.method === 'GET' && req.path.startsWith('/file/')) return next();
+  return requireAuth(req, res, () => bodySeriesOwnershipGuard(req, res, next));
+}, assetsRouter);
 
 // ─── Authenticated API Routes (Requires Valid JWT Token) ──────────────────────
-app.use('/api/jobs', requireAuth, jobsRouter);
-app.use('/api/series', requireAuth, seriesRoutes);
-app.use('/api/episodes', requireAuth, episodesRouter);
-app.use('/api/visual-styles', requireAuth, visualStylesRouter);
-app.use('/api/ai', requireAuth, aiRouter);
-app.use('/api/characters', requireAuth, characterRouter);
-app.use('/api/export', requireAuth, exportRouter);
-app.use('/api/voices', requireAuth, voicesRoutes);
-app.use('/api/captions', requireAuth, captionsRoutes);
-app.use('/api/audio', requireAuth, audioRoutes);
-app.use('/api/transcribe', requireAuth, (req, res, next) => {
+app.use('/api/pexels', authed, pexelsRouter);
+app.use('/api/jobs', authed, jobsRouter);
+app.use('/api/series', authed, seriesRoutes);
+app.use('/api/episodes', authed, episodesRouter);
+app.use('/api/visual-styles', authed, visualStylesRouter);
+app.use('/api/ai', authed, aiRouter);
+app.use('/api/characters', authed, characterRouter);
+app.use('/api/export', authed, exportRouter);
+app.use('/api/voices', authed, voicesRoutes);
+app.use('/api/captions', authed, captionsRoutes);
+app.use('/api/audio', authed, audioRoutes);
+app.use('/api/transcribe', authed, (req, res, next) => {
   req.url = '/transcribe';
   audioRoutes(req, res, next);
 });
-app.use('/api/ai/cliffhanger', requireAuth, cliffhangerRoutes);
-app.use('/api/ai/assistant', requireAuth, aiAssistantRouter);
-app.use('/api/chat/editor', requireAuth, (req, res, next) => {
+app.use('/api/ai/cliffhanger', authed, cliffhangerRoutes);
+app.use('/api/ai/assistant', authed, aiAssistantRouter);
+app.use('/api/chat/editor', authed, (req, res, next) => {
   req.url = '/chat';
   aiAssistantRouter(req, res, next);
 });
-app.use('/api/ai/agentic', requireAuth, aiAgenticRouter);
-app.use('/api/publish', requireAuth, publishRouter);
-app.use('/api/projects', requireAuth, publishRouter);
-app.use('/api/social', requireAuth, socialAuthRouter);
-app.use('/api/engagement', requireAuth, engagementRouter);
-app.use('/api/billing', requireAuth, billingRouter);
-app.use('/api/marketplace', requireAuth, marketplaceRouter);
-app.use('/api/live', requireAuth, liveDramaRouter);
-app.use('/api/analytics', requireAuth, analyticsPaywallRouter);
-app.use('/api/assets', assetsRouter);
-app.use('/api/uploads', uploadsRouter);
-app.use('/api/flow-accounts/sync', flowSyncRouter);
-app.use('/api/antigravity-accounts', antigravityAccountsRouter);
+app.use('/api/ai/agentic', authed, aiAgenticRouter);
+app.use('/api/publish', authed, publishRouter);
+app.use('/api/projects', authed, publishRouter);
+app.use('/api/social', authed, socialAuthRouter);
+app.use('/api/engagement', authed, engagementRouter);
+app.use('/api/billing', authed, billingRouter);
+app.use('/api/marketplace', authed, marketplaceRouter);
+app.use('/api/live', authed, liveDramaRouter);
+app.use('/api/analytics', authed, analyticsPaywallRouter);
+app.use('/api/uploads', authed, uploadsRouter);
+
+// ─── Internal / Service-to-Service Routes (X-Internal-Secret or Admin) ────────
+app.use('/api/flow-accounts/sync', requireInternalOrAdmin, flowSyncRouter);
+app.use('/api/admin/workers', requireInternalOrAdmin, (req, res, next) => {
+  req.url = `/workers${req.url}`;
+  adminRouter(req, res, next);
+});
 
 // ─── Admin Protected Routes (Requires Admin/Owner Role) ──────────────────────
 app.use('/api/admin/flow-accounts', requireAuth, requireAdmin, flowAccountsRoutes);
@@ -165,9 +190,26 @@ telemetryService.initialize();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: '*',
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
     methods: ['GET', 'POST'],
+    credentials: true,
   },
+  allowRequest: (req, callback) => {
+    // Same-origin browser requests and allowed cross-origin ones only.
+    const origin = req.headers.origin;
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const sameOrigin = !!origin && !!host && new URL(origin).host === host;
+    callback(null, !origin || sameOrigin || isOriginAllowed(origin));
+  },
+});
+
+// Every realtime connection must present a valid access token (socket.io `auth.token`).
+io.use((socket, next) => {
+  const token = (socket.handshake.auth as any)?.token || '';
+  const user = verifyAccessToken(typeof token === 'string' ? token.replace(/^Bearer\s+/, '') : '');
+  if (!user) return next(new Error('Unauthorized'));
+  socket.data.user = user;
+  next();
 });
 const patchSyncService = new PatchSyncService(io);
 

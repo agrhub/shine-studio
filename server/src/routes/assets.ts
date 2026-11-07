@@ -11,6 +11,7 @@ import { loadSkill } from '@/utils/SkillLoader.js';
 import { SynthIDService } from '@/services/SynthIDService.js';
 import { CreditService } from '@/services/CreditService.js';
 import { getUserId } from '@/utils/auth.js';
+import { canAccessSeries } from '@/middleware/Ownership.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
 import { getVisualStylePrompt } from '../constants/VisualStyles.js';
@@ -429,6 +430,13 @@ assetsRouter.delete('/:id', async (req: Request, res: Response) => {
 
     if (!asset) {
       return res.status(404).json({ code: 404, data: null, message: 'Asset not found in database', error: 'NOT_FOUND' });
+    }
+
+    const requester = (req as any).user;
+    const isAdmin = ['admin', 'owner', 'superadmin'].includes((requester?.role || '').toLowerCase());
+    const ownsAsset = asset.user_id ? asset.user_id === requester?.id : await canAccessSeries(req, asset.series_id);
+    if (!isAdmin && !ownsAsset) {
+      return res.status(403).json({ code: 403, data: null, message: 'You do not have access to this asset', error: 'FORBIDDEN' });
     }
 
     // 1. Delete physical files on Storage Provider before deleting DB records

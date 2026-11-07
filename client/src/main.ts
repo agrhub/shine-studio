@@ -22,6 +22,9 @@ console.warn = function (...args: any[]) {
 //   origLog.apply(console, args);
 // };
 
+import { installAuthFetch } from './utils/auth-fetch';
+installAuthFetch();
+
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import ElementPlus from 'element-plus';
 import { createPinia } from 'pinia';

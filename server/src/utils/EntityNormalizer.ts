@@ -11,7 +11,7 @@ import {
   LocationAssetSchema,
   PropAssetSchema,
   SceneEntitySchema,
-} from '@/schemas/AISchemas.js';
+} from '@/schemas/aiSchemas.js';
 import { nanoid } from 'nanoid';
 
 export interface DialogueLine {

@@ -297,8 +297,10 @@ function handleConnectAntigravity() {
   const left = window.screen.width / 2 - width / 2;
   const top = window.screen.height / 2 - height / 2;
 
+  // Open the popup synchronously (inside the click handler) so it is not blocked,
+  // then navigate it to the admin-signed authorization URL.
   const popup = window.open(
-    '/api/antigravity-accounts/oauth/authorize',
+    'about:blank',
     'antigravity_oauth',
     `width=${width},height=${height},top=${top},left=${left},status=no,resizable=yes`
   );
@@ -308,7 +310,19 @@ function handleConnectAntigravity() {
     return;
   }
 
+  http
+    .get('/admin/antigravity-accounts/oauth/url')
+    .then((res: any) => {
+      if (!res?.url) throw new Error('Missing authorization URL');
+      popup.location.href = res.url;
+    })
+    .catch((err: any) => {
+      popup.close();
+      toast.error(err?.message || t('toast.antigravityAuthFailed', 'Antigravity authorization failed'));
+    });
+
   const handleOAuthMessage = (event: MessageEvent) => {
+    if (event.source !== popup) return;
     if (event.data?.type === 'ANTIGRAVITY_AUTH_SUCCESS') {
       window.removeEventListener('message', handleOAuthMessage);
       toast.success(t('toast.antigravityConnected', 'Antigravity account connected successfully!'));

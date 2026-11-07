@@ -72,6 +72,13 @@ const SERVICE_NAME = 'shine-render-worker';
 const REGION = process.env.GCP_REGION || 'us-central1';
 const SHINE_APP_URL = (process.env.SHINE_APP_URL || process.env.APP_URL || 'https://shine-app-asmlum4txq-uc.a.run.app').replace(/\/+$/, '');
 
+/** Headers for calls back to the Shine API; INTERNAL_API_SECRET must match the app's value. */
+function internalHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (process.env.INTERNAL_API_SECRET) headers['X-Internal-Secret'] = process.env.INTERNAL_API_SECRET;
+  return headers;
+}
+
 let completedJobsCount = 0;
 let failedJobsCount = 0;
 
@@ -183,7 +190,7 @@ async function publishHeartbeat(): Promise<void> {
     try {
       fetch(`${SHINE_APP_URL}/api/admin/workers/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders(),
         body: JSON.stringify(heartbeat),
       }).catch(() => {});
     } catch {}
@@ -235,7 +242,7 @@ async function publishStatusEvent(event: {
     try {
       fetch(`${SHINE_APP_URL}/api/admin/workers/job-event`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       }).catch(() => {});
     } catch {}

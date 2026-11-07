@@ -1,6 +1,6 @@
 import { Request } from 'express';
-import jwt from 'jsonwebtoken';
 import { getDatabaseProvider } from '@/database/index.js';
+import { verifyAccessToken, extractBearerToken } from '@/utils/token.js';
 import type { UserEntity } from '@/types.js';
 import { EnvConfig } from '@/config/env.js';
 
@@ -20,14 +20,8 @@ export function getUserId(req: Request | any, defaultUserId = ''): string {
   if (req?.user?.id) return req.user.id;
   if (req?.user?.userId) return req.user.userId;
 
-  const authHeader = req?.headers?.authorization;
-  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as any;
-      if (decoded?.userId) return decoded.userId;
-      if (decoded?.id) return decoded.id;
-    } catch {}
-  }
+  const user = verifyAccessToken(extractBearerToken(req?.headers?.authorization));
+  if (user) return user.id;
 
   return defaultUserId;
 }

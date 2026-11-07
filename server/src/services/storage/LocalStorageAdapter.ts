@@ -2,6 +2,26 @@ import fs from 'fs';
 import path from 'path';
 import { IStorageAdapter } from './StorageAdapter.js';
 
+/**
+ * Resolves `key` under `baseDir`, refusing anything that escapes it
+ * (`../`, absolute paths, NUL bytes). Returns null for unsafe keys.
+ */
+export function resolveWithin(baseDir: string, key: string): string | null {
+  if (typeof key !== 'string' || key.includes('\0')) return null;
+  const base = path.resolve(baseDir);
+  const target = path.resolve(base, key.replace(/^[\\/]+/, ''));
+  if (target !== base && !target.startsWith(base + path.sep)) return null;
+  return target;
+}
+
+function requireWithin(baseDir: string, key: string): string {
+  const resolved = resolveWithin(baseDir, key);
+  if (!resolved || resolved === path.resolve(baseDir)) {
+    throw new Error(`Invalid storage key: ${key}`);
+  }
+  return resolved;
+}
+
 export class LocalStorageAdapter implements IStorageAdapter {
   private static instance: LocalStorageAdapter | null = null;
   private uploadDir: string;
@@ -29,7 +49,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
     body: Buffer | Uint8Array | string,
     contentType: string = 'application/octet-stream'
   ): Promise<{ key: string; url: string }> {
-    const filePath = path.join(this.uploadDir, key);
+    const filePath = requireWithin(this.uploadDir, key);
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -54,14 +74,14 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   public async deleteFile(key: string): Promise<void> {
-    const filePath = path.join(this.uploadDir, key);
+    const filePath = requireWithin(this.uploadDir, key);
     if (fs.existsSync(filePath)) {
       await fs.promises.unlink(filePath);
     }
   }
 
   public async deleteFolder(prefix: string): Promise<void> {
-    const folderPath = path.join(this.uploadDir, prefix);
+    const folderPath = requireWithin(this.uploadDir, prefix);
     if (fs.existsSync(folderPath)) {
       await fs.promises.rm(folderPath, { recursive: true, force: true });
     }
@@ -79,14 +99,15 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
   public getLocalFilePath(key: string): string | null {
     const normalizedKey = key.replace(/^\/+/, '');
-    const possiblePaths = [
-      path.join(this.uploadDir, normalizedKey),
-      path.resolve(process.cwd(), 'uploads_storage', normalizedKey),
-      path.resolve(process.cwd(), 'server', 'uploads_storage', normalizedKey),
-      path.resolve(process.cwd(), 'server', 'server', 'uploads_storage', normalizedKey),
+    const baseDirs = [
+      this.uploadDir,
+      path.resolve(process.cwd(), 'uploads_storage'),
+      path.resolve(process.cwd(), 'server', 'uploads_storage'),
+      path.resolve(process.cwd(), 'server', 'server', 'uploads_storage'),
     ];
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) return p;
+    for (const baseDir of baseDirs) {
+      const p = resolveWithin(baseDir, normalizedKey);
+      if (p && p !== path.resolve(baseDir) && fs.existsSync(p) && fs.statSync(p).isFile()) return p;
     }
     return null;
   }
@@ -103,7 +124,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   public async getFileStream(key: string, options?: { start?: number; end?: number }): Promise<any> {
-    const filePath = this.getLocalFilePath(key) || path.join(this.uploadDir, key.replace(/^\/+/, ''));
+    const filePath = this.getLocalFilePath(key) || requireWithin(this.uploadDir, key);
     if (!fs.existsSync(filePath)) {
       throw new Error(`Local file not found: ${key}`);
     }
