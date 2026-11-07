@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { withAccessToken } from '@/utils/auth-fetch';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { toast } from 'vue-sonner';
@@ -157,7 +158,7 @@ async function handleTestBatchRender() {
     toast.success(res?.message || 'Batch render dispatched to Cloud Run / PubSub');
 
     // Connect to SSE stream
-    const eventSource = new EventSource('/api/v1/export/render/stream');
+    const eventSource = new EventSource(withAccessToken('/api/export/render/stream'));
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);

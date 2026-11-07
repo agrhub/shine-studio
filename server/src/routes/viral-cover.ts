@@ -1,14 +1,27 @@
 import { Router, Request, Response } from 'express';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
+import { getDatabaseProvider } from '@/database/index.js';
 
 export const viralCoverRouter = Router();
 
 // POST /api/ai/viral-cover/generate — AI scanning video frames to produce 3 viral cover thumbnails
 viralCoverRouter.post('/viral-cover/generate', async (req: Request, res: Response) => {
-  const { episodeId = 'episode-001', seriesTitle = 'The Neon Betrayal' } = req.body;
+  const episodeId: string = req.body.episode_id || req.body.episodeId;
+  if (!episodeId) {
+    return res.status(400).json({ code: 400, data: null, message: 'episode_id is required', error: 'INVALID_PAYLOAD' });
+  }
 
   try {
+    // Ownership of episode_id is enforced by bodySeriesOwnershipGuard at mount time.
+    const db = await getDatabaseProvider();
+    const episode = await db.getEpisodeById(episodeId);
+    if (!episode) {
+      return res.status(404).json({ code: 404, data: null, message: 'Episode not found', error: 'NOT_FOUND' });
+    }
+    const series = episode.series_id ? await db.getSeriesById(episode.series_id) : null;
+    const seriesTitle = req.body.series_title || req.body.seriesTitle || series?.title || episode.title || 'Untitled Series';
+
     const prompt = PromptLoader.render('scene/viral_cover_generate', {
       seriesTitle,
       episodeId,

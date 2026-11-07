@@ -1,3 +1,4 @@
+import { withAccessToken } from '@/utils/auth-fetch';
 import { defineStore } from 'pinia';
 import http from '@/utils/http';
 import i18n from '@/i18n';
@@ -160,8 +161,8 @@ export const usePublishStore = defineStore('publish', {
       if (this.eventSource) {
         this.eventSource.close();
       }
-      const sseUrl = `${http.defaults.baseURL || '/api'}/render/stream?job_id=${encodeURIComponent(jobId)}`;
-      const es = new EventSource(sseUrl);
+      const sseUrl = `${http.defaults.baseURL || '/api'}/publish/render/stream?job_id=${encodeURIComponent(jobId)}`;
+      const es = new EventSource(withAccessToken(sseUrl));
 
       es.onmessage = (event) => {
         try {
@@ -178,6 +179,13 @@ export const usePublishStore = defineStore('publish', {
             }
             const count = Object.keys(data.published_urls || {}).length || 1;
             ElMessage.success(i18n.global.t('toast.publishSuccess', { count }));
+            es.close();
+            this.eventSource = null;
+          } else if (data.status === 'failed') {
+            if (this.activePublishJob) {
+              this.activePublishJob.status = 'failed';
+            }
+            ElMessage.error(data.error || 'Publishing failed');
             es.close();
             this.eventSource = null;
           }
