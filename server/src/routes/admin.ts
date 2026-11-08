@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { listTeam, inviteMember, removeMember, TeamError } from '@/services/TeamService.js';
 import { runtimeMetrics } from '@/services/observability/RuntimeMetrics.js';
 import { invalidateStudioConfig } from '@/services/StudioConfigCache.js';
 import { getDatabaseProvider } from '../database/index.js';
@@ -582,67 +583,37 @@ adminRouter.patch('/studio-config', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/admin/team-members — Load users from database as workspace team members
-adminRouter.get('/team-members', async (req: Request, res: Response) => {
+// GET /api/admin/team-members — Staff accounts (owner/admin/editor/viewer) and pending invitations
+adminRouter.get('/team-members', async (_req: Request, res: Response) => {
   try {
-    const dbProvider = await getDatabaseProvider();
-    let members: any[] = [];
-    const users = await dbProvider.getUsers();
-    if (!users || users.users.length == 0) {
-      return res.json({
-        code: 200,
-        data: [],
-        message: 'Team members retrieved from database',
-        error: null,
-      });
-    }
-    members = users.users.map((u: any) => ({
-      id: u.id,
-      name: u.name || u.email.split('@')[0],
-      email: u.email,
-      role: u.role || (u.tier === 'ENTERPRISE' ? 'Owner' : 'Editor'),
-      avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u.email)}`,
-      sharedProjectsCount: u.tier === 'PRO' ? 8 : 12,
-      joinedAt: u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : '2026-01-10',
-    }));
-
-    return res.json({
-      code: 200,
-      data: members,
-      message: 'Team members retrieved from database',
-      error: null,
-    });
+    return res.json({ code: 200, data: await listTeam(), message: 'Team members retrieved', error: null });
   } catch (err: any) {
     return res.status(500).json({ code: 500, data: null, message: err.message, error: 'FETCH_TEAM_ERROR' });
   }
 });
 
-// POST /api/admin/team-members
+// POST /api/admin/team-members — Give an existing account a team role, or invite a new email
 adminRouter.post('/team-members', async (req: Request, res: Response) => {
-  const { name, email, role } = req.body;
-  if (!email) {
-    return res.status(400).json({ code: 400, message: 'Email is required', error: 'INVALID_INPUT' });
-  }
   try {
-    const newMember = {
-      id: `usr_${Date.now()}`,
-      name: name || email.split('@')[0],
-      email,
-      role: role || 'Editor',
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-      sharedProjectsCount: 0,
-      joinedAt: new Date().toISOString().split('T')[0],
-    };
-    return res.json({ code: 200, data: newMember, message: 'Team member invited successfully', error: null });
+    const actor = (req as any).user;
+    const member = await inviteMember({ id: actor.id, name: actor.email }, req.body?.email, req.body?.role);
+    const message = member.status === 'invited' ? `Invitation sent to ${member.email}` : `${member.email} is now ${member.role}`;
+    return res.json({ code: 200, data: member, message, error: null });
   } catch (err: any) {
-    return res.status(500).json({ code: 500, message: err.message, error: 'INVITE_ERROR' });
+    const status = err instanceof TeamError ? err.status : 500;
+    return res.status(status).json({ code: status, data: null, message: err.message, error: 'INVITE_ERROR' });
   }
 });
 
-// DELETE /api/admin/team-members/:id
-adminRouter.delete('/team-members/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  return res.json({ code: 200, data: { id, removed: true }, message: 'Team member removed', error: null });
+// DELETE /api/admin/team-members/:id — Revoke a member's team role (account is kept) or cancel an invitation
+adminRouter.delete('/team-members/:id', async (req: Request, res: Response) => {
+  try {
+    const data = await removeMember((req as any).user, String(req.params.id));
+    return res.json({ code: 200, data, message: 'Team member removed', error: null });
+  } catch (err: any) {
+    const status = err instanceof TeamError ? err.status : 500;
+    return res.status(status).json({ code: status, data: null, message: err.message, error: 'REMOVE_ERROR' });
+  }
 });
 
 // ─── Platform Integrations & SSO Configuration ──────────────────────────────

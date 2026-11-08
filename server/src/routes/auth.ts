@@ -12,6 +12,7 @@ import { getActivePlatformConfig } from './admin.js';
 import { OAuthService } from '@/services/OAuthService.js';
 import { Logger } from '~/utils/logger.js';
 import { verifyAccessToken } from '@/utils/token.js';
+import { applyTeamInvitation } from '@/services/TeamService.js';
 import { escapeHtml, toScriptJson, openerPostMessageJs } from '@/utils/html.js';
 
 const router = Router();
@@ -167,7 +168,7 @@ router.post('/signup/verify-otp', async (req: Request, res: Response): Promise<v
     const assignedCredits = isFirstUser ? 10000 : 100;
 
     const userId = `usr_${nanoid(10)}`;
-    const user = await db.createUser({
+    const user = await applyTeamInvitation(await db.createUser({
       id: userId,
       email: entry.payload.email,
       password_hash: entry.payload.password_hash,
@@ -181,7 +182,7 @@ router.post('/signup/verify-otp', async (req: Request, res: Response): Promise<v
       language: 'en',
       created_at: new Date().toISOString(),
       last_login_at: new Date().toISOString(),
-    });
+    }));
 
     const token = jwt.sign({ userId: user.id, email: user.email, role: user.role, tier: user.tier }, JWT_SECRET, { expiresIn: '7d' });
     const refreshToken = jwt.sign({ userId: user.id }, REFRESH_SECRET, { expiresIn: '30d' });
@@ -862,7 +863,7 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
     let user = await db.getUserByEmail(userProfile.email);
 
     if (!user) {
-      user = await db.createUser({
+      user = await applyTeamInvitation(await db.createUser({
         id: `usr_${nanoid(10)}`,
         email: userProfile.email,
         name: userProfile.name,
@@ -872,7 +873,7 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
         credits: 100,
         theme: 'dark',
         language: 'en',
-      });
+      }));
     } else {
       if (user.status === 'locked' || user.is_active === false) {
         res.status(403).send(`
@@ -1394,7 +1395,7 @@ const handleSSOCallback = async (req: Request, res: Response, provider: string) 
     let user = await db.getUserByEmail(profile.email);
     if (!user) {
       const passwordHash = await bcrypt.hash(nanoid(16), 10);
-      user = await db.createUser({
+      user = await applyTeamInvitation(await db.createUser({
         id: `usr_${nanoid(10)}`,
         email: profile.email,
         password_hash: passwordHash,
@@ -1402,7 +1403,7 @@ const handleSSOCallback = async (req: Request, res: Response, provider: string) 
         role: 'user',
         tier: 'FREE',
         credits: 100,
-      });
+      }));
       emailService.sendWelcomeEmail(user.email, user.name || 'User').catch(console.error);
     }
 

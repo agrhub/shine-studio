@@ -3,8 +3,10 @@ import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { toast } from 'vue-sonner';
 import http from '@/utils/http';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 const { t } = useI18n();
+const authStore = useAuthStore();
 
 const teamMembers = ref<any[]>([]);
 const isInviteModalOpen = ref(false);
@@ -28,13 +30,13 @@ async function inviteTeamMember() {
       role: newMemberRole.value,
     });
     if (res?.data) {
-      teamMembers.value.push(res.data);
+      await loadTeamMembers(); // an existing account may have changed role instead of being added
       newMemberEmail.value = '';
       isInviteModalOpen.value = false;
-      toast.success(t('toast.teamMemberInvited'));
+      toast.success(res.message || t('toast.teamMemberInvited'));
     }
-  } catch (err: any) {
-    toast.error(err?.response?.data?.message || 'Failed to invite member');
+  } catch {
+    // The shared http interceptor already shows the server's message.
   }
 }
 
@@ -43,8 +45,8 @@ async function removeTeamMember(id: string) {
     await http.delete(`/admin/team-members/${id}`);
     teamMembers.value = teamMembers.value.filter(m => m.id !== id);
     toast.success(t('toast.memberRemoved'));
-  } catch (err: any) {
-    toast.error(err?.response?.data?.message || 'Failed to remove member');
+  } catch {
+    // The shared http interceptor already shows the server's message.
   }
 }
 
@@ -71,10 +73,7 @@ onMounted(() => {
 
     <!-- Team Members Table -->
     <div class="bg-[var(--el-card-bg-color)] border border-[var(--el-border-color)] rounded-2xl overflow-hidden shadow-soft">
-      <el-table :data="teamMembers.length ? teamMembers : [
-        { id: '1', name: 'Tan Do (You)', email: 'dmtan90@gmail.com', role: 'Owner', avatar: '/images/avatars/avatar-default.jpg' },
-        { id: '2', name: 'Creative Assistant', email: 'ai-editor@shine.studio', role: 'Editor', avatar: '/images/avatars/avatar-assistant.jpg' },
-      ]" style="width: 100%">
+      <el-table :data="teamMembers" style="width: 100%" empty-text="No team members yet">
         <el-table-column :label="t('common.member')" min-width="240">
           <template #default="{ row }">
             <div class="flex items-center gap-3">
@@ -91,12 +90,15 @@ onMounted(() => {
             <el-tag size="small" :type="row.role === 'Owner' ? 'primary' : 'info'" round effect="plain">
               {{ row.role }}
             </el-tag>
+            <el-tag v-if="row.status === 'invited'" size="small" type="warning" round effect="plain" class="ml-1">
+              Invited
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column :label="t('common.actions')" width="120" align="right">
           <template #default="{ row }">
-            <el-button v-if="row.role !== 'Owner'" type="danger" link size="small" @click="removeTeamMember(row.id)">
-              {{ t('common.remove') }}
+            <el-button v-if="row.role !== 'Owner' && row.id !== authStore.user?.id" type="danger" link size="small" @click="removeTeamMember(row.id)">
+              {{ row.status === 'invited' ? 'Cancel invite' : t('common.remove') }}
             </el-button>
           </template>
         </el-table-column>
