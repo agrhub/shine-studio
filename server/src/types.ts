@@ -684,7 +684,7 @@ export interface UserEntity {
     connected: boolean 
   }[];
   connected_channels?: PlatformAccount[];
-  tier: 'FREE' | 'PRO' | 'ENTERPRISE';
+  tier: 'FREE' | 'PRO' | 'CREATOR' | 'STUDIO' | 'ENTERPRISE';
   credits: number;
   status?: 'active' | 'locked' | 'suspended';
   is_active?: boolean;

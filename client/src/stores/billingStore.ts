@@ -35,8 +35,10 @@ export const useBillingStore = defineStore('billing', {
       const authStore = useAuthStore();
       try {
         const res = await http.get('/billing/tier');
-        if (res.data && res.data.data) {
-          this.currentTier = res.data.data;
+        // The http interceptor already unwraps the axios response: res = { code, data, ... }
+        const tierData = (res as any)?.data;
+        if (tierData) {
+          this.currentTier = tierData;
           if (authStore.user) {
             authStore.user.credits = this.currentTier.credit_balance;
             localStorage.setItem('shine_user', JSON.stringify(authStore.user));
@@ -66,15 +68,13 @@ export const useBillingStore = defineStore('billing', {
       this.checkoutLoading = true;
       try {
         const res = await http.post('/billing/checkout', { tier });
-        if (res.data && res.data.data && res.data.data.url) {
-          window.location.href = res.data.data.url;
-        } else {
-          ElMessage.success(i18n.global.t('toast.subscriptionUpgraded', { tier }));
-          this.currentTier.tier = tier;
-        }
-      } catch (err) {
+        const url = (res as any)?.data?.url;
+        if (!url) throw new Error('Checkout URL missing');
+        // The plan is upgraded by the verified Stripe webhook after payment, never locally.
+        window.location.href = url;
+      } catch (err: any) {
         console.error('Checkout failed', err);
-        ElMessage.error('Failed to initiate checkout process');
+        ElMessage.error(err?.response?.data?.message || 'Failed to initiate checkout process');
       } finally {
         this.checkoutLoading = false;
       }
@@ -83,8 +83,10 @@ export const useBillingStore = defineStore('billing', {
     async fetchCreditBalance(): Promise<number> {
       try {
         const res = await http.get('/billing/tier');
-        if (res.data && res.data.data) {
-          this.currentTier = res.data.data;
+        // The http interceptor already unwraps the axios response: res = { code, data, ... }
+        const tierData = (res as any)?.data;
+        if (tierData) {
+          this.currentTier = tierData;
           return this.currentTier.credit_balance;
         }
         return this.currentTier.credit_balance;
