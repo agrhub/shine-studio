@@ -23,7 +23,8 @@ import 'vue-color/style.css';
 import { useRoute } from 'vue-router';
 import http from '@/utils/http';
 
-import { normalizeTransitionKey, normalizeEffectKey } from '@/stores/usePipelineStore';
+import { normalizeTransitionKey } from '@/stores/usePipelineStore';
+import { normalizeEffectKey } from '@/constants/effects';
 
 const route = useRoute();
 const panelStore = usePanelStore();

@@ -16,7 +16,8 @@ export const data = {
   clips: {},
 };
 
-import { normalizeTransitionKey, normalizeEffectKey } from '@/stores/usePipelineStore';
+import { normalizeTransitionKey } from '@/stores/usePipelineStore';
+import { normalizeEffectKey } from '@/constants/effects';
 import { IProject } from '@openvideo/core';
 
 export const SILENT_AUDIO_SAMPLE = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';

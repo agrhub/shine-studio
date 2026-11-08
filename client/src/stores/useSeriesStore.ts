@@ -3,7 +3,6 @@ import { ref, computed, nextTick } from 'vue';
 import http from '@/utils/http';
 import { core } from '@/utils/project';
 import { GEMINI_LANGUAGE_DEFAULTS, getLanguageByCode } from '@/constants/geminiLanguages';
-import { sanitizeTimelineData, sanitizeEffectAndTransitionKeys } from '@/components/editor/data';
 import { generateUUID } from '@/utils/id';
 import type { Series, Episode, Character, Scene, SceneDialogue, SceneTranslation, CaptionCue, LanguageTrack, CaptionsData, CaptionSettings, DubbingSettings, RenderVersionEntity } from '../types/api';
 // import { IProject } from '@openvideo/timeline';
@@ -728,7 +727,7 @@ export const useSeriesStore = defineStore('series', () => {
     applyLanguageTrackFilter();
   }
 
-  function applyTimelineUpdate(projectData: any, isNewEpisode = false) {
+  function applyTimelineUpdate(projectData: any, isNewEpisode: boolean, sanitizeTimelineData: (data: any) => any) {
     const currentState = core.store.getState();
     const currentClips = currentState.clips || {};
     const incomingClips = projectData.clips || {};
@@ -853,8 +852,11 @@ export const useSeriesStore = defineStore('series', () => {
           return null;
         }
 
+        // Loaded on demand: editor/data pulls in the editor engine, which must stay
+        // out of the app-wide bundle (this store is used by every page).
+        const { sanitizeTimelineData } = await import('@/components/editor/data');
         const projectData = sanitizeTimelineData(rawTimeline);
-        applyTimelineUpdate(projectData, isNewEpisode);
+        applyTimelineUpdate(projectData, isNewEpisode, sanitizeTimelineData);
         currentMountedEpId.value = epId;
 
         const targetEp = episodesList.value.find(e => e.id === epId);

@@ -6,15 +6,13 @@ import { getVisualStyleById } from '@/constants/visualStyles';
 import { toast } from 'vue-sonner';
 import i18n from '@/i18n';
 import { core } from '@/utils/project';
-import { generateCaptionClips } from '@/utils/caption-generator';
 
 import { normalizeTransitionKey } from '@/constants/transitions';
-import { normalizeEffectKey } from '@/constants/effects';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { VoicePreset } from '@/types';
 import { AssetJobItem, CaptionCue, CaptionsData, Character, LocationAsset, PipelineStep, PropAsset, Scene, SceneDialogue, SceneRenderStatus, StepStatus } from '@/types/api';
 import { IProject } from '@openvideo/core';
-export { normalizeTransitionKey, normalizeEffectKey };
+export { normalizeTransitionKey };
 
 export const usePipelineStore = defineStore('pipeline', () => {
   const seriesStore = useSeriesStore();
@@ -1094,6 +1092,9 @@ export const usePipelineStore = defineStore('pipeline', () => {
           },
         };
 
+        // Loaded on demand: constants/effects pulls in the editor engine, which must stay
+        // out of the app-wide bundle (this store is used by every page).
+        const { normalizeEffectKey } = await import('@/constants/effects');
         const effectKey = normalizeEffectKey(scene.video_effect || scene.videoEffect);
         if (effectKey) {
           const effectDurationUs = Math.min(500_000, durationUs);
