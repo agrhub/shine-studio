@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
+import { getStudioConfig } from '@/services/StudioConfigCache.js';
 import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../gemini/GeminiClient.js';
 import { flowAdapter } from '../flow/FlowAdapter.js';
 import { antigravityClient } from '../antigravity/AntigravityClient.js';
@@ -485,7 +486,7 @@ export class AIProviderRouter {
     }
 
     const db = await getDatabaseProvider();
-    const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
+    const studioConfig = await getStudioConfig();
     const targetModel = opts.model || studioConfig?.gemini?.textModel || EnvConfig.geminiModelText;
 
     const res = await this.routeGeneration({
@@ -654,7 +655,7 @@ export class AIProviderRouter {
 
   async generateJSON<T>(prompt: string, fallbackData?: T, options?: { model?: string; systemInstruction?: string }): Promise<T> {
     const db = await getDatabaseProvider();
-    const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
+    const studioConfig = await getStudioConfig();
     const targetModel = options?.model || studioConfig?.gemini?.textModel || EnvConfig.geminiModelText;
 
     const baseSysPrompt = options?.systemInstruction?.trim() || '';
@@ -713,7 +714,7 @@ export class AIProviderRouter {
     }
   ): Promise<{ url: string; mimeType: string; provider: string; buffer?: Buffer }> {
     const db = await getDatabaseProvider();
-    const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
+    const studioConfig = await getStudioConfig();
     const targetModel = options?.model || studioConfig?.gemini?.imageModel || EnvConfig.geminiModelImage;
     const res: any = await this.routeGeneration({
       prompt,
@@ -749,7 +750,7 @@ export class AIProviderRouter {
     }
   ): Promise<{ url: string; provider: string; mimeType?: string }> {
     const db = await getDatabaseProvider();
-    const studioConfig = (await db.getSystemSetting<StudioSystemConfig>('studio_config')) || {};
+    const studioConfig = await getStudioConfig();
     const targetModel = options?.model || studioConfig?.gemini?.videoModel || EnvConfig.geminiModelVideo;
     const res: any = await this.routeGeneration({
       prompt,

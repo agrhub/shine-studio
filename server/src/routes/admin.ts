@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { invalidateStudioConfig } from '@/services/StudioConfigCache.js';
 import { getDatabaseProvider } from '../database/index.js';
 import type { PlatformAccount, PlatformSettings, StudioSystemConfig } from '../types.js';
 import { EnvConfig } from '../config/env.js';
@@ -578,6 +579,7 @@ adminRouter.patch('/studio-config', async (req: Request, res: Response) => {
 
     // Persist unmasked configuration to database
     await dbProvider.saveSystemSetting<StudioSystemConfig>('studio_config', merged);
+    invalidateStudioConfig();
 
     // Invalidate cached storage adapter singleton to apply newly selected provider immediately
     StorageFactory.clearAdapters();
