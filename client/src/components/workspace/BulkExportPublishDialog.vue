@@ -585,6 +585,21 @@ async function submitUploadVersion() {
   }
 }
 
+const teaserLoadingId = ref<string | null>(null);
+
+/** Starts AI teaser-clip extraction for a rendered version (progress shows in the task manager). */
+async function handleGenerateTeasers(ver: RenderedVideoVersion) {
+  teaserLoadingId.value = ver.id;
+  try {
+    await http.post('/clips/teasers', { episode_id: ver.episodeId, video_url: ver.videoUrl, max_clips: 3 });
+    toast.success(t('toast.teaserStarted', 'Generating teaser clips — they will appear in the asset library.'));
+  } catch (err: any) {
+    toast.error(err?.response?.data?.message || t('toast.teaserFailed', 'Could not start teaser generation'));
+  } finally {
+    teaserLoadingId.value = null;
+  }
+}
+
 async function handleDeleteVersion(ver: RenderedVideoVersion) {
   try {
     await ElMessageBox.confirm(
@@ -991,6 +1006,20 @@ watch(isOpen, (open: boolean) => {
                     @click="downloadVideo(ver.videoUrl, `${series?.title || 'Series'}_EP${ver.episodeNumber}_${ver.language}`)"
                   >
                     Download MP4
+                  </el-button>
+
+                  <el-button
+                    size="small"
+                    type="warning"
+                    plain
+                    round
+                    class="!text-[11px] !px-2.5 !py-1 !h-6"
+                    icon="Scissor"
+                    title="AI picks the strongest hooks and cuts 3 short teaser clips"
+                    :loading="teaserLoadingId === ver.id"
+                    @click="handleGenerateTeasers(ver)"
+                  >
+                    Teasers
                   </el-button>
                 </div>
 
