@@ -1,4 +1,5 @@
 import { fontManager } from '@openvideo/engine-pixi';
+import { pickCaptionKeywords } from './caption-keywords';
 
 /**
  * Fetches caption data from a URL
@@ -58,6 +59,7 @@ export const groupWordsByWidth = (
       const textHeight =
         metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
 
+      const keywordFlags = pickCaptionKeywords(currentWords.map((w) => w.word || w.text || ''));
       captions.push({
         text: currentText,
         width: currentWidth, // Actual measured width
@@ -66,7 +68,7 @@ export const groupWordsByWidth = (
           text: w.word || w.text || '',
           from: idx === 0 ? 0 : (w.start - firstWord.start) * 1000, // Relative to caption start in ms
           to: (w.end - firstWord.start) * 1000, // Relative to caption start in ms
-          isKeyWord: idx === 0 || idx === currentWords.length - 1, // First and last words are keywords
+          isKeyWord: keywordFlags[idx],
           paragraphIndex: w.paragraphIndex ?? '',
         })),
         from: firstWord.start, // In seconds
@@ -94,6 +96,7 @@ export const groupWordsByWidth = (
     const textHeight =
       metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
 
+    const keywordFlags = pickCaptionKeywords(currentWords.map((w) => w.word || w.text || ''));
     captions.push({
       text: currentText,
       width: currentWidth, // Actual measured width
@@ -102,7 +105,7 @@ export const groupWordsByWidth = (
         text: w.word || w.text || '',
         from: idx === 0 ? 0 : (w.start - firstWord.start) * 1000,
         to: (w.end - firstWord.start) * 1000,
-        isKeyWord: idx === 0 || idx === currentWords.length - 1,
+        isKeyWord: keywordFlags[idx],
         paragraphIndex: w.paragraphIndex ?? '',
       })),
       from: firstWord.start,

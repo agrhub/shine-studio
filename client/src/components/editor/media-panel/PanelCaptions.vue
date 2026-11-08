@@ -156,7 +156,7 @@ const handleGenerateCaptions = async () => {
         colors: {
           active: { color: '#ffffff', background: '#FF5700' },
           future: { color: '#ffffff' },
-          keyword: { color: '#ffffff', preserveAfterSpoken: true },
+          keyword: { color: '#FFD400', preserveAfterSpoken: true },
         },
         positioning: {
           videoWidth: settings.width,

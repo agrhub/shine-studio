@@ -14,6 +14,7 @@ import { getDatabaseProvider } from '@/database/index.js';
 import { TimelineCaptionWord, CharacterSeriesEntity, SceneAudioPipelineResult, SceneDialogue, SceneEntity, SceneCaptionWord, SceneCaptionData } from '@/types.js';
 import { EnvConfig } from '@/config/env.js';
 import { Logger } from '@/utils/logger.js';
+import { pickCaptionKeywords } from '@/utils/captionKeywords.js';
 
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
@@ -668,6 +669,7 @@ Respond with ONLY a JSON object matching this schema:
         const phraseBody = currentChunk.map(cw => cw.punctuated_word || cw.word || '').join(' ').trim();
         const phraseText = phraseBody;
 
+        const keywordFlags = pickCaptionKeywords(currentChunk.map(cw => cw.punctuated_word || cw.word || ''));
         const cueWords: TimelineCaptionWord[] = currentChunk.map((cw, idx) => {
           const cwStartSec = Number(cw.start ?? 0);
           const cwEndSec = Number(cw.end ?? 0);
@@ -678,7 +680,7 @@ Respond with ONLY a JSON object matching this schema:
             text: wStr,
             from: wFromMs,
             to: wToMs,
-            isKeyWord: Boolean(idx === 0 || idx === currentChunk.length - 1 || wStr.length > 4),
+            isKeyWord: keywordFlags[idx],
           };
         });
 

@@ -1,5 +1,6 @@
 import { core } from '@/utils/project';
 import { generateCaptionClips } from '@/utils/caption-generator';
+import { pickCaptionKeywords } from '@/utils/caption-keywords';
 
 export type WordsPerLineMode = 'single' | 'multiple';
 
@@ -80,13 +81,14 @@ export async function regenerateCaptionClips({
     const durUs = captionClip.duration || 4_000_000;
     const wordsList = captionClip.text.split(' ');
     const stepUs = Math.round(durUs / wordsList.length);
+    const keywordFlags = pickCaptionKeywords(wordsList);
     wordsList.forEach((w: string, idx: number) => {
       allWords.push({
         word: w,
         text: w,
         start: (firstClipStartUs + idx * stepUs) / 1_000_000,
         end: (firstClipStartUs + (idx + 1) * stepUs) / 1_000_000,
-        isKeyWord: idx === 0 || idx === wordsList.length - 1,
+        isKeyWord: keywordFlags[idx],
         paragraphIndex: 0,
       });
     });
