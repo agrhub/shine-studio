@@ -419,6 +419,17 @@ else
 fi
 echo "Cloud Scheduler job '$JOB_NAME' active -> $SYNC_URI"
 
+# Scheduled publications: publish due posts every minute (the app scales to zero,
+# so an in-process timer alone would miss them).
+PUB_JOB_NAME="shine-scheduled-publications"
+PUB_URI="$SHINE_APP_URL/api/internal/scheduled-publications/run"
+if gcloud scheduler jobs describe "$PUB_JOB_NAME" --location "$REGION" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http "$PUB_JOB_NAME" --location "$REGION" --schedule "* * * * *" --uri "$PUB_URI" --http-method POST --attempt-deadline 300s --update-headers "X-Internal-Secret=$INTERNAL_API_SECRET" --quiet
+else
+  gcloud scheduler jobs create http "$PUB_JOB_NAME" --location "$REGION" --schedule "* * * * *" --uri "$PUB_URI" --http-method POST --attempt-deadline 300s --headers "X-Internal-Secret=$INTERNAL_API_SECRET" --quiet
+fi
+echo "Cloud Scheduler job '$PUB_JOB_NAME' active -> $PUB_URI"
+
 echo ""
 echo "========================================================="
 echo " Shine Studio Ecosystem Deployed Successfully!"

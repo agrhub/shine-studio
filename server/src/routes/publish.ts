@@ -11,6 +11,7 @@ import {
 } from '../types.js';
 import { getDatabaseProvider } from '../database/index.js';
 import { requireAuth } from '../middleware/RequireAuth.js';
+import { schedulePublication, listScheduledPublications } from '@/services/ScheduledPublishService.js';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { OAuthService } from '../services/OAuthService.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
@@ -377,24 +378,21 @@ Output strictly valid JSON matching this schema:
   }
 });
 
-// POST /api/publish/schedule — Schedule video publication
+// POST /api/publish/schedule — Schedule a publication (stored, then published by the scheduler)
 publishRouter.post('/schedule', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { episodeId, seriesId, platforms, scheduledTime, title, description, hashtags, videoUrl } = req.body;
+    const { platforms } = req.body || {};
     const userId = (req as any).user.id;
 
     const db = await getDatabaseProvider();
     const user = await db.getUserById(userId);
     const rawChannels: PlatformAccount[] = user?.connected_channels || [];
-
-    const unauthenticatedPlatforms: string[] = [];
-    for (const plat of platforms) {
-      const acc = rawChannels.find(a => (a.provider || '').toLowerCase() === plat.toLowerCase());
-      if (!acc || !acc.access_token) {
-        unauthenticatedPlatforms.push(plat.toUpperCase());
-      }
-    }
-
+    const unauthenticatedPlatforms = (Array.isArray(platforms) ? platforms : [])
+      .filter((plat: string) => {
+        const acc = rawChannels.find((a) => (a.provider || '').toLowerCase() === String(plat).toLowerCase());
+        return !acc || !acc.access_token;
+      })
+      .map((p: string) => String(p).toUpperCase());
     if (unauthenticatedPlatforms.length > 0) {
       return res.status(400).json({
         code: 400,
@@ -404,31 +402,23 @@ publishRouter.post('/schedule', requireAuth, async (req: Request, res: Response)
       });
     }
 
-    const scheduleId = `sched_${Date.now()}`;
-    const scheduleItem = {
-      id: scheduleId,
-      userId,
-      episodeId,
-      seriesId,
-      platforms,
-      scheduledTime,
-      title: title || 'Short Drama Episode',
-      description: description || '',
-      hashtags: hashtags || [],
-      videoUrl: videoUrl || '',
-      status: 'scheduled',
-      createdAt: new Date().toISOString(),
-    };
-
+    const job = await schedulePublication(userId, req.body);
     return res.json({
       code: 200,
-      data: scheduleItem,
-      message: `Publication scheduled for ${new Date(scheduledTime).toLocaleString()}`,
+      data: { ...job, scheduledTime: job.outputs?.scheduled_at, status: 'scheduled' },
+      message: `Publication scheduled for ${new Date(job.outputs?.scheduled_at).toLocaleString()}`,
       error: null,
     });
   } catch (err: any) {
-    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'SCHEDULE_ERROR' });
+    const status = err?.status || 500;
+    return res.status(status).json({ code: status, data: null, message: err.message, error: 'SCHEDULE_ERROR' });
   }
+});
+
+// GET /api/publish/schedule — The caller's scheduled publications (cancel via POST /api/jobs/:id/cancel)
+publishRouter.get('/schedule', requireAuth, async (req: Request, res: Response) => {
+  const jobs = await listScheduledPublications((req as any).user.id);
+  return res.json({ code: 200, data: jobs, message: 'Scheduled publications', error: null });
 });
 
 // GET /api/publish/connected-channels — Fetch user's connected publishing channels
@@ -461,19 +451,21 @@ publishRouter.get('/connected-channels', requireAuth, async (req: Request, res: 
   }
 });
 
-// POST /api/publish/multi-platform — Queue and dispatch multi-platform publishing job
-publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Response) => {
+/**
+ * Validates and starts a multi-platform publish job in the background.
+ * Shared by POST /multi-platform and the scheduled-publication runner.
+ */
+export async function startMultiPlatformPublish(userId: string, body: any): Promise<{ status: number; payload: any }> {
   try {
-    const { episodeId, seriesId, platforms, caption, hashtags, coverUrl, videoUrl } = req.body;
-    const userId = (req as any).user.id;
+    const { episodeId, seriesId, platforms, caption, hashtags, coverUrl, videoUrl } = body;
 
     if (!episodeId || !platforms || !Array.isArray(platforms) || platforms.length === 0) {
-      return res.status(400).json({
+      return { status: 400, payload: {
         code: 400,
         data: null,
         message: 'episodeId and non-empty platforms array are required',
         error: 'INVALID_PAYLOAD',
-      });
+      } };
     }
 
     const db = await getDatabaseProvider();
@@ -490,17 +482,17 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
     }
 
     if (unauthenticatedPlatforms.length > 0) {
-      return res.status(400).json({
+      return { status: 400, payload: {
         code: 400,
         data: null,
         message: `Missing OAuth credentials (access_token) for platform(s): ${unauthenticatedPlatforms.join(', ')}. Please connect your real account in Settings before publishing.`,
         error: 'UNAUTHENTICATED_PLATFORM',
-      });
+      } };
     }
 
     const jobId = `pub_${Date.now()}`;
     const publishedUrls: Record<string, string> = {};
-    const targetCoverUrl = coverUrl || req.body.coverUrl || req.body.cover_url || req.body.thumbnail_url || req.body.thumbnailUrl;
+    const targetCoverUrl = coverUrl || body.coverUrl || body.cover_url || body.thumbnail_url || body.thumbnailUrl;
 
     activePublishJobs.set(jobId, {
       jobId,
@@ -515,7 +507,7 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
       const db = await getDatabaseProvider();
       const ep = await db.getEpisodeById(episodeId);
       const series = await db.getSeriesById(seriesId);
-      const targetVideoUrl = videoUrl || req.body.video_url || (ep?.render_versions?.[0]?.video_url || ep?.render_versions?.[0]?.url) || (ep?.video_urls && (ep.video_urls[req.body.languageCode || 'en-US'] || Object.values(ep.video_urls)[0])) || ep?.video_url;
+      const targetVideoUrl = videoUrl || body.video_url || (ep?.render_versions?.[0]?.video_url || ep?.render_versions?.[0]?.url) || (ep?.video_urls && (ep.video_urls[body.languageCode || 'en-US'] || Object.values(ep.video_urls)[0])) || ep?.video_url;
 
       // ─── 1. Register Job in Pipeline Task Manager (Database) ─────────────
       const initialJobRecord: PipelineJobEntity = {
@@ -553,7 +545,7 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
         const accounts = rawChannels.filter((a: PlatformAccount) => platforms.some((p: string) => p.toLowerCase() === (a.provider || '').toLowerCase()));
         const publishedUrls: Record<string, string> = {};
         const publishedPlatformsList: EpisodePublishedPlatform[] = [];
-        const publishLanguage = req.body.language || req.body.languageCode || (series as any)?.primary_language || (series as any)?.language || 'en-US';
+        const publishLanguage = body.language || body.languageCode || (series as any)?.primary_language || (series as any)?.language || 'en-US';
         for (let i = 0; i < accounts.length; i++) {
           const account = accounts[i];
           const platform = (account.provider || '').toLowerCase();
@@ -581,7 +573,7 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
             }
           } catch {}
 
-          const validToken = await OAuthService.getValidAccessToken(account, (req as any).user?.id || (req as any).user?.userId);
+          const validToken = await OAuthService.getValidAccessToken(account, userId);
 
           if (platform === 'youtube' && validToken) {
             let videoId: string | null = null;
@@ -908,20 +900,26 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
       created_at: new Date().toISOString(),
     };
 
-    return res.json({
+    return { status: 200, payload: {
       code: 200,
       data: job,
       message: 'Multi-platform publish job queued successfully using connected accounts',
       error: null,
-    });
+    } };
   } catch (err: any) {
-    return res.status(500).json({
+    return { status: 500, payload: {
       code: 500,
       data: null,
       message: err.message || 'Failed to queue publish job',
       error: 'SERVER_ERROR',
-    });
+    } };
   }
+}
+
+// POST /api/publish/multi-platform — Queue and dispatch multi-platform publishing job
+publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Response) => {
+  const { status, payload } = await startMultiPlatformPublish((req as any).user.id, req.body);
+  res.status(status).json(payload);
 });
 
 // GET /api/publish/render/stream?job_id= — SSE progress stream for a publish job

@@ -174,6 +174,13 @@ jobsRouter.post('/start-pipeline', async (req: Request, res: Response) => {
 jobsRouter.post('/:id/cancel', async (req: Request, res: Response) => {
   try {
     const jobId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    // Only the job's owner (or an admin) may cancel it.
+    const job = await (await getDatabaseProvider()).getPipelineJobById(jobId);
+    const requester = (req as any).user;
+    const isAdmin = ['admin', 'owner', 'superadmin'].includes((requester?.role || '').toLowerCase());
+    if (job && job.user_id && job.user_id !== requester?.id && !isAdmin) {
+      return res.status(403).json({ code: 403, data: null, message: 'You do not have access to this job', error: 'FORBIDDEN' });
+    }
     const success = await PipelineJobService.cancelJob(jobId);
     return res.json({
       code: 200,
