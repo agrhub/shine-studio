@@ -224,6 +224,25 @@ export class EmailService {
     await this.sendMail(mailOptions);
   }
 
+  /** Invites someone without an account to join the studio team. */
+  public async sendTeamInvitation(email: string, role: string, inviterName: string, signupUrl: string) {
+    const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    await this.sendMail({
+      from: this.fromEmail,
+      to: email,
+      subject: `You're invited to join the Shine Studio team as ${role}`,
+      text: `${inviterName} invited you to join the Shine Studio team as ${role}. Create your account with this email address: ${signupUrl}\n\nThe invitation expires in 14 days.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Join the Shine Studio team</h2>
+          <p>${esc(inviterName)} invited you to join as <strong>${esc(role)}</strong>.</p>
+          <p><a href="${esc(signupUrl)}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Create your account</a></p>
+          <p>Sign up with this email address. The invitation expires in 14 days.</p>
+        </div>
+      `,
+    });
+  }
+
   /** Forwards a contact-form inquiry to the admin inbox; replies go straight to the sender. */
   public async sendContactInquiry(inquiry: { id: string; name: string; email: string; subject: string; message: string; category: string }) {
     const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
