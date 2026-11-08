@@ -22,7 +22,7 @@ const clusterMetrics = ref({
   queuedJobsCount: 0,
   completedJobsCount: 0,
   failedJobsCount: 0,
-  monthlySpendUsd: 0.00,
+  monthlySpendUsd: null as number | null, // null = cloud billing not tracked
   monthlyBudgetCap: 50.00,
   serviceName: 'shine-render-worker',
   region: 'us-central1',
@@ -101,7 +101,7 @@ async function loadClusterMetrics() {
         queuedJobsCount: res.data.queuedJobsCount || 0,
         completedJobsCount: res.data.completedJobsCount || 0,
         failedJobsCount: res.data.failedJobsCount || 0,
-        monthlySpendUsd: res.data.monthlyCostUsd || 0.0,
+        monthlySpendUsd: res.data.monthlyCostUsd ?? null,
         monthlyBudgetCap: res.data.monthlyBudgetCap || 50.0,
         serviceName: res.data.serviceName || 'shine-render-worker',
         region: res.data.region || 'us-central1',
@@ -318,7 +318,7 @@ onUnmounted(() => {
 
       <div class="p-6 bg-[var(--el-card-bg-color)] border border-[var(--el-border-color)] rounded-2xl shadow-soft">
         <span class="text-xs text-[var(--el-text-color-secondary)] font-semibold uppercase tracking-wider">{{ t('settings.estMonthlySpend') }}</span>
-        <h3 class="text-3xl font-extrabold text-[var(--el-text-color-primary)] mt-2">${{ clusterMetrics.monthlySpendUsd.toFixed(2) }}</h3>
+        <h3 class="text-3xl font-extrabold text-[var(--el-text-color-primary)] mt-2">{{ clusterMetrics.monthlySpendUsd === null ? 'Not tracked' : `$${clusterMetrics.monthlySpendUsd.toFixed(2)}` }}</h3>
         <p class="text-xs text-primary mt-3">{{ t('settings.capPerMonth', { cap: clusterMetrics.monthlyBudgetCap }) }}</p>
       </div>
     </div>

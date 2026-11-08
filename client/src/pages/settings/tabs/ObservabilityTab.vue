@@ -12,12 +12,13 @@ const props = defineProps<{
 
 const grafanaLiveTelemetry = ref({
   uptimeSeconds: 0,
-  memoryRssMb: 128,
-  memoryHeapMb: 64,
-  p99LatencyMs: 142,
-  activeWebsockets: 84,
-  aiInferenceLatency: 1.82,
-  errorRatePct: 0.00,
+  memoryRssMb: 0,
+  memoryHeapMb: 0,
+  // null = no measurement yet (shown as "—"), never a sample value
+  p99LatencyMs: null as number | null,
+  activeWebsockets: null as number | null,
+  aiInferenceLatency: null as number | null,
+  errorRatePct: null as number | null,
   grafanaConnection: {
     connected: false,
     mode: 'STANDALONE_FALLBACK',
@@ -50,15 +51,15 @@ async function loadObservabilityMetrics() {
         uptimeSeconds: res.data.uptime_seconds || 0,
         memoryRssMb: res.data.process_memory_rss_mb || 0,
         memoryHeapMb: res.data.process_memory_heap_used_mb || 0,
-        p99LatencyMs: res.data.http_request_duration_p99_ms || 142,
-        activeWebsockets: res.data.websocket_connected_clients || 12,
-        aiInferenceLatency: res.data.ai_inference_latency_seconds || 1.45,
-        errorRatePct: res.data.api_error_rate_percentage || 0.00,
+        p99LatencyMs: res.data.http_request_duration_p99_ms ?? null,
+        activeWebsockets: res.data.websocket_connected_clients ?? null,
+        aiInferenceLatency: res.data.ai_inference_latency_seconds ?? null,
+        errorRatePct: res.data.api_error_rate_percentage ?? null,
         grafanaConnection: res.data.grafanaConnection || {
-          connected: true,
-          mode: 'MCP',
-          latencyMs: 15,
-          lastSyncAt: new Date().toISOString(),
+          connected: false,
+          mode: 'STANDALONE_FALLBACK',
+          latencyMs: 0,
+          lastSyncAt: null,
           totalSyncedLogs: 0,
         },
       };
@@ -253,7 +254,7 @@ onUnmounted(() => {
           <span class="text-xs text-[var(--el-text-color-secondary)] font-semibold uppercase tracking-wider">{{ t('observability.p99Latency') }}</span>
           <el-icon class="text-cyan-500 text-sm"><Timer /></el-icon>
         </div>
-        <h3 class="text-3xl font-extrabold text-cyan-500 mt-2">{{ grafanaLiveTelemetry.p99LatencyMs }}ms</h3>
+        <h3 class="text-3xl font-extrabold text-cyan-500 mt-2">{{ grafanaLiveTelemetry.p99LatencyMs ?? '—' }}{{ grafanaLiveTelemetry.p99LatencyMs === null ? '' : 'ms' }}</h3>
         <p class="text-xs text-green-500 mt-2"><el-icon class="mr-1"><Check /></el-icon> {{ t('observability.slaHealthy') }}</p>
       </div>
 
@@ -271,7 +272,7 @@ onUnmounted(() => {
           <span class="text-xs text-[var(--el-text-color-secondary)] font-semibold uppercase tracking-wider">{{ t('observability.aiInference') }}</span>
           <el-icon class="text-amber-500 text-sm"><Cpu /></el-icon>
         </div>
-        <h3 class="text-3xl font-extrabold text-amber-500 mt-2">{{ grafanaLiveTelemetry.aiInferenceLatency }}s</h3>
+        <h3 class="text-3xl font-extrabold text-amber-500 mt-2">{{ grafanaLiveTelemetry.aiInferenceLatency ?? '—' }}{{ grafanaLiveTelemetry.aiInferenceLatency === null ? '' : 's' }}</h3>
         <p class="text-xs text-[var(--el-text-color-secondary)] mt-2">{{ t('observability.storyboardQueue') }}</p>
       </div>
 
@@ -280,7 +281,7 @@ onUnmounted(() => {
           <span class="text-xs text-[var(--el-text-color-secondary)] font-semibold uppercase tracking-wider">{{ t('observability.errorRate') }}</span>
           <el-icon class="text-green-500 text-sm"><CircleCheck /></el-icon>
         </div>
-        <h3 class="text-3xl font-extrabold text-green-500 mt-2">{{ grafanaLiveTelemetry.errorRatePct }}%</h3>
+        <h3 class="text-3xl font-extrabold text-green-500 mt-2">{{ grafanaLiveTelemetry.errorRatePct ?? '—' }}{{ grafanaLiveTelemetry.errorRatePct === null ? '' : '%' }}</h3>
         <p class="text-xs text-green-500 mt-2"><el-icon class="mr-1"><CircleCheck /></el-icon> {{ t('observability.zeroOutages') }}</p>
       </div>
     </div>
@@ -300,7 +301,7 @@ onUnmounted(() => {
         <div class="p-4 bg-[var(--el-bg-color)] rounded-xl border border-[var(--el-border-color)]">
           <div class="flex justify-between text-xs mb-2">
             <span class="font-semibold text-cyan-500">{{ t('observability.p99LatencyMs') }}</span>
-            <span class="text-[var(--el-text-color-secondary)]">{{ t('observability.avgLatency', { val: Math.round(historyMetrics.reduce((a, b) => a + b.p99LatencyMs, 0) / historyMetrics.length) }) }}</span>
+            <span class="text-[var(--el-text-color-secondary)]">{{ t('observability.avgLatency', { val: historyMetrics.length ? Math.round(historyMetrics.reduce((a, b) => a + b.p99LatencyMs, 0) / historyMetrics.length) : '—' }) }}</span>
           </div>
           <div class="flex items-end gap-1 h-20 w-full">
             <div

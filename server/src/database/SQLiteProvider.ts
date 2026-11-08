@@ -1655,8 +1655,8 @@ export class SQLiteProvider implements IDatabaseProvider {
       : 0;
 
     return {
-      active_instances: activeWorkers.length || (workers.length > 0 ? 0 : 1),
-      gpu_load_pct: avgCpu || (activeJobs.length > 0 ? 68.5 : 12.0),
+      active_instances: activeWorkers.length,
+      gpu_load_pct: avgCpu, // average reported by worker heartbeats; 0 = none reported
       active_jobs_count: activeJobs.length,
       queued_jobs_count: queuedJobs.length,
       completed_jobs_count: completedJobs.length,
@@ -1665,7 +1665,7 @@ export class SQLiteProvider implements IDatabaseProvider {
       monthly_budget_cap: 50.00,
       service_name: 'shine-render-worker',
       region: process.env.GCP_REGION || 'us-central1',
-      status: activeWorkers.length > 0 ? 'ONLINE' : (workers.length > 0 ? 'DEGRADED' : 'ONLINE'),
+      status: activeWorkers.length > 0 ? 'ONLINE' : (workers.length > 0 ? 'DEGRADED' : 'OFFLINE'),
       workers: workers,
       active_jobs: activeJobs.concat(queuedJobs),
     };

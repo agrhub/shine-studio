@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { runtimeMetrics } from '@/services/observability/RuntimeMetrics.js';
 import { invalidateStudioConfig } from '@/services/StudioConfigCache.js';
 import { getDatabaseProvider } from '../database/index.js';
 import type { PlatformAccount, PlatformSettings, StudioSystemConfig } from '../types.js';
@@ -282,27 +283,38 @@ adminRouter.post('/impersonate', (req: Request, res: Response) => {
 });
 
 // GET /api/admin/render-cluster — FinOps Google Cloud Run render cluster status & Pub/Sub queue depth
-adminRouter.get('/render-cluster', async (req: Request, res: Response) => {
+adminRouter.get('/render-cluster', async (_req: Request, res: Response) => {
   try {
     const { CloudRunRenderService } = await import('../services/render/CloudRunRenderService.js');
-    const clusterMetrics = await CloudRunRenderService.getInstance().getClusterMetrics();
+    const db = await getDatabaseProvider();
+    const [clusterMetrics, workerSummary] = await Promise.all([
+      CloudRunRenderService.getInstance().getClusterMetrics(),
+      db.getClusterMetrics(),
+    ]);
 
     return res.json({
       code: 200,
       data: {
-        activeInstances: clusterMetrics.activeWorkers,
+        // From worker heartbeats and the job queue; 0 / null means nothing reported.
+        activeInstances: workerSummary.active_instances,
         status: clusterMetrics.status,
         serviceName: clusterMetrics.serviceName,
         region: clusterMetrics.region,
-        gpuLoadPct: Math.round(45 + Math.random() * 35),
-        queuedJobsCount: clusterMetrics.queueDepth,
-        monthlyCostUsd: 3420.5,
-        systemMemoryRssMb: clusterMetrics.systemLoad.freeMemoryMb,
+        gpuLoadPct: workerSummary.gpu_load_pct,
+        activeJobsCount: workerSummary.active_jobs_count,
+        queuedJobsCount: Math.max(clusterMetrics.queueDepth || 0, workerSummary.queued_jobs_count || 0),
+        completedJobsCount: workerSummary.completed_jobs_count,
+        failedJobsCount: workerSummary.failed_jobs_count,
+        // Cloud billing is not integrated: no cost figure is invented.
+        monthlyCostUsd: null,
+        costTracked: false,
+        monthlyBudgetCap: workerSummary.monthly_budget_cap,
+        systemMemoryRssMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
         clusterMetrics,
-        activeJobs: [
-        ],
+        workers: workerSummary.workers,
+        activeJobs: [],
       },
-      message: 'Google Cloud Run render cluster status & Pub/Sub queue retrieved',
+      message: 'Render cluster status retrieved',
       error: null,
     });
   } catch (err: any) {
@@ -313,31 +325,6 @@ adminRouter.get('/render-cluster', async (req: Request, res: Response) => {
       error: 'CLUSTER_STATUS_ERROR',
     });
   }
-});
-
-// GET /api/admin/observability — Prometheus/OpenTelemetry real runtime metrics
-adminRouter.get('/observability', (req: Request, res: Response) => {
-  const mem = process.memoryUsage();
-  const uptime = process.uptime();
-  const cpuUsage = process.cpuUsage();
-
-  return res.json({
-    code: 200,
-    data: {
-      uptime_seconds: Math.round(uptime),
-      process_memory_rss_mb: Math.round(mem.rss / (1024 * 1024)),
-      process_memory_heap_used_mb: Math.round(mem.heapUsed / (1024 * 1024)),
-      process_memory_heap_total_mb: Math.round(mem.heapTotal / (1024 * 1024)),
-      cpu_user_microseconds: cpuUsage.user,
-      cpu_system_microseconds: cpuUsage.system,
-      http_request_duration_p99_ms: 142,
-      websocket_connected_clients: 428,
-      ai_inference_latency_seconds: 1.82,
-      api_error_rate_percentage: 0.04,
-    },
-    message: 'Live runtime observability metrics retrieved',
-    error: null,
-  });
 });
 
 // GET /api/admin/studio-config — Live configuration loaded from Database with .env Fallback
@@ -747,21 +734,6 @@ adminRouter.patch('/platforms', async (req: Request, res: Response) => {
 });
 
 // GET /api/admin/render-cluster — Realtime Render Cluster & Worker Node Telemetry
-adminRouter.get('/render-cluster', async (_req: Request, res: Response) => {
-  try {
-    const db = await getDatabaseProvider();
-    const metrics = await db.getClusterMetrics();
-    return res.json({
-      code: 200,
-      data: metrics,
-      message: 'Render cluster telemetry retrieved successfully',
-      error: null,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ code: 500, data: null, message: err.message, error: 'CLUSTER_METRICS_ERROR' });
-  }
-});
-
 // GET /api/admin/workers — List registered worker nodes (supports ?status=online or ?status=all)
 adminRouter.get('/workers', async (req: Request, res: Response) => {
   try {
@@ -853,12 +825,10 @@ adminRouter.get('/observability', async (_req: Request, res: Response) => {
       process_memory_rss_mb: Math.round(mem.rss / (1024 * 1024)),
       process_memory_heap_used_mb: Math.round(mem.heapUsed / (1024 * 1024)),
       process_memory_heap_total_mb: Math.round(mem.heapTotal / (1024 * 1024)),
-      http_request_duration_p99_ms: Math.floor(Math.random() * 25 + 95),
-      websocket_connected_clients: 12,
-      ai_inference_latency_seconds: 1.45,
-      api_error_rate_percentage: 0.00,
+      // Measured from real traffic over the last 15 minutes; null = no data yet.
+      ...runtimeMetrics.snapshot(),
       cpu_count: cpus.length,
-      load_average_1m: loadAvg[0] || 0.15,
+      load_average_1m: loadAvg[0] ?? null,
       timestamp: new Date().toISOString(),
       grafanaConnection: connection,
       historyMetrics: history,
