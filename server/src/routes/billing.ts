@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '@/database/index.js';
 import { getUserId, getAuthUser } from '@/utils/auth.js';
+import { getPlan } from '@/config/plans.js';
+import { createCheckoutSession, isStripeConfigured } from '@/services/StripeService.js';
 
 export const billingRouter = Router();
 
@@ -13,15 +15,17 @@ billingRouter.get('/tier', async (req: Request, res: Response) => {
       return res.status(401).send("User not found");
     }
 
-    const rawTier = (user.tier || 'FREE').toUpperCase();
+    const plan = getPlan(user.tier);
     return res.json({
       code: 200,
       data: {
-        tier: rawTier.toLowerCase(),
-        credit_balance: user.credits ?? 100,
-        credit_quota: rawTier === 'ENTERPRISE' ? 10000 : rawTier === 'PRO' ? 1000 : 100,
-        features: ['series.create', 'script.generate', 'voice.tts', 'publish.multi', 'cover.generate'],
-        monthly_price_usd: rawTier === 'ENTERPRISE' ? 299 : rawTier === 'PRO' ? 29 : 0,
+        tier: plan.id,
+        credit_balance: user.credits ?? 0,
+        credit_quota: plan.monthlyCredits,
+        features: plan.features,
+        monthly_price_usd: plan.priceUsd,
+        daily_ai_limits: plan.dailyAiLimits,
+        billing_enabled: isStripeConfigured(),
       },
       message: 'Subscription tier retrieved',
       error: null,
@@ -36,50 +40,35 @@ billingRouter.get('/tier', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/billing/checkout — Create Stripe Checkout Session
-billingRouter.post('/checkout', (req: Request, res: Response) => {
+// POST /api/billing/checkout — Create a real Stripe Checkout Session.
+// Plan changes are applied ONLY by the verified webhook, never by this call or the redirect.
+billingRouter.post('/checkout', async (req: Request, res: Response) => {
   try {
     const { tier } = req.body;
     if (!tier) {
-      return res.status(400).json({
-        code: 400,
-        data: null,
-        message: 'Subscription tier is required',
-        error: 'INVALID_TIER',
-      });
+      return res.status(400).json({ code: 400, data: null, message: 'Subscription tier is required', error: 'INVALID_TIER' });
+    }
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ code: 401, data: null, message: 'User not found', error: 'UNAUTHORIZED' });
     }
 
-    // Return simulated checkout URL or Stripe session URL
+    const session = await createCheckoutSession({ userId: user.id, email: user.email, planId: tier });
     return res.json({
       code: 200,
-      data: {
-        session_id: `cs_test_${Date.now()}`,
-        url: `http://localhost:3000/settings?checkout_success=true&tier=${encodeURIComponent(tier)}`,
-      },
-      message: 'Stripe checkout session initialized',
+      data: { session_id: session.id, url: session.url },
+      message: 'Stripe checkout session created',
       error: null,
     });
   } catch (err: any) {
-    return res.status(500).json({
-      code: 500,
+    const status = err?.status || 500;
+    return res.status(status).json({
+      code: status,
       data: null,
       message: err.message || 'Checkout failed',
-      error: 'STRIPE_ERROR',
+      error: status === 503 ? 'BILLING_NOT_CONFIGURED' : 'STRIPE_ERROR',
     });
   }
-});
-
-// POST /api/billing/webhook — Handle Stripe webhook events
-billingRouter.post('/webhook', (req: Request, res: Response) => {
-  const event = req.body;
-  console.log('Received Stripe Webhook event:', event?.type || 'checkout.session.completed');
-
-  return res.json({
-    code: 200,
-    data: { received: true, event_type: event?.type || 'checkout.session.completed' },
-    message: 'Stripe webhook event processed',
-    error: null,
-  });
 });
 
 // POST /api/billing/revenue-splits — Creator revenue share calculation

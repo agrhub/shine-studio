@@ -22,6 +22,7 @@ import { aiAgenticRouter } from './routes/ai-agentic';
 import { costGuardrailsRouter } from './routes/cost-guardrails';
 import { publishRouter } from './routes/publish';
 import { billingRouter } from './routes/billing';
+import { billingWebhookRouter } from './routes/billing-webhook';
 import { marketplaceRouter } from './routes/marketplace';
 import { novelConverterRouter } from './routes/novel-converter';
 import { liveDramaRouter } from './routes/live-drama';
@@ -69,6 +70,8 @@ app.set('trust proxy', process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY)
 app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use('/api', corsMiddleware());
+// Stripe webhook needs the raw body for signature verification → before express.json().
+app.use('/api/billing/webhook', billingWebhookRouter);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 

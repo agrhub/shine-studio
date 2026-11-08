@@ -58,7 +58,7 @@ async function loadBilling() {
     if (tierRes?.data) {
       billingData.value = tierRes.data;
       if (authStore.user) {
-        authStore.user.credits = tierRes.data.creditBalance;
+        authStore.user.credits = tierRes.data.credit_balance;
         localStorage.setItem('shine_user', JSON.stringify(authStore.user));
       }
     }
@@ -87,6 +87,24 @@ async function handleUpgradePlan(tierId: string) {
 
 onMounted(() => {
   loadBilling();
+
+  // Returning from Stripe Checkout. The plan is applied by the webhook, which can
+  // land a few seconds after the redirect, so refresh a couple of times.
+  const params = new URLSearchParams(window.location.search);
+  const checkout = params.get('checkout');
+  if (checkout === 'success') {
+    toast.success(t('toast.paymentReceived', 'Payment received — your plan will update in a moment.'));
+    setTimeout(loadBilling, 3000);
+    setTimeout(loadBilling, 10000);
+  } else if (checkout === 'cancelled') {
+    toast.info(t('toast.checkoutCancelled', 'Checkout cancelled.'));
+  }
+  if (checkout) {
+    params.delete('checkout');
+    params.delete('session_id');
+    const query = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }
 });
 </script>
 
