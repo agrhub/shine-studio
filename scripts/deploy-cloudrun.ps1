@@ -483,6 +483,18 @@ if ($JobExists) {
 }
 Write-Host "Cloud Scheduler job '$JobName' active -> $SyncUri" -ForegroundColor Green
 
+# Scheduled publications: publish due posts every minute (the app scales to zero).
+$PubJobName = "shine-scheduled-publications"
+$PubUri = "$ShineAppUrl/api/internal/scheduled-publications/run"
+$PubJobExists = $false
+try { $null = gcloud scheduler jobs describe $PubJobName --location $Region 2>&1; if ($LASTEXITCODE -eq 0) { $PubJobExists = $true } } catch { $PubJobExists = $false }
+if ($PubJobExists) {
+  gcloud scheduler jobs update http $PubJobName --location $Region --schedule "* * * * *" --uri "$PubUri" --http-method POST --attempt-deadline 300s --update-headers "X-Internal-Secret=$InternalApiSecret" --quiet
+} else {
+  gcloud scheduler jobs create http $PubJobName --location $Region --schedule "* * * * *" --uri "$PubUri" --http-method POST --attempt-deadline 300s --headers "X-Internal-Secret=$InternalApiSecret" --quiet
+}
+Write-Host "Cloud Scheduler job '$PubJobName' active -> $PubUri" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "=========================================================" -ForegroundColor Green
 Write-Host " Shine Studio Ecosystem Deployed Successfully!" -ForegroundColor Green

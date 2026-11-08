@@ -20,7 +20,8 @@ import cliffhangerRoutes from './routes/cliffhanger';
 import { aiAssistantRouter } from './routes/ai-assistant';
 import { aiAgenticRouter } from './routes/ai-agentic';
 import { costGuardrailsRouter } from './routes/cost-guardrails';
-import { publishRouter } from './routes/publish';
+import { publishRouter, startMultiPlatformPublish } from './routes/publish';
+import { runDuePublications, startScheduledPublishTicker } from './services/ScheduledPublishService.js';
 import { billingRouter } from './routes/billing';
 import { billingWebhookRouter } from './routes/billing-webhook';
 import { marketplaceRouter } from './routes/marketplace';
@@ -140,6 +141,11 @@ app.use('/api/analytics', authed, analyticsPaywallRouter);
 app.use('/api/uploads', authed, uploadsRouter);
 
 // ─── Internal / Service-to-Service Routes (X-Internal-Secret or Admin) ────────
+// Cloud Scheduler: publish due scheduled publications (every minute).
+app.post('/api/internal/scheduled-publications/run', requireInternalOrAdmin, async (_req, res) => {
+  const result = await runDuePublications(startMultiPlatformPublish);
+  res.json({ success: true, ...result });
+});
 app.use('/api/flow-accounts/sync', requireInternalOrAdmin, flowSyncRouter);
 app.use('/api/admin/workers', requireInternalOrAdmin, (req, res, next) => {
   req.url = `/workers${req.url}`;
@@ -201,6 +207,7 @@ if (clientDistPath) {
 
 // ─── Start Services & WebSocket HTTP Server ──────────────────────────────────
 flowSyncService.start();
+startScheduledPublishTicker(startMultiPlatformPublish);
 telemetryService.initialize();
 
 const httpServer = http.createServer(app);
