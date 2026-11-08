@@ -224,6 +224,27 @@ export class EmailService {
     await this.sendMail(mailOptions);
   }
 
+  /** Forwards a contact-form inquiry to the admin inbox; replies go straight to the sender. */
+  public async sendContactInquiry(inquiry: { id: string; name: string; email: string; subject: string; message: string; category: string }) {
+    const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    await this.sendMail({
+      from: this.fromEmail,
+      to: EnvConfig.adminEmail,
+      replyTo: `${inquiry.name.replace(/[\r\n<>"]/g, '')} <${inquiry.email}>`,
+      subject: `[Shine Contact ${inquiry.category}] ${inquiry.subject.replace(/[\r\n]/g, ' ')} (${inquiry.id})`,
+      text: `From: ${inquiry.name} <${inquiry.email}>\nCategory: ${inquiry.category}\nTicket: ${inquiry.id}\n\n${inquiry.message}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h3>New contact inquiry · ${esc(inquiry.id)}</h3>
+          <p><strong>From:</strong> ${esc(inquiry.name)} &lt;${esc(inquiry.email)}&gt;<br>
+             <strong>Category:</strong> ${esc(inquiry.category)}<br>
+             <strong>Subject:</strong> ${esc(inquiry.subject)}</p>
+          <pre style="white-space: pre-wrap; font-family: inherit;">${esc(inquiry.message)}</pre>
+        </div>
+      `,
+    });
+  }
+
   private async sendMail(options: nodemailer.SendMailOptions) {
     try {
       if(!this.transporter){
