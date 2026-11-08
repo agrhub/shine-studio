@@ -58,6 +58,7 @@ const statusKeyMap: Record<string, string> = {
   Warning: 'wizard.statusWarning',
   Restricted: 'wizard.statusRestricted',
   Failed: 'wizard.statusFailed',
+  Unverified: 'wizard.statusUnverified',
 };
 function tStatus(status: string): string {
   if (!status) return status;
@@ -131,6 +132,14 @@ function formatFinding(text?: string): string {
 
     <!-- Audit Result Content -->
     <template v-else>
+      <el-alert
+        v-if="complianceResult.verification_status === 'unverified'"
+        class="!mb-4"
+        type="warning"
+        show-icon
+        :closable="false"
+        :title="t('wizard.complianceUnverified')"
+      />
       <div class="rounded-2xl border p-6 flex flex-col md:flex-row items-center gap-8" style="background-color: var(--el-bg-color-overlay); border-color: var(--el-border-color);">
         <div class="w-32 h-32 relative shrink-0">
           <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
@@ -158,7 +167,7 @@ function formatFinding(text?: string): string {
               <span :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">{{ tStatus(item.status) }} ({{ item.score }}%)</span>
             </div>
             <div class="h-1.5 w-full rounded-full overflow-hidden" style="background-color: var(--el-fill-color-light);">
-              <div class="h-full rounded-full transition-all duration-500" :style="{ width: `${item.score || 95}%`, backgroundColor: item.safe ? 'var(--el-color-primary)' : 'var(--el-color-warning)' }"></div>
+              <div class="h-full rounded-full transition-all duration-500" :style="{ width: `${item.score || 0}%`, backgroundColor: item.safe ? 'var(--el-color-primary)' : 'var(--el-color-warning)' }"></div>
             </div>
             <div v-if="item.notes" class="text-[10px]" style="color: var(--el-text-color-placeholder);">{{ item.notes }}</div>
           </div>
@@ -247,7 +256,7 @@ function formatFinding(text?: string): string {
               style="border-color: var(--el-border-color-light);"
             >
               <span style="color: var(--el-text-color-regular);">{{ tCheckLabel(item.label) }}</span>
-              <span class="font-black" :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">✓ {{ tStatus(item.status) }}</span>
+              <span class="font-black" :style="item.safe ? 'color: var(--el-color-primary);' : 'color: var(--el-color-warning);'">{{ item.safe ? '✓' : '!' }} {{ tStatus(item.status) }}</span>
             </li>
           </ul>
         </div>

@@ -864,6 +864,8 @@
     "catCulturalSensitivity": "Sensibilité culturelle",
     "catCopyrightIP": "Droits d'auteur et PI",
     "statusPassed": "Validé",
+    "statusUnverified": "Non vérifié",
+    "complianceUnverified": "L'audit de conformité n'a pas pu être effectué ; ces résultats ne valent pas validation. Relancez-le avant de publier.",
     "statusWarning": "Avertissement",
     "statusFailed": "Échec",
     "suggestCharacterDetail": "Voir les Détails des Personnages",

@@ -1,3 +1,4 @@
+import type { ComplianceDimension } from '@/types.js';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { mcpClient } from '../integrations/mcp/ParallelMCPClient.js';
 import { loadSkill } from '../utils/SkillLoader.js';
@@ -64,9 +65,10 @@ export class SupervisionAgent {
     // 1. Parallel MCP Deep Research (3-way real-time web scan)
     let deepResearch: DeepResearch = {
       country,
-      copyright_findings: 'No registered commercial micro-drama plot collisions found.',
-      regulatory_findings: `Reviewed against streaming redlines for market ${country}.`,
-      cultural_findings: `Standard cultural and content safety norms for ${country} audited.`,
+      // Replaced by real findings when web research succeeds; never claims a check that did not run.
+      copyright_findings: 'Web research unavailable — no copyright similarity search was performed.',
+      regulatory_findings: `Web research unavailable — ${country} platform regulations were not checked online.`,
+      cultural_findings: `Web research unavailable — no ${country}-specific cultural research was performed.`,
       grounded_sources: [],
     };
 
@@ -123,16 +125,35 @@ export class SupervisionAgent {
       const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed: any = JSON.parse(cleanJson);
 
-      const overall_score = Number(parsed.overall_score ?? parsed.overallScore ?? 95);
-      const is_compliant = parsed.is_compliant ?? parsed.isCompliant ?? true;
-
+      // A category the audit did not return is "Unverified", never "Passed".
       const rawCategories = parsed.categories || {};
+      const pick = (...keys: string[]) => keys.map((k) => rawCategories[k]).find(Boolean);
+      const dim = (raw: any, label: string): ComplianceDimension =>
+        raw && typeof raw === 'object'
+          ? {
+              label: raw.label || label,
+              score: Math.max(0, Math.min(100, Number(raw.score) || 0)),
+              status: raw.status || (raw.safe === false ? 'Warning' : 'Passed'),
+              safe: raw.safe !== false,
+              notes: raw.notes,
+            }
+          : unverifiedDimension(label, 'Not returned by the compliance audit.');
       const categories = {
-        violence: rawCategories.violence || { label: 'Violence / Gore', score: 98, status: 'Passed', safe: true, notes: 'Standard micro-drama conflict.' },
-        adult_content: rawCategories.adult_content || rawCategories.adultContent || { label: 'Adult Content', score: 100, status: 'Passed', safe: true, notes: 'Complies with all major streaming distribution policies.' },
-        cultural_sensitivity: rawCategories.cultural_sensitivity || rawCategories.culturalSensitivity || { label: 'Cultural Sensitivity', score: 95, status: 'Passed', safe: true, notes: `Audited for regional distribution in ${country}.` },
-        copyright_ip: rawCategories.copyright_ip || rawCategories.copyrightIP || { label: 'Copyright / IP', score: 94, status: 'Passed', safe: true, notes: 'Original story concept without registered copyright collisions.' },
+        violence: dim(pick('violence'), 'Violence / Gore'),
+        adult_content: dim(pick('adult_content', 'adultContent'), 'Adult Content'),
+        cultural_sensitivity: dim(pick('cultural_sensitivity', 'culturalSensitivity'), 'Cultural Sensitivity'),
+        copyright_ip: dim(pick('copyright_ip', 'copyrightIP'), 'Copyright / IP'),
       };
+      const dims = Object.values(categories);
+      const verifiedDims = dims.filter((d) => d.status !== 'Unverified');
+      const reportedScore = Number(parsed.overall_score ?? parsed.overallScore);
+      const overall_score = Number.isFinite(reportedScore)
+        ? Math.max(0, Math.min(100, reportedScore))
+        : verifiedDims.length
+          ? Math.round(verifiedDims.reduce((a, d) => a + d.score, 0) / verifiedDims.length)
+          : 0;
+      const allVerified = verifiedDims.length === dims.length;
+      const is_compliant = (parsed.is_compliant ?? parsed.isCompliant) === true && allVerified && dims.every((d) => d.safe);
 
       const parsedMr = parsed.market_research || {};
       const result: ComplianceVerificationResult = {
@@ -146,10 +167,10 @@ export class SupervisionAgent {
           grounded_sources: deepResearch.grounded_sources || [],
         },
         categories,
+        verification_status: allVerified ? 'verified' : 'partial',
+        // Visual assets and audio are not audited at the script stage, so they are not listed as "Passed".
         copyright_checks: parsed.copyright_checks || parsed.copyrightChecks || [
-          { label: 'Script Origin & Plagiarism', status: 'Passed', safe: true },
-          { label: 'Generated Visual Assets', status: 'Passed', safe: true },
-          { label: 'Audio & Foley Library', status: 'Passed', safe: true },
+          { label: 'Script Origin & Plagiarism', status: 'Unverified', safe: false },
         ],
         identified_issues: parsed.identified_issues || parsed.identifiedIssues || [],
         recommendations: parsed.recommendations || [`Maintain commercial pacing and adhere to ${country} vertical 9:16 safe zones.`],
@@ -158,10 +179,13 @@ export class SupervisionAgent {
       Logger.info(`[SupervisionAgent] Hybrid compliance check completed with score ${result.overall_score}% (Safe: ${result.is_compliant})`);
       return result;
     } catch (error: any) {
-      Logger.warn(`[SupervisionAgent] AI Compliance verification fallback: ${error.message}`);
+      Logger.warn(`[SupervisionAgent] Compliance verification failed: ${error.message}`);
+      // The audit did not run: report that plainly instead of a passing score.
+      const reason = 'The compliance audit could not be completed. Run it again before publishing.';
       return {
-        overall_score: 95,
-        is_compliant: true,
+        overall_score: 0,
+        is_compliant: false,
+        verification_status: 'unverified',
         market_research: {
           country,
           copyright_findings: deepResearch.copyright_findings,
@@ -170,21 +194,21 @@ export class SupervisionAgent {
           grounded_sources: deepResearch.grounded_sources || [],
         },
         categories: {
-          violence: { label: 'Violence / Gore', score: 98, status: 'Passed', safe: true, notes: 'Standard dramatic conflict.' },
-          adult_content: { label: 'Adult Content', score: 100, status: 'Passed', safe: true, notes: 'Within all major distribution guidelines.' },
-          cultural_sensitivity: { label: 'Cultural Sensitivity', score: 92, status: 'Passed', safe: true, notes: `Approved for regional broadcast in ${country}.` },
-          copyright_ip: { label: 'Copyright / IP', score: 95, status: 'Passed', safe: true, notes: 'Original micro-drama concept without identical copyright collisions.' },
+          violence: unverifiedDimension('Violence / Gore', reason),
+          adult_content: unverifiedDimension('Adult Content', reason),
+          cultural_sensitivity: unverifiedDimension('Cultural Sensitivity', reason),
+          copyright_ip: unverifiedDimension('Copyright / IP', reason),
         },
-        copyright_checks: [
-          { label: 'Script Origin & Plagiarism', status: 'Passed', safe: true },
-          { label: 'Generated Visual Assets', status: 'Passed', safe: true },
-          { label: 'Audio & Foley Library', status: 'Passed', safe: true },
-        ],
-        identified_issues: [],
-        recommendations: [`Maintain commercial pacing and adhere to ${country} vertical 9:16 safe zones.`],
+        copyright_checks: [{ label: 'Script Origin & Plagiarism', status: 'Unverified', safe: false }],
+        identified_issues: [`${reason} (${error.message})`],
+        recommendations: [],
       };
     }
   }
+}
+
+function unverifiedDimension(label: string, notes: string): ComplianceDimension {
+  return { label, score: 0, status: 'Unverified', safe: false, notes };
 }
 
 export const supervisionAgent = new SupervisionAgent();

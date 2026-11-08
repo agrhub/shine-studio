@@ -799,6 +799,8 @@
     "catCulturalSensitivity": "Cultural Sensitivity",
     "catCopyrightIP": "Copyright / IP",
     "statusPassed": "Passed",
+    "statusUnverified": "Not verified",
+    "complianceUnverified": "The compliance audit could not be completed — results below are not a pass. Run the check again before publishing.",
     "statusWarning": "Warning",
     "statusFailed": "Failed",
     "suggestCharacterDetail": "View Character Details",

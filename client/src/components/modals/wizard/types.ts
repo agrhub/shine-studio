@@ -36,6 +36,8 @@ export interface MarketResearchData {
 export interface ComplianceResult {
   overall_score?: number;
   is_compliant?: boolean;
+  /** 'unverified' when the audit could not run — never treat as a pass. */
+  verification_status?: 'verified' | 'partial' | 'unverified';
   market_research?: MarketResearchData;
   categories?: Record<string, { label: string; status: string; score: number; safe: boolean; notes?: string }>;
   copyright_checks?: Array<{ label: string; status: string; safe: boolean }>;
