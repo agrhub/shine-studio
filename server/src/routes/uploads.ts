@@ -97,3 +97,43 @@ uploadsRouter.post('/', upload.array('files', 10), async (req: Request, res: Res
     return res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * DELETE /api/uploads — Remove one of the caller's uploads.
+ * Body: { filePath } (storage key or URL, as returned by GET /api/uploads) or { id }.
+ */
+uploadsRouter.delete('/', async (req: Request, res: Response) => {
+  try {
+    const { filePath, id } = req.body || {};
+    if (!filePath && !id) {
+      return res.status(400).json({ success: false, error: 'filePath or id is required' });
+    }
+
+    const db = await getDatabaseProvider();
+    const userId = getUserId(req);
+    const assets = await db.getAssets({ user_id: userId });
+    const asset = assets.find(
+      (a: any) => (id && a.id === id) || (filePath && (a.s3_key === filePath || a.url === filePath))
+    );
+
+    // Only assets owned by the caller are found above, so other users' files are never touched.
+    if (!asset) {
+      return res.status(404).json({ success: false, error: 'Upload not found' });
+    }
+
+    if (asset.s3_key) {
+      try {
+        const storage = await StorageFactory.getActiveAdapter();
+        await storage.deleteFile(asset.s3_key);
+      } catch (storageErr: any) {
+        Logger.warn(`[UploadsRouter] Storage delete failed for ${asset.s3_key}: ${storageErr.message}`);
+      }
+    }
+    await db.deleteAsset(asset.id);
+
+    return res.json({ success: true, deleted: asset.id });
+  } catch (err: any) {
+    Logger.error(`[UploadsRouter] Delete error: ${err.message}`);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});

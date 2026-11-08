@@ -396,14 +396,16 @@ export const handleGenerateVoiceover = async (input: any) => {
   const { text, voiceId } = input;
   useMediaPanelStore().setSearchQuery("voiceovers", text || "Voiceover");
   try {
-    const response = await fetch("/api/elevenlabs/voiceover", {
+    // Neural TTS endpoint (Gemini voices); stores the audio and returns its URL.
+    const response = await fetch("/api/voices/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voiceId }),
+      body: JSON.stringify({ text, voice_id: voiceId }),
     });
-    const data = await response.json();
+    const payload = await response.json();
+    const data = payload?.data || {};
 
-    if (data.url) {
+    if (response.ok && data.url) {
       const currentTimeUs = Math.round((core.store.getState().currentTime || 0));
       await core.clip.add({
         type: "Audio",

@@ -4,8 +4,20 @@ import { verifyAccessToken, extractBearerToken, safeEqual } from '@/utils/token.
 
 const ADMIN_ROLES = new Set(['admin', 'owner', 'superadmin']);
 
+/**
+ * EventSource (SSE) cannot send headers, so for `Accept: text/event-stream` GET
+ * requests only, the token may be passed as `?access_token=`.
+ */
+function tokenFromRequest(req: Request): string | null {
+  const header = extractBearerToken(req.headers.authorization);
+  if (header) return header;
+  const isSse = req.method === 'GET' && String(req.headers.accept || '').includes('text/event-stream');
+  const queryToken = req.query?.access_token;
+  return isSse && typeof queryToken === 'string' && queryToken ? queryToken : null;
+}
+
 export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  const token = extractBearerToken(req.headers.authorization);
+  const token = tokenFromRequest(req);
   if (!token) {
     return res.status(401).json({ code: 401, error: 'Unauthorized', message: 'Missing or invalid authentication token' });
   }

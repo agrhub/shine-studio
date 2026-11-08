@@ -4,6 +4,8 @@ import { generateThumbnail } from '@/utils/thumbnail-generator';
 import { Compositor, Log } from '@openvideo/engine-pixi';
 import { core } from '@/utils/project';
 import { toast } from 'vue-sonner';
+import http from '@/utils/http';
+import { useProjectStore } from '@/stores/useProjectStore';
 
 export interface ExportSettings {
   includeVideo: boolean;
@@ -202,7 +204,8 @@ export function useExport() {
           const videoFile = new File([blob], fileName, { type: blob.type || `video/${activeFormat}` });
           formData.append('files', videoFile);
 
-          const uploadRes = await fetch('/api/assets/upload', {
+          // 1. Store the rendered file (POST /api/uploads → asset record + storage URL)
+          const uploadRes = await fetch('/api/uploads', {
             method: 'POST',
             body: formData,
           });
@@ -210,25 +213,27 @@ export function useExport() {
           if (uploadRes.ok) {
             const data = await uploadRes.json();
             if (data.success && data.uploads?.[0]?.url) {
-              finalDownloadUrl = data.uploads[0].url; // Relative URL e.g. /api/media/...
-              // Save rendered video URL & preview URL to current project in SQLite database
+              finalDownloadUrl = data.uploads[0].url; // e.g. /api/assets/file/videos/...
+              // 2. Register it as a render version of the episode being edited, so it
+              //    shows up in the review player and the publishing wizard.
               try {
-                const projectId = (useStudioStore().state.value as any)?.projectId || (window as any).currentProjectId;
-                const currentUrlId = new URLSearchParams(window.location.search).get('id');
-                const targetId = projectId || currentUrlId;
-
-                if (targetId) {
-                  await fetch(`/api/projects/${targetId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      video: finalDownloadUrl,
-                      preview: finalDownloadUrl,
-                    }),
-                  });
+                const episodeId = useProjectStore().projectId || new URLSearchParams(window.location.search).get('id');
+                if (episodeId) {
+                  const epRes: any = await http.get(`/episodes/${encodeURIComponent(episodeId)}`);
+                  const seriesId = epRes?.data?.episode?.series_id;
+                  if (seriesId) {
+                    await http.post(
+                      `/series/${encodeURIComponent(seriesId)}/episodes/${encodeURIComponent(episodeId)}/render-versions`,
+                      {
+                        video_url: finalDownloadUrl,
+                        file_size: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,
+                        resolution: `${exportWidth}x${exportHeight}`,
+                      }
+                    );
+                  }
                 }
               } catch (dbErr) {
-                console.warn('Failed to update project video URL in database:', dbErr);
+                console.warn('Failed to register render version for episode:', dbErr);
               }
             }
           }

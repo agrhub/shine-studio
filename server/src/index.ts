@@ -113,6 +113,11 @@ app.use('/api/chat/editor', authed, (req, res, next) => {
   aiAssistantRouter(req, res, next);
 });
 app.use('/api/ai/agentic', authed, aiAgenticRouter);
+// Feature routers that were implemented but never mounted (paths are defined inside each router).
+app.use('/api/ai', authed, viralCoverRouter);       // POST /api/ai/viral-cover/generate
+app.use('/api/ai', authed, novelConverterRouter);   // POST /api/ai/convert-novel
+app.use('/api/ai', authed, culturalAdaptRouter);    // POST /api/ai/cultural-adapt
+app.use('/api/audio', authed, copyrightRouter);     // POST /api/audio/copyright-verify
 app.use('/api/publish', authed, publishRouter);
 app.use('/api/projects', authed, publishRouter);
 app.use('/api/social', authed, socialAuthRouter);

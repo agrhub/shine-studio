@@ -61,3 +61,13 @@ export function installAuthFetch(): void {
     return nativeSend.call(this, body);
   };
 }
+
+/**
+ * EventSource cannot send an Authorization header, so SSE endpoints accept the
+ * token as `access_token` (the server only honours it for text/event-stream).
+ */
+export function withAccessToken(url: string): string {
+  const token = getAuthToken();
+  if (!token) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`;
+}

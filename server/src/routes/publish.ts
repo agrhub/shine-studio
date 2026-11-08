@@ -21,6 +21,7 @@ export const publishRouter = Router();
 // In-memory job progress tracker for SSE streaming
 const activePublishJobs = new Map<string, {
   jobId: string;
+  userId?: string;
   status: 'queued' | 'rendering' | 'uploading' | 'published' | 'failed';
   progress: number;
   currentPlatform: string;
@@ -503,6 +504,7 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
 
     activePublishJobs.set(jobId, {
       jobId,
+      userId,
       status: 'uploading',
       progress: 10,
       currentPlatform: platforms[0],
@@ -922,28 +924,57 @@ publishRouter.post('/multi-platform', requireAuth, async (req: Request, res: Res
   }
 });
 
-// GET /api/render/stream — Real SSE progress stream
+// GET /api/publish/render/stream?job_id= — SSE progress stream for a publish job
 publishRouter.get('/render/stream', (req: Request, res: Response) => {
-  const jobId = req.query.jobId as string || 'default';
+  const jobId = String(req.query.job_id || req.query.jobId || '');
+  const requester = (req as any).user;
+  const initial = activePublishJobs.get(jobId);
+  if (!jobId) {
+    res.status(400).json({ code: 400, message: 'job_id is required', error: 'INVALID_PAYLOAD' });
+    return;
+  }
+  if (initial?.userId && initial.userId !== requester?.id && !['admin', 'owner', 'superadmin'].includes(requester?.role)) {
+    res.status(403).json({ code: 403, message: 'You do not have access to this job', error: 'FORBIDDEN' });
+    return;
+  }
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
 
+  // Serialize with both camelCase (legacy) and snake_case (client) field names.
+  const toEvent = (job: NonNullable<ReturnType<typeof activePublishJobs.get>>) => {
+    const { userId: _userId, ...rest } = job;
+    return {
+      ...rest,
+      job_id: job.jobId,
+      current_platform: job.currentPlatform,
+      published_urls: job.publishedUrls,
+    };
+  };
+
+  let missingTicks = 0;
   const interval = setInterval(() => {
     const jobState = activePublishJobs.get(jobId);
 
     if (jobState) {
-      res.write(`data: ${JSON.stringify(jobState)}\n\n`);
-
+      res.write(`data: ${JSON.stringify(toEvent(jobState))}\n\n`);
       if (jobState.status === 'published' || jobState.status === 'failed') {
         clearInterval(interval);
         res.end();
       }
-    } else {
-      res.write(`data: ${JSON.stringify({ jobId, status: 'rendering', progress: 50, currentPlatform: 'youtube' })}\n\n`);
+      return;
+    }
+
+    // Unknown job (expired, or server restarted): tell the client and stop after ~10s.
+    res.write(`data: ${JSON.stringify({ job_id: jobId, status: 'queued', progress: 0 })}\n\n`);
+    if (++missingTicks >= 10) {
+      res.write(`data: ${JSON.stringify({ job_id: jobId, status: 'failed', error: 'Publish job not found' })}\n\n`);
+      clearInterval(interval);
+      res.end();
     }
   }, 1000);
 
