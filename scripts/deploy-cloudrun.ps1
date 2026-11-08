@@ -45,6 +45,25 @@ if (Test-Path $EnvPath) {
   }
 }
 
+# --- Ensure Security Secrets (generated once, persisted to .env) --------------
+# JWT_SECRET / REFRESH_SECRET sign user sessions; INTERNAL_API_SECRET authenticates
+# Cloud Scheduler and the render worker. The app refuses to start in production without them.
+function Ensure-Secret([string]$Name) {
+  $current = if ($EnvMap.ContainsKey($Name)) { $EnvMap[$Name] } else { "" }
+  if (-not $current -or $current.Length -lt 32) {
+    $bytes = New-Object byte[] 48
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $generated = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+    $EnvMap[$Name] = $generated
+    Add-Content -Path $EnvPath -Value "`n$Name=`"$generated`""
+    Write-Host "[Security] Generated $Name and saved it to .env (keep it stable across deploys)." -ForegroundColor Yellow
+  }
+}
+Ensure-Secret "JWT_SECRET"
+Ensure-Secret "REFRESH_SECRET"
+Ensure-Secret "INTERNAL_API_SECRET"
+$InternalApiSecret = $EnvMap["INTERNAL_API_SECRET"]
+
 if (-not $Region) {
   $Region = if ($env:REGION) { $env:REGION } elseif ($EnvMap.ContainsKey("GCP_REGION") -and $EnvMap["GCP_REGION"]) { $EnvMap["GCP_REGION"] } else { "us-central1" }
 }
@@ -319,7 +338,7 @@ if ($DeployRender) {
     --min-instances $RenderMin `
     --max-instances $RenderMax `
     --allow-unauthenticated `
-    --set-env-vars "GCS_BUCKET=$GcsBucketName,PUBSUB_TOPIC_STATUS=$StatusTopic,RENDER_POOL_SIZE=$RenderPoolSize,RENDER_POOL_MIN=$RenderPoolMin,RENDER_MAX_PER_INSTANCE=$RenderMaxPerInstance,GOOGLE_CLOUD_PROJECT=$ProjectId,GCP_REGION=$Region" `
+    --set-env-vars "GCS_BUCKET=$GcsBucketName,PUBSUB_TOPIC_STATUS=$StatusTopic,RENDER_POOL_SIZE=$RenderPoolSize,RENDER_POOL_MIN=$RenderPoolMin,RENDER_MAX_PER_INSTANCE=$RenderMaxPerInstance,GOOGLE_CLOUD_PROJECT=$ProjectId,GCP_REGION=$Region,INTERNAL_API_SECRET=$InternalApiSecret" `
     --quiet
   $RenderUrl = (gcloud run services describe shine-render-worker --region $Region --format "value(status.url)" 2>$null).Trim()
   Pop-Location
@@ -457,10 +476,10 @@ try {
 
 if ($JobExists) {
   Write-Host "Updating Cloud Scheduler job: $JobName (Schedule: */5 * * * *)..." -ForegroundColor Gray
-  gcloud scheduler jobs update http $JobName --location $Region --schedule "*/5 * * * *" --uri "$SyncUri" --http-method POST --attempt-deadline 180s --quiet
+  gcloud scheduler jobs update http $JobName --location $Region --schedule "*/5 * * * *" --uri "$SyncUri" --http-method POST --attempt-deadline 180s --update-headers "X-Internal-Secret=$InternalApiSecret" --quiet
 } else {
   Write-Host "Creating Cloud Scheduler job: $JobName (Schedule: */5 * * * *)..." -ForegroundColor Gray
-  gcloud scheduler jobs create http $JobName --location $Region --schedule "*/5 * * * *" --uri "$SyncUri" --http-method POST --attempt-deadline 180s --quiet
+  gcloud scheduler jobs create http $JobName --location $Region --schedule "*/5 * * * *" --uri "$SyncUri" --http-method POST --attempt-deadline 180s --headers "X-Internal-Secret=$InternalApiSecret" --quiet
 }
 Write-Host "Cloud Scheduler job '$JobName' active -> $SyncUri" -ForegroundColor Green
 

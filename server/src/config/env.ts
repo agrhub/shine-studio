@@ -123,6 +123,30 @@ export function isStorageConfigured(): boolean {
   return !!(bucket && accessKeyId && secretAccessKey);
 }
 
+const warnedSecrets = new Set<string>();
+
+/**
+ * Reads a signing secret. In production a missing or short secret is a fatal
+ * misconfiguration (a well-known default would let anyone forge tokens).
+ * In development a fixed fallback is used with a one-time warning.
+ */
+function requireSecret(name: string, devFallback: string): string {
+  const value = process.env[name];
+  if (value && value.length >= 32) return value;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `[Config] ${name} must be set to a random string of at least 32 characters in production. ` +
+        `Generate one with: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`
+    );
+  }
+  if (!warnedSecrets.has(name)) {
+    warnedSecrets.add(name);
+    console.warn(`[Config] ${name} is missing or shorter than 32 chars — using an insecure development fallback.`);
+  }
+  return value || devFallback;
+}
+
 export const EnvConfig = {
   get isProduction() {
     return process.env.NODE_ENV === 'production';
@@ -131,10 +155,24 @@ export const EnvConfig = {
     return process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
   },
   get jwtSecret() {
-    return process.env.JWT_SECRET || 'shine_jwt_secret_key_2026';
+    return requireSecret('JWT_SECRET', 'shine_dev_only_jwt_secret');
   },
   get jwtRefreshSecret() {
-    return process.env.REFRESH_SECRET || 'shine_refresh_token_secret_key_2026';
+    return requireSecret('REFRESH_SECRET', 'shine_dev_only_refresh_secret');
+  },
+  /**
+   * Shared secret for machine-to-machine calls (Cloud Scheduler, render worker heartbeats).
+   * Sent in the `X-Internal-Secret` header. Empty = internal calls are rejected.
+   */
+  get internalApiSecret() {
+    return process.env.INTERNAL_API_SECRET || '';
+  },
+  /** Comma-separated list of allowed CORS origins. Empty = same-origin only in production. */
+  get corsOrigins(): string[] {
+    return (process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
   },
   get dbProvider() {
     return process.env.DB_PROVIDER || 'sqlite';

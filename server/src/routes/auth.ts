@@ -10,10 +10,19 @@ import { EnvConfig } from '@/config/env.js';
 import { getActivePlatformConfig } from './admin.js';
 import { OAuthService } from '@/services/OAuthService.js';
 import { Logger } from '~/utils/logger.js';
+import { verifyAccessToken } from '@/utils/token.js';
+import { escapeHtml, toScriptJson, openerPostMessageJs } from '@/utils/html.js';
 
 const router = Router();
 const JWT_SECRET = EnvConfig.jwtSecret;
 const REFRESH_SECRET = EnvConfig.jwtRefreshSecret;
+
+/** Verifies a full access token (rejects temp 2FA/OTP/OAuth-state tokens). Throws on failure. */
+function verifyAccess(token: string): { userId: string; role: string } {
+  const user = verifyAccessToken(token);
+  if (!user) throw new Error('Invalid or expired access token');
+  return user;
+}
 
 // Standardized response helper
 function ok(res: Response, data: any, message = 'Success', statusCode = 200) {
@@ -446,7 +455,7 @@ router.post('/2fa/send-otp', async (req: Request, res: Response): Promise<void> 
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -485,7 +494,7 @@ router.post('/2fa/verify', async (req: Request, res: Response): Promise<void> =>
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -592,7 +601,7 @@ router.post('/change-password', async (req: Request, res: Response): Promise<voi
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const { currentPassword, newPassword } = req.body;
 
@@ -631,7 +640,7 @@ router.get('/profile', async (req: Request, res: Response): Promise<void> => {
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -730,7 +739,7 @@ router.get('/sso/:provider', async (req: Request, res: Response): Promise<void> 
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Connect ${providerLabel} SSO</title>
+        <title>Connect ${escapeHtml(providerLabel)} SSO</title>
         <meta charset="utf-8">
         <style>
           body { background: #0f1015; color: #fff; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; text-align: center; }
@@ -749,8 +758,8 @@ router.get('/sso/:provider', async (req: Request, res: Response): Promise<void> 
       <body>
         <div class="card">
           <div class="icon">🔑</div>
-          <h2>${providerLabel} Single Sign-On</h2>
-          <p>${err.message}<br><br>You can configure official <strong>Client ID & Secret</strong> in <em>Studio Settings &gt; Platforms &amp; SSO</em>.</p>
+          <h2>${escapeHtml(providerLabel)} Single Sign-On</h2>
+          <p>${escapeHtml(err.message)}<br><br>You can configure official <strong>Client ID & Secret</strong> in <em>Studio Settings &gt; Platforms &amp; SSO</em>.</p>
           <button class="btn btn-primary" onclick="window.close()">Close Window</button>
           <div class="note">Shine Studio OAuth 2.0 Gateway</div>
         </div>
@@ -771,7 +780,7 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
   };
 
   if (error || !code) {
-    res.status(400).send(`Authentication error from ${provider}: ${error_description || error || 'Missing authorization code'}`);
+    res.status(400).send(`Authentication error from ${escapeHtml(provider)}: ${escapeHtml(error_description || error || 'Missing authorization code')}`);
     return;
   }
 
@@ -868,11 +877,11 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
         <script>
           const payload = {
             type: 'SSO_AUTH_SUCCESS',
-            token: ${JSON.stringify(token)},
-            user: ${JSON.stringify(userPayload)}
+            token: ${toScriptJson(token)},
+            user: ${toScriptJson(userPayload)}
           };
           if (window.opener) {
-            window.opener.postMessage(payload, '*');
+            ${openerPostMessageJs('payload')}
             setTimeout(() => window.close(), 600);
           } else {
             localStorage.setItem('shine_token', payload.token);
@@ -884,7 +893,7 @@ router.get('/sso/callback/:provider', async (req: Request, res: Response): Promi
       </html>
     `);
   } catch (err: any) {
-    res.status(500).send(`OAuth verification failed: ${err.message}`);
+    res.status(500).send(`OAuth verification failed: ${escapeHtml(err.message)}`);
   }
 });
 
@@ -899,7 +908,7 @@ router.get('/oauth/connect/:provider', async (req: Request, res: Response): Prom
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -926,7 +935,7 @@ router.get('/oauth/connect/:provider', async (req: Request, res: Response): Prom
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Link ${providerLabel}</title>
+          <title>Link ${escapeHtml(providerLabel)}</title>
           <meta charset="utf-8">
           <style>
             body { background: #0f1015; color: #fff; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; text-align: center; }
@@ -943,11 +952,11 @@ router.get('/oauth/connect/:provider', async (req: Request, res: Response): Prom
         </head>
         <body>
           <div class="card">
-            <h2>Link ${providerLabel} Channel</h2>
-            <p>${configErr.message}<br><br>To link a channel directly, enter your Channel identifier below:</p>
+            <h2>Link ${escapeHtml(providerLabel)} Channel</h2>
+            <p>${escapeHtml(configErr.message)}<br><br>To link a channel directly, enter your Channel identifier below:</p>
             <form action="/api/auth/oauth/manual-link" method="POST">
-              <input type="hidden" name="token" value="${token}">
-              <input type="hidden" name="provider" value="${provider}">
+              <input type="hidden" name="token" value="${escapeHtml(token)}">
+              <input type="hidden" name="provider" value="${escapeHtml(provider)}">
               <div class="form-group">
                 <label>Channel / Page Name</label>
                 <input type="text" name="channel_name" required placeholder="e.g. My Shorts Official">
@@ -964,7 +973,7 @@ router.get('/oauth/connect/:provider', async (req: Request, res: Response): Prom
       `);
     }
   } catch (err: any) {
-    res.status(500).send(`OAuth Initiation Error: ${err.message}`);
+    res.status(500).send(`OAuth Initiation Error: ${escapeHtml(err.message)}`);
   }
 });
 
@@ -977,7 +986,7 @@ router.post('/oauth/manual-link', async (req: Request, res: Response): Promise<v
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -1020,16 +1029,16 @@ router.post('/oauth/manual-link', async (req: Request, res: Response): Promise<v
       <body>
         <div class="spinner"></div>
         <h2>Channel Linked!</h2>
-        <p>Successfully linked <strong>${channel_name}</strong> to your studio profile.</p>
+        <p>Successfully linked <strong>${escapeHtml(channel_name)}</strong> to your studio profile.</p>
         <script>
           const payload = {
             type: 'PLATFORM_CONNECT_SUCCESS',
-            provider: ${JSON.stringify(provider)},
-            channel: ${JSON.stringify(newChannel)},
-            channels: ${JSON.stringify(updatedChannels)}
+            provider: ${toScriptJson(provider)},
+            channel: ${toScriptJson(newChannel)},
+            channels: ${toScriptJson(updatedChannels)}
           };
           if (window.opener) {
-            window.opener.postMessage(payload, '*');
+            ${openerPostMessageJs('payload')}
             setTimeout(() => window.close(), 600);
           } else {
             setTimeout(() => window.close(), 1000);
@@ -1039,7 +1048,7 @@ router.post('/oauth/manual-link', async (req: Request, res: Response): Promise<v
       </html>
     `);
   } catch (err: any) {
-    res.status(500).send(`Manual link error: ${err.message}`);
+    res.status(500).send(`Manual link error: ${escapeHtml(err.message)}`);
   }
 });
 
@@ -1054,7 +1063,7 @@ router.get('/oauth/callback/:provider', async (req: Request, res: Response): Pro
   };
 
   if (error || !code || !state) {
-    res.status(400).send(`OAuth authorization error: ${error_description || error || 'Missing authorization code or state'}`);
+    res.status(400).send(`OAuth authorization error: ${escapeHtml(error_description || error || 'Missing authorization code or state')}`);
     return;
   }
 
@@ -1103,16 +1112,16 @@ router.get('/oauth/callback/:provider', async (req: Request, res: Response): Pro
       <body>
         <div class="spinner"></div>
         <h2>Channel Connected!</h2>
-        <p>Successfully linked <strong>${primaryChannel?.channel_name || provider}</strong> to your studio profile.</p>
+        <p>Successfully linked <strong>${escapeHtml(primaryChannel?.channel_name || provider)}</strong> to your studio profile.</p>
         <script>
           const payload = {
             type: 'PLATFORM_CONNECT_SUCCESS',
-            provider: ${JSON.stringify(provider)},
-            channel: ${JSON.stringify(primaryChannel)},
-            channels: ${JSON.stringify(updatedChannels)}
+            provider: ${toScriptJson(provider)},
+            channel: ${toScriptJson(primaryChannel)},
+            channels: ${toScriptJson(updatedChannels)}
           };
           if (window.opener) {
-            window.opener.postMessage(payload, '*');
+            ${openerPostMessageJs('payload')}
             setTimeout(() => window.close(), 700);
           } else {
             setTimeout(() => window.close(), 1000);
@@ -1122,7 +1131,7 @@ router.get('/oauth/callback/:provider', async (req: Request, res: Response): Pro
       </html>
     `);
   } catch (err: any) {
-    res.status(500).send(`OAuth verification failed: ${err.message}`);
+    res.status(500).send(`OAuth verification failed: ${escapeHtml(err.message)}`);
   }
 });
 
@@ -1135,7 +1144,7 @@ router.delete('/oauth/disconnect/:channelId', async (req: Request, res: Response
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
 
@@ -1164,7 +1173,7 @@ router.post('/avatar', async (req: Request, res: Response): Promise<void> => {
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const user = await db.getUserById(decoded.userId);
     if (!user) {
@@ -1218,7 +1227,7 @@ router.patch('/profile', async (req: Request, res: Response): Promise<void> => {
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const { name, email, avatar, api_key, api_key_rotated_at, two_factor_enabled, integrations, connected_channels } = req.body;
 
@@ -1281,7 +1290,7 @@ const handlePreferencesUpdate = async (req: Request, res: Response): Promise<voi
 
   try {
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifyAccess(token);
     const db = await getDatabaseProvider();
     const { theme, language } = req.body;
 

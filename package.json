@@ -12,6 +12,7 @@
     "server:build": "pnpm --filter shine-server build",
     "build": "pnpm run client:build && pnpm run server:build",
     "start": "pnpm --filter shine-server start",
+    "test": "pnpm --filter shine-server test",
     "deploy:cloudrun": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-cloudrun.ps1",
     "deploy:cloudrun:sh": "bash ./scripts/deploy-cloudrun.sh",
     "deploy:app": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-cloudrun.ps1 -SkipWorkers -SkipInfra",

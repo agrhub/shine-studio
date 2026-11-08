@@ -3,6 +3,10 @@ import { getDatabaseProvider } from '@/database/index.js';
 import { antigravityOAuthService } from '@/integrations/ai/antigravity/AntigravityOAuthService.js';
 import { antigravityClient } from '@/integrations/ai/antigravity/AntigravityClient.js';
 import { Logger } from '@/utils/logger.js';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import { EnvConfig } from '@/config/env.js';
+import { escapeHtml, toScriptJson, openerPostMessageJs } from '@/utils/html.js';
 
 const router = Router();
 
@@ -30,13 +34,52 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// GET /oauth/url - Get authorization URL for popup
+const OAUTH_STATE_PURPOSE = 'antigravity_oauth';
+
+function buildRedirectUri(req: Request): string {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${protocol}://${host}/api/antigravity-accounts/oauth/callback`;
+}
+
+function renderPopupResult(res: Response, status: number, title: string, bodyHtml: string, message: Record<string, unknown>, closeDelayMs: number): void {
+  res.status(status).send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>${escapeHtml(title)}</title><meta charset="utf-8">
+      <style>
+        body { background: #0f1015; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+        .badge { width: 48px; height: 48px; border-radius: 50%; background: rgba(59, 130, 246, 0.2); border: 2px solid #3b82f6; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; color: #3b82f6; font-size: 24px; }
+        .error { color: #f87171; }
+        h2 { margin: 0 0 8px; font-size: 20px; font-weight: 700; }
+        p { margin: 0; font-size: 13px; color: #9ca3af; }
+      </style>
+      </head>
+      <body>
+        ${bodyHtml}
+        <script>
+          var message = ${toScriptJson(message)};
+          if (window.opener) {
+            ${openerPostMessageJs('message')}
+          }
+          setTimeout(function () { window.close(); }, ${closeDelayMs});
+        </script>
+      </body>
+      </html>
+    `);
+}
+
+// GET /oauth/url - Authorization URL (admin only). The `state` binds the consent
+// flow to the requesting admin so the public callback cannot be driven by anyone else.
 router.get('/oauth/url', (req: Request, res: Response): void => {
   try {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const redirectUri = `${protocol}://${host}/api/antigravity-accounts/oauth/callback`;
-    const url = antigravityOAuthService.getAuthorizationUrl(redirectUri);
+    const redirectUri = buildRedirectUri(req);
+    const state = jwt.sign(
+      { purpose: OAUTH_STATE_PURPOSE, userId: (req as any).user?.id, nonce: crypto.randomBytes(8).toString('hex') },
+      EnvConfig.jwtSecret,
+      { expiresIn: '10m' }
+    );
+    const url = antigravityOAuthService.getAuthorizationUrl(redirectUri, state);
 
     res.json({ success: true, url, redirectUri });
   } catch (err: unknown) {
@@ -44,43 +87,32 @@ router.get('/oauth/url', (req: Request, res: Response): void => {
   }
 });
 
-// GET /oauth/authorize - Direct redirect to Google OAuth
-router.get('/oauth/authorize', (req: Request, res: Response): void => {
-  try {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const redirectUri = `${protocol}://${host}/api/antigravity-accounts/oauth/callback`;
-    const url = antigravityOAuthService.getAuthorizationUrl(redirectUri);
-
-    res.redirect(url);
-  } catch (err: unknown) {
-    res.status(500).send(`Failed to generate authorization URL: ${getErrorMessage(err)}`);
-  }
-});
+/**
+ * Public router: only the Google OAuth redirect target lives here, because the
+ * browser arrives from accounts.google.com without our Authorization header.
+ * It is protected by the signed `state` issued by the admin-only /oauth/url.
+ */
+const publicRouter = Router();
 
 // GET /oauth/callback - Google OAuth callback handler
-router.get('/oauth/callback', async (req: Request, res: Response): Promise<void> => {
-  const { code, error } = req.query;
+publicRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<void> => {
+  const { code, error, state } = req.query;
 
   if (error) {
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Authorization Denied</title><meta charset="utf-8">
-      <style>body { background: #0f1015; color: #f87171; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }</style>
-      </head>
-      <body>
-        <h3>Authentication Failed</h3>
-        <p>${error}</p>
-        <script>
-          if (window.opener) {
-            window.opener.postMessage({ type: 'ANTIGRAVITY_AUTH_ERROR', error: ${JSON.stringify(error)} }, '*');
-            setTimeout(() => window.close(), 1500);
-          }
-        </script>
-      </body>
-      </html>
-    `);
+    renderPopupResult(
+      res, 400, 'Authorization Denied',
+      `<h3 class="error">Authentication Failed</h3><p>${escapeHtml(error)}</p>`,
+      { type: 'ANTIGRAVITY_AUTH_ERROR', error: String(error) },
+      1500
+    );
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(String(state || ''), EnvConfig.jwtSecret) as any;
+    if (decoded?.purpose !== OAUTH_STATE_PURPOSE) throw new Error('wrong purpose');
+  } catch {
+    res.status(403).send('Invalid or expired OAuth state. Start the connection again from Studio Settings.');
     return;
   }
 
@@ -90,72 +122,36 @@ router.get('/oauth/callback', async (req: Request, res: Response): Promise<void>
   }
 
   try {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const redirectUri = `${protocol}://${host}/api/antigravity-accounts/oauth/callback`;
+    const account = await antigravityOAuthService.exchangeCode(code, buildRedirectUri(req));
 
-    const account = await antigravityOAuthService.exchangeCode(code, redirectUri);
-
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Antigravity Connected</title>
-        <meta charset="utf-8">
-        <style>
-          body { background: #0f1015; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
-          .badge { width: 48px; height: 48px; border-radius: 50%; background: rgba(59, 130, 246, 0.2); border: 2px solid #3b82f6; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; color: #3b82f6; font-size: 24px; }
-          h2 { margin: 0 0 8px; font-size: 20px; font-weight: 700; }
-          p { margin: 0; font-size: 13px; color: #9ca3af; }
-        </style>
-      </head>
-      <body>
-        <div class="badge">✓</div>
+    renderPopupResult(
+      res, 200, 'Antigravity Connected',
+      `<div class="badge">✓</div>
         <h2>Antigravity Connected!</h2>
-        <p>Successfully linked <strong>${account.email}</strong> to the Antigravity AI pool.</p>
-        <script>
-          const payload = {
-            type: 'ANTIGRAVITY_AUTH_SUCCESS',
-            account: {
-              id: ${JSON.stringify(account.id)},
-              email: ${JSON.stringify(account.email)},
-              name: ${JSON.stringify(account.name)},
-              avatar: ${JSON.stringify(account.avatar)},
-              tier: ${JSON.stringify(account.tier)},
-              project_id: ${JSON.stringify(account.project_id)},
-              status: ${JSON.stringify(account.status)}
-            }
-          };
-          if (window.opener) {
-            window.opener.postMessage(payload, '*');
-            setTimeout(() => window.close(), 700);
-          } else {
-            setTimeout(() => window.close(), 1200);
-          }
-        </script>
-      </body>
-      </html>
-    `);
+        <p>Successfully linked <strong>${escapeHtml(account.email)}</strong> to the Antigravity AI pool.</p>`,
+      {
+        type: 'ANTIGRAVITY_AUTH_SUCCESS',
+        account: {
+          id: account.id,
+          email: account.email,
+          name: account.name,
+          avatar: account.avatar,
+          tier: account.tier,
+          project_id: account.project_id,
+          status: account.status,
+        },
+      },
+      700
+    );
   } catch (err: unknown) {
     const errorMsg = getErrorMessage(err);
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Authentication Error</title><meta charset="utf-8">
-      <style>body { background: #0f1015; color: #f87171; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }</style>
-      </head>
-      <body>
-        <h3>Authentication Failed</h3>
-        <p>${errorMsg}</p>
-        <script>
-          if (window.opener) {
-            window.opener.postMessage({ type: 'ANTIGRAVITY_AUTH_ERROR', error: ${JSON.stringify(errorMsg)} }, '*');
-            setTimeout(() => window.close(), 2500);
-          }
-        </script>
-      </body>
-      </html>
-    `);
+    Logger.error(`[AntigravityOAuth] Callback failed: ${errorMsg}`);
+    renderPopupResult(
+      res, 500, 'Authentication Error',
+      `<h3 class="error">Authentication Failed</h3><p>${escapeHtml(errorMsg)}</p>`,
+      { type: 'ANTIGRAVITY_AUTH_ERROR', error: errorMsg },
+      2500
+    );
   }
 });
 
@@ -245,4 +241,7 @@ router.post('/test-generate', async (req: Request, res: Response): Promise<void>
   }
 });
 
+/** Admin-only management API — mount behind requireAuth + requireAdmin. */
 export const antigravityAccountsRouter = router;
+/** Public OAuth callback only — mount at /api/antigravity-accounts. */
+export const antigravityOAuthCallbackRouter = publicRouter;

@@ -2,6 +2,7 @@ import { ref, shallowRef } from 'vue';
 import { io, Socket } from 'socket.io-client';
 import type { PatchEvent, Command, CollaboratorSession, Episode, Series } from '@/types/api';
 import { IProject } from '@openvideo/core';
+import { getAuthToken } from '@/utils/auth-fetch';
 
 const socketRef = shallowRef<Socket | null>(null);
 const isConnected = ref(false);
@@ -27,6 +28,8 @@ function getSocket(): Socket {
 
   const wsUrl = getWebSocketUrl();
   const socket = io(wsUrl, {
+    // Read lazily so reconnects pick up a refreshed/new session token.
+    auth: (cb) => cb({ token: getAuthToken() || '' }),
     transports: ['websocket', 'polling'],
     autoConnect: true,
     reconnection: true,

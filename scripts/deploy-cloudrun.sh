@@ -30,6 +30,25 @@ if [ -f "$ENV_PATH" ]; then
   done < "$ENV_PATH"
 fi
 
+# ─── Ensure Security Secrets (generated once, persisted to .env) ─────────────
+# JWT_SECRET / REFRESH_SECRET sign user sessions; INTERNAL_API_SECRET authenticates
+# Cloud Scheduler and the render worker. The app refuses to start in production without them.
+ensure_secret() {
+  local name="$1"
+  local current="${ENV_MAP[$name]:-}"
+  if [ "${#current}" -lt 32 ]; then
+    local generated
+    generated=$(openssl rand -hex 48 2>/dev/null || head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    ENV_MAP["$name"]="$generated"
+    printf '\n%s="%s"\n' "$name" "$generated" >> "$ENV_PATH"
+    echo "[Security] Generated $name and saved it to .env (keep it stable across deploys)."
+  fi
+}
+ensure_secret JWT_SECRET
+ensure_secret REFRESH_SECRET
+ensure_secret INTERNAL_API_SECRET
+INTERNAL_API_SECRET="${ENV_MAP["INTERNAL_API_SECRET"]}"
+
 REGION="${REGION:-${ENV_MAP["GCP_REGION"]:-us-central1}}"
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || true)
 
@@ -264,7 +283,7 @@ if [ "$DEPLOY_RENDER" = "true" ]; then
     --min-instances "$RENDER_MIN" \
     --max-instances "$RENDER_MAX" \
     --allow-unauthenticated \
-    --set-env-vars "GCS_BUCKET=$GCS_BUCKET_NAME,PUBSUB_TOPIC_STATUS=$STATUS_TOPIC,RENDER_POOL_SIZE=$RENDER_POOL_SIZE,RENDER_POOL_MIN=$RENDER_POOL_MIN,RENDER_MAX_PER_INSTANCE=$RENDER_MAX_PER_INSTANCE,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCP_REGION=$REGION" \
+    --set-env-vars "GCS_BUCKET=$GCS_BUCKET_NAME,PUBSUB_TOPIC_STATUS=$STATUS_TOPIC,RENDER_POOL_SIZE=$RENDER_POOL_SIZE,RENDER_POOL_MIN=$RENDER_POOL_MIN,RENDER_MAX_PER_INSTANCE=$RENDER_MAX_PER_INSTANCE,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCP_REGION=$REGION,INTERNAL_API_SECRET=$INTERNAL_API_SECRET" \
     --quiet
 
   RENDER_URL=$(gcloud run services describe shine-render-worker --region "$REGION" --format="value(status.url)" 2>/dev/null | xargs || true)
@@ -393,10 +412,10 @@ SYNC_URI="$SHINE_APP_URL/api/flow-accounts/sync"
 
 if gcloud scheduler jobs describe "$JOB_NAME" --location "$REGION" >/dev/null 2>&1; then
   echo "Updating Cloud Scheduler job: $JobName (Schedule: */5 * * * *)..."
-  gcloud scheduler jobs update http "$JOB_NAME" --location "$REGION" --schedule "*/5 * * * *" --uri "$SYNC_URI" --http-method POST --attempt-deadline 180s --quiet
+  gcloud scheduler jobs update http "$JOB_NAME" --location "$REGION" --schedule "*/5 * * * *" --uri "$SYNC_URI" --http-method POST --attempt-deadline 180s --update-headers "X-Internal-Secret=$INTERNAL_API_SECRET" --quiet
 else
   echo "Creating Cloud Scheduler job: $JOB_NAME (Schedule: */5 * * * *)..."
-  gcloud scheduler jobs create http "$JOB_NAME" --location "$REGION" --schedule "*/5 * * * *" --uri "$SYNC_URI" --http-method POST --attempt-deadline 180s --quiet
+  gcloud scheduler jobs create http "$JOB_NAME" --location "$REGION" --schedule "*/5 * * * *" --uri "$SYNC_URI" --http-method POST --attempt-deadline 180s --headers "X-Internal-Secret=$INTERNAL_API_SECRET" --quiet
 fi
 echo "Cloud Scheduler job '$JOB_NAME' active -> $SYNC_URI"
 

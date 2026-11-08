@@ -1,37 +1,47 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
 import { EnvConfig } from '@/config/env.js';
+import { verifyAccessToken, extractBearerToken, safeEqual } from '@/utils/token.js';
+
+const ADMIN_ROLES = new Set(['admin', 'owner', 'superadmin']);
 
 export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ code: 401, error: 'Unauthorized', message: 'Missing or invalid authentication token' });
-    }
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token) {
+    return res.status(401).json({ code: 401, error: 'Unauthorized', message: 'Missing or invalid authentication token' });
+  }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, EnvConfig.jwtSecret) as any;
-    
-    // Attach authenticated user to request
-    (req as any).user = {
-      id: decoded.userId || decoded.id,
-      userId: decoded.userId || decoded.id,
-      email: decoded.email,
-      role: (decoded.role || 'user').toLowerCase(),
-      tier: decoded.tier || 'FREE',
-    };
-
-    next();
-  } catch (error) {
+  const user = verifyAccessToken(token);
+  if (!user) {
     return res.status(401).json({ code: 401, error: 'Unauthorized', message: 'Token expired or invalid' });
   }
+
+  (req as any).user = user;
+  next();
 };
 
 export const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
   const user = (req as any).user;
-  const role = (user?.role || '').toLowerCase();
-  if (!user || (role !== 'admin' && role !== 'owner' && role !== 'superadmin')) {
+  if (!user || !ADMIN_ROLES.has((user.role || '').toLowerCase())) {
     return res.status(403).json({ code: 403, error: 'Forbidden', message: 'Administrator permissions required' });
   }
   next();
+};
+
+/** True when the request carries the configured `X-Internal-Secret` (service-to-service calls). */
+export function hasInternalSecret(req: Request): boolean {
+  const expected = EnvConfig.internalApiSecret;
+  const provided = req.headers['x-internal-secret'];
+  return !!expected && typeof provided === 'string' && safeEqual(provided, expected);
+}
+
+/**
+ * Allows either a trusted internal caller (Cloud Scheduler, render worker) via
+ * `X-Internal-Secret`, or a logged-in admin user.
+ */
+export const requireInternalOrAdmin = (req: Request, res: Response, next: NextFunction) => {
+  if (hasInternalSecret(req)) {
+    (req as any).user = { id: 'system', userId: 'system', role: 'system', tier: 'INTERNAL' };
+    return next();
+  }
+  requireAuth(req, res, () => requireAdmin(req, res, next));
 };
