@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { getDatabaseProvider } from '@/database/index.js';
 import { Logger } from '@/utils/logger.js';
+import { runtimeMetrics } from '@/services/observability/RuntimeMetrics.js';
 import { AiKind, getPlan } from '@/config/plans.js';
 
 /**
@@ -191,7 +192,10 @@ class AiUsageGuardImpl {
   /** Guard + run + record. Failed calls are not counted. */
   async track<T>(kind: AiKind, fn: () => Promise<T>): Promise<T> {
     await this.assertAllowed(kind);
+    const started = Date.now();
     const result = await fn();
+    // Text calls only: image/video generation times would swamp the latency metric.
+    if (kind === 'TEXT') runtimeMetrics.recordAiCall(Date.now() - started);
     await this.record(kind);
     return result;
   }

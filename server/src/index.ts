@@ -62,6 +62,7 @@ getDatabaseProvider()
 import { requireAuth, requireAdmin, requireInternalOrAdmin } from './middleware/RequireAuth.js';
 import { corsMiddleware, securityHeaders, rateLimit, isOriginAllowed } from './middleware/Security.js';
 import { verifyAccessToken } from './utils/token.js';
+import { runtimeMetrics } from './services/observability/RuntimeMetrics.js';
 import { bodySeriesOwnershipGuard } from './middleware/Ownership.js';
 import { aiPrecheck } from './services/ai/AiUsageGuard.js';
 
@@ -74,6 +75,15 @@ const aiAuthed = [...authed, aiPrecheck];
 app.set('trust proxy', process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY : 1);
 app.disable('x-powered-by');
 app.use(securityHeaders);
+// Real request latency / error-rate measurements for the admin observability page.
+app.use('/api', (req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    if (req.headers.accept?.includes('text/event-stream')) return; // long-lived SSE streams would skew latency
+    runtimeMetrics.recordHttp(Number(process.hrtime.bigint() - start) / 1e6, res.statusCode);
+  });
+  next();
+});
 app.use('/api', corsMiddleware());
 // Stripe webhook needs the raw body for signature verification → before express.json().
 app.use('/api/billing/webhook', billingWebhookRouter);
@@ -235,6 +245,7 @@ io.use((socket, next) => {
   next();
 });
 const patchSyncService = new PatchSyncService(io);
+runtimeMetrics.setWebsocketCounter(() => io.engine.clientsCount);
 
 httpServer.listen(PORT, () => {
   console.log(`[Shine Server] Express & Socket.io server running on http://localhost:${PORT}`);

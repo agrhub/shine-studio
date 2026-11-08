@@ -1,4 +1,5 @@
 import { EnvConfig } from '@/config/env.js';
+import { runtimeMetrics } from './RuntimeMetrics.js';
 import { getDatabaseProvider } from '@/database/index.js';
 import { nanoid } from 'nanoid';
 import type { StudioSystemConfig } from '@/types.js';
@@ -46,7 +47,7 @@ export class GrafanaObservabilityService {
   private lastSyncTime: string | null = null;
 
   private constructor() {
-    this.seedInitialMetrics();
+    // History starts empty and fills with real measurements every minute.
     this.startBackgroundWorkers();
   }
 
@@ -55,23 +56,6 @@ export class GrafanaObservabilityService {
       GrafanaObservabilityService.instance = new GrafanaObservabilityService();
     }
     return GrafanaObservabilityService.instance;
-  }
-
-  private seedInitialMetrics(): void {
-    // Generate recent 24-hour historical telemetry points
-    const now = Date.now();
-    for (let i = 24; i >= 0; i--) {
-      const time = new Date(now - i * 3600 * 1000).toISOString();
-      const jitter = (Math.sin(i / 2) * 15);
-      this.metricsHistory.push({
-        timestamp: time,
-        p99LatencyMs: Math.max(80, Math.round(135 + jitter + (Math.random() * 20 - 10))),
-        errorRatePct: Math.max(0, parseFloat((0.01 + (Math.random() * 0.02 - 0.01)).toFixed(3))),
-        memoryRssMb: Math.round(280 + (24 - i) * 3 + (Math.random() * 15)),
-        activeWebsockets: Math.round(18 + Math.random() * 12),
-        aiInferenceLatency: parseFloat((1.65 + Math.random() * 0.4).toFixed(2)),
-      });
-    }
   }
 
   private startBackgroundWorkers(): void {
@@ -87,19 +71,17 @@ export class GrafanaObservabilityService {
   }
 
   private captureCurrentMetricPoint(): void {
-    const mem = process.memoryUsage();
+    const snap = runtimeMetrics.snapshot();
     const point: MetricPoint = {
       timestamp: new Date().toISOString(),
-      p99LatencyMs: Math.round(110 + Math.random() * 30),
-      errorRatePct: 0.00,
-      memoryRssMb: Math.round(mem.rss / (1024 * 1024)),
-      activeWebsockets: 12 + Math.floor(Math.random() * 6),
-      aiInferenceLatency: parseFloat((1.45 + Math.random() * 0.3).toFixed(2)),
+      p99LatencyMs: snap.http_request_duration_p99_ms ?? 0,
+      errorRatePct: snap.api_error_rate_percentage ?? 0,
+      memoryRssMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+      activeWebsockets: snap.websocket_connected_clients ?? 0,
+      aiInferenceLatency: snap.ai_inference_latency_seconds ?? 0,
     };
     this.metricsHistory.push(point);
-    if (this.metricsHistory.length > 100) {
-      this.metricsHistory.shift();
-    }
+    if (this.metricsHistory.length > 1440) this.metricsHistory.shift(); // 24h at 1/min
   }
 
   /**
