@@ -64,6 +64,7 @@ export class EpisodeHarvesterService {
         retention_rate_pct: 0,
         top_countries: [],
         synced_at: new Date().toISOString(),
+        data_status: 'unavailable',
       };
       await db.updateEpisode(episodeId, { analytics_summary: summary });
       return { summary, comments: [] };
@@ -89,12 +90,15 @@ export class EpisodeHarvesterService {
       Logger.warn(`[EpisodeHarvesterService] Native platform analytics check skipped: ${err.message}`);
     }
 
-    const finalViews = Math.max(mcpMetrics.views, nativeViews);
-    const finalLikes = Math.max(mcpMetrics.likes, Math.round(finalViews * 0.08));
-    const finalComments = Math.max(mcpMetrics.commentsCount, Math.round(finalViews * 0.012));
-    const finalShares = Math.max(mcpMetrics.shares, Math.round(finalViews * 0.02));
+    // Only measured numbers: public metrics found on the web and/or native API views.
+    // No ratio-based "estimates" (likes = 8% of views, ...) and no assumed retention.
+    const finalViews = Math.max(mcpMetrics?.views || 0, nativeViews);
+    const finalLikes = mcpMetrics?.likes || 0;
+    const finalComments = mcpMetrics?.commentsCount || 0;
+    const finalShares = mcpMetrics?.shares || 0;
+    const hasData = Boolean(finalViews || finalLikes || finalComments || finalShares);
 
-    // Calculate revenue using micro-drama benchmark RPM ($0.035 - $0.065 per 1,000 views)
+    // Revenue estimate from measured views at a micro-drama benchmark RPM ($0.048 / 1,000 views).
     const estimatedRevenue = Number(((finalViews / 1000) * 0.048).toFixed(2));
 
     const summary: EpisodeAnalyticsSummary = {
@@ -105,9 +109,10 @@ export class EpisodeHarvesterService {
       total_comments: finalComments,
       total_shares: finalShares,
       estimated_revenue: estimatedRevenue,
-      retention_rate_pct: 79.4,
-      top_countries: mcpMetrics.topCountries,
+      // Retention needs platform analytics access; unknown here.
+      top_countries: mcpMetrics?.topCountries || [],
       synced_at: new Date().toISOString(),
+      data_status: hasData ? 'live' : 'unavailable',
     };
 
     // 4. Fetch audience comments using Parallel MCP deep extractor

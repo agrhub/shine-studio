@@ -378,7 +378,7 @@ Return 3 concise bullet summaries:
    * Harvests public engagement statistics, view counts, comments count, and geographic origin
    * for a published episode using Parallel MCP web search.
    */
-  public async fetchEpisodePublicMetrics(input: EpisodePublicMetricsInput): Promise<EpisodePublicMetricsResult> {
+  public async fetchEpisodePublicMetrics(input: EpisodePublicMetricsInput): Promise<EpisodePublicMetricsResult | null> {
     const { videoUrl, title, seriesTitle, platform = 'all' } = input;
     const cleanTitle = title.trim();
     const cleanSeries = (seriesTitle || '').trim();
@@ -407,67 +407,35 @@ Return 3 concise bullet summaries:
         ? content.map((c: any) => c.text || (typeof c === 'string' ? c : '')).filter(Boolean).join('\n')
         : (typeof content === 'string' ? content : '');
 
-      const parsePrompt = `Analyze the following search snippets and extract estimated video performance metrics for episode "${cleanTitle}".
-If exact values are not explicitly stated, estimate realistic engagement numbers based on context, standard short-form drama metrics, and platform typicals:
-- Views
-- Likes (~5-10% of views)
-- Comments count (~0.5-2% of views)
-- Shares (~1-3% of views)
-- Top 3 viewer countries with country_code and estimated percentage distribution
+      if (!rawSnippets.trim()) return null; // nothing found → no metrics, never estimates
 
-Search snippets:
-${rawSnippets.slice(0, 3000)}
+      const parsePrompt = `Extract video performance metrics for episode "${cleanTitle}" from the search snippets below.
+Only use numbers that are explicitly stated in the snippets. Do NOT estimate, infer or invent values:
+use null for any metric that is not explicitly present, and an empty array if no country breakdown is given.
 
-Return JSON with exact keys:
-{
-  "views": number,
-  "likes": number,
-  "commentsCount": number,
-  "shares": number,
-  "topCountries": [
-    { "country": "United States", "country_code": "US", "percentage": 45 },
-    { "country": "Vietnam", "country_code": "VN", "percentage": 30 },
-    { "country": "Japan", "country_code": "JP", "percentage": 25 }
-  ]
-}`;
+SEARCH SNIPPETS:
+${rawSnippets.slice(0, 12000)}
 
-      const fallbackMetrics = {
-        views: 45000,
-        likes: 3600,
-        commentsCount: 280,
-        shares: 720,
-        topCountries: [
-          { country: 'United States', country_code: 'US', percentage: 50 },
-          { country: 'Vietnam', country_code: 'VN', percentage: 30 },
-          { country: 'United Kingdom', country_code: 'GB', percentage: 20 },
-        ],
-      };
+Return ONLY JSON:
+{ "views": number|null, "likes": number|null, "commentsCount": number|null, "shares": number|null,
+  "topCountries": [{ "country": string, "country_code": string, "percentage": number }] }`;
 
-      const extracted = await aiProviderRouter.generateJSON<typeof fallbackMetrics>(parsePrompt, fallbackMetrics, {
-        systemInstruction: 'You are an analytics extraction engine specialized in social media video performance metrics.',
+      const extracted: any = await aiProviderRouter.generateJSON<any>(parsePrompt, null, {
+        systemInstruction: 'You extract explicitly stated numbers from text. You never estimate or fabricate.',
       });
-
-      return {
-        views: Number(extracted.views) || fallbackMetrics.views,
-        likes: Number(extracted.likes) || fallbackMetrics.likes,
-        commentsCount: Number(extracted.commentsCount) || fallbackMetrics.commentsCount,
-        shares: Number(extracted.shares) || fallbackMetrics.shares,
-        topCountries: Array.isArray(extracted.topCountries) && extracted.topCountries.length > 0
-          ? extracted.topCountries
-          : fallbackMetrics.topCountries,
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
+      const metrics: EpisodePublicMetricsResult = {
+        views: num(extracted?.views),
+        likes: num(extracted?.likes),
+        commentsCount: num(extracted?.commentsCount),
+        shares: num(extracted?.shares),
+        topCountries: Array.isArray(extracted?.topCountries) ? extracted.topCountries : [],
       };
+      const found = metrics.views || metrics.likes || metrics.commentsCount || metrics.shares;
+      return found ? metrics : null;
     } catch (err: any) {
-      Logger.warn(`[ParallelMCP] fetchEpisodePublicMetrics fallback: ${err.message}`);
-      return {
-        views: 35000,
-        likes: 2800,
-        commentsCount: 190,
-        shares: 450,
-        topCountries: [
-          { country: 'United States', country_code: 'US', percentage: 60 },
-          { country: 'Global', country_code: 'GL', percentage: 40 },
-        ],
-      };
+      Logger.warn(`[ParallelMCP] fetchEpisodePublicMetrics failed: ${err.message}`);
+      return null;
     }
   }
 
@@ -504,96 +472,31 @@ Return JSON with exact keys:
         ? content.map((c: any) => c.text || (typeof c === 'string' ? c : '')).filter(Boolean).join('\n')
         : (typeof content === 'string' ? content : '');
 
-      const parsePrompt = `Extract up to ${limit} distinct, realistic audience comments/reactions for episode "${cleanTitle}" of series "${cleanSeries}".
-Include a realistic variety:
-1. Enthusiastic praise (cliffhanger hook, favorite character, intense pacing)
-2. Critical feedback (pacing issues, character logic question, plot hole complaint)
-3. Theories / questions about what happens in the next episode
-4. General audience reactions
+      if (!rawSnippets.trim()) return []; // nothing found → no comments, never invented
 
-Raw snippets from web search:
-${rawSnippets.slice(0, 3500)}
+      const parsePrompt = `From the search snippets below, extract up to ${limit} real audience comments about episode "${cleanTitle}" of series "${cleanSeries}".
+Only include comments that appear verbatim in the snippets, with the author name as shown (use "Anonymous" if none).
+Do NOT write, paraphrase or invent comments. If the snippets contain no audience comments, return an empty list.
 
-Return JSON with format:
-{
-  "comments": [
-    {
-      "authorName": "Viewer_Alex",
-      "commentText": "That cliffhanger ending was insane! Did he really just betray her?!",
-      "likes": 142,
-      "platform": "${platform}",
-      "publishedAt": "${new Date().toISOString()}"
-    }
-  ]
-}`;
+SEARCH SNIPPETS:
+${rawSnippets.slice(0, 12000)}
 
-      const fallbackComments = {
-        comments: [
-          {
-            authorName: 'DramaFan99',
-            commentText: 'That cliffhanger at the end left me speechless! Next episode needs to drop immediately.',
-            likes: 215,
-            platform,
-            publishedAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-          },
-          {
-            authorName: 'SerialWatcher',
-            commentText: 'The female lead was way too forgiving in scene 3, she should have stood her ground.',
-            likes: 98,
-            platform,
-            publishedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
-          },
-          {
-            authorName: 'CinemaBuff_UK',
-            commentText: 'The pacing in the middle felt a bit slow, but the final 15 seconds made up for everything.',
-            likes: 64,
-            platform,
-            publishedAt: new Date(Date.now() - 3600000 * 12).toISOString(),
-          },
-          {
-            authorName: 'PlotTheorist',
-            commentText: 'I bet the brother is secretly the CEO who orchestrated the entire scheme. Calling it now!',
-            likes: 180,
-            platform,
-            publishedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
-          },
-          {
-            authorName: 'ShortDramalover',
-            commentText: 'Best episode yet! The chemistry between the leads is incredible.',
-            likes: 112,
-            platform,
-            publishedAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-          },
-        ],
-      };
+Return ONLY JSON:
+{ "comments": [{ "authorName": string, "commentText": string, "likes": number, "platform": "${platform}", "publishedAt": string }] }`;
 
-      const parsed = await aiProviderRouter.generateJSON<typeof fallbackComments>(parsePrompt, fallbackComments, {
-        systemInstruction: 'You are an audience comments harvester extracting and structuring viewer discussions.',
+      const parsed: any = await aiProviderRouter.generateJSON<any>(parsePrompt, { comments: [] }, {
+        systemInstruction: 'You extract verbatim quotes from text. You never write or invent content.',
       });
-
-      const list = Array.isArray(parsed.comments) && parsed.comments.length > 0
-        ? parsed.comments
-        : fallbackComments.comments;
-
-      return list.slice(0, limit);
+      const list: HarvestedRawComment[] = Array.isArray(parsed?.comments) ? parsed.comments : [];
+      // Keep only comments whose text really occurs in the source snippets.
+      const haystack = rawSnippets.toLowerCase();
+      return list
+        .filter((c) => typeof c?.commentText === 'string' && c.commentText.trim().length > 3)
+        .filter((c) => haystack.includes(c.commentText.trim().toLowerCase().slice(0, 40)))
+        .slice(0, limit);
     } catch (err: any) {
-      Logger.warn(`[ParallelMCP] fetchEpisodeComments fallback: ${err.message}`);
-      return [
-        {
-          authorName: 'MicroDramaLover',
-          commentText: 'Amazing episode! Love the intense cliffhanger.',
-          likes: 45,
-          platform,
-          publishedAt: new Date().toISOString(),
-        },
-        {
-          authorName: 'CriticEye',
-          commentText: 'The transition in the middle was a bit abrupt, but overall great pacing.',
-          likes: 22,
-          platform,
-          publishedAt: new Date().toISOString(),
-        },
-      ];
+      Logger.warn(`[ParallelMCP] fetchEpisodeComments failed: ${err.message}`);
+      return [];
     }
   }
 }

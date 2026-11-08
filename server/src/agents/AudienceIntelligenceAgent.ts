@@ -62,58 +62,34 @@ Evaluate the audience response according to the Audience Intelligence & Script E
 Formulate clear, impactful directives that the screenwriter should apply when writing Episode ${episode.episode_number + 1} and subsequent episodes.
 Return the structured analysis matching the EpisodeAudienceInsight JSON schema.`;
 
-    const fallbackInsight: EpisodeAudienceInsight = {
+    // Returned when there is nothing real to analyze. It carries no invented
+    // sentiment, character scores or directives, and is not persisted.
+    const emptyInsight: EpisodeAudienceInsight = {
       episode_id: episode.id,
       series_id: episode.series_id,
       analyzed_at: new Date().toISOString(),
       sample_comments_count: comments.length,
-      sentiment_distribution: {
-        positive_pct: 72,
-        neutral_pct: 18,
-        negative_pct: 10,
-        dominant_emotion: 'addicted_to_cliffhanger',
-      },
-      character_reception: [
-        {
-          character_name: 'Lead Character',
-          sentiment_score: 80,
-          feedback_summary: 'Audience is invested in their journey and strongly supports their goals.',
-          audience_tags: ['fan_favorite', 'high_sympathy'],
-        },
-        {
-          character_name: 'Rival / Antagonist',
-          sentiment_score: -75,
-          feedback_summary: 'Elicits strong negative emotion, fulfilling their dramatic purpose effectively.',
-          audience_tags: ['effective_villain', 'confrontation_demanded'],
-        },
-      ],
+      sentiment_distribution: { positive_pct: 0, neutral_pct: 0, negative_pct: 0, dominant_emotion: 'insufficient_data' },
+      character_reception: [],
       pacing_and_retention_critique: {
-        drop_off_risk_scenes: ['Mid-episode exposition dialog'],
-        highlight_scenes: ['Opening 3-second hook', 'Final cliffhanger reveal'],
+        drop_off_risk_scenes: [],
+        highlight_scenes: [],
         pacing_rating: 'balanced',
-        verdict: 'Excellent retention curve driven by high-stakes conflict.',
+        verdict: 'Not enough real audience data yet — publish the episode and sync analytics once viewers respond.',
       },
-      plot_flaws_and_questions: [
-        'How will the protagonist resolve the conflicting ultimatum presented at the climax?',
-      ],
-      audience_theories_and_desires: [
-        'Viewers anticipate an unexpected betrayal in the upcoming episode.',
-        'Audience demands an immediate public showdown.',
-      ],
-      recommendations_for_next_episodes: [
-        `Escalate the core conflict within the first 5 seconds of Episode ${episode.episode_number + 1}.`,
-        'Reward viewer anticipation with an unexpected reversal before introducing the next cliffhanger.',
-        'Give supporting characters clear stakes in the main confrontation.',
-      ],
-      paywall_optimization_advice: {
-        recommended_cliffhanger_type: 'Identity Reversal / High-Stakes Choice',
-        hook_placement_second: 58,
-        reasoning: 'Cutting right as the choice must be made drives maximum paywall retention.',
-      },
-    };
+      plot_flaws_and_questions: [],
+      audience_theories_and_desires: [],
+      recommendations_for_next_episodes: [],
+    } as EpisodeAudienceInsight;
+
+    const hasMetrics = Boolean(metrics.total_views || metrics.total_likes || metrics.total_comments || metrics.total_shares);
+    if (comments.length === 0 && !hasMetrics) {
+      Logger.info(`[AudienceIntelligenceAgent] Episode ${episode.episode_number}: no real comments or metrics, skipping analysis.`);
+      return emptyInsight;
+    }
 
     try {
-      const insight = await aiProviderRouter.generateJSON<EpisodeAudienceInsight>(prompt, fallbackInsight, {
+      const insight = await aiProviderRouter.generateJSON<EpisodeAudienceInsight>(prompt, undefined, {
         systemInstruction: skill || 'You are an audience intelligence analyst optimizing short-form serialized dramas.',
       });
 
@@ -134,8 +110,8 @@ Return the structured analysis matching the EpisodeAudienceInsight JSON schema.`
 
       return insight;
     } catch (err: any) {
-      Logger.warn(`[AudienceIntelligenceAgent] Feedback analysis fallback used: ${err.message}`);
-      return fallbackInsight;
+      Logger.warn(`[AudienceIntelligenceAgent] Feedback analysis failed: ${err.message}`);
+      return emptyInsight;
     }
   }
 
@@ -166,10 +142,17 @@ Return the structured analysis matching the EpisodeAudienceInsight JSON schema.`
     }
 
     const insight = currentEpisode.audience_insight;
-    const directives = insight?.recommendations_for_next_episodes || [
-      'Accelerate pacing in the opening 5 seconds.',
-      'Escalate interpersonal conflict and introduce a sharp cliffhanger hook.',
-    ];
+    const directives = insight?.recommendations_for_next_episodes || [];
+    // Never rewrite a script from invented feedback: require real recommendations
+    // (from analyzed audience data) or an explicit instruction from the creator.
+    if (directives.length === 0 && !customInstruction) {
+      return {
+        success: false,
+        targetEpisode: null,
+        appliedDirectives: [],
+        message: 'No real audience feedback has been analyzed for this episode yet. Sync analytics after viewers respond, or provide your own instruction.',
+      };
+    }
 
     const prompt = `You are an elite micro-drama director and screenwriter.
 Refine and optimize the screenplay outline for Episode ${nextEpisode.episode_number} of "${series?.title || 'Micro-Drama'}" based on real audience feedback from Episode ${currentEpisode.episode_number}.

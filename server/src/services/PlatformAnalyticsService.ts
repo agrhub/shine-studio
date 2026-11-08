@@ -31,11 +31,12 @@ export class PlatformAnalyticsService {
           platform: 'youtube',
           channelName: snippet?.title || 'YouTube Channel',
           views: viewCount,
-          likes: Math.round(viewCount * 0.08),
+          // Channel statistics expose no like/share totals or retention; 0 = not reported.
+          likes: 0,
           comments: commentCount,
-          shares: Math.round(viewCount * 0.015),
+          shares: 0,
           estimatedRevenue: revenue,
-          retentionRatePct: 78.5,
+          retentionRatePct: 0,
           lastUpdated: new Date().toISOString(),
         };
       }
@@ -61,18 +62,18 @@ export class PlatformAnalyticsService {
       const data = res.data?.data?.user;
       if (data) {
         const likes = Number(data.likes_count || 0);
-        const estViews = likes * 12; // Standard TikTok engagement ratio
-        const revenue = Number(((estViews / 1000) * 0.04).toFixed(2));
 
         return {
           platform: 'tiktok',
           channelName: data.display_name || 'TikTok Creator',
-          views: estViews,
+          // user/info reports likes only; views, comments, shares and retention are
+          // not available from this endpoint (0 = not reported, never estimated).
+          views: 0,
           likes,
-          comments: Math.round(likes * 0.05),
-          shares: Math.round(likes * 0.03),
-          estimatedRevenue: revenue,
-          retentionRatePct: 82.1,
+          comments: 0,
+          shares: 0,
+          estimatedRevenue: 0,
+          retentionRatePct: 0,
           lastUpdated: new Date().toISOString(),
         };
       }
@@ -94,19 +95,18 @@ export class PlatformAnalyticsService {
         // Fallback for non-mongo stores
       }
 
-      const platformResults: PlatformMetricItem[] = [];
-
-      for (const account of accounts) {
-        if (account.platform === 'youtube' && account.accessToken) {
-          const yt = await this.fetchYouTubeMetrics(account.accessToken, account.channelId);
-          if (yt) platformResults.push(yt);
-        } else if (account.platform === 'tiktok' && account.accessToken) {
-          const tt = await this.fetchTikTokMetrics(account.accessToken, account.channelId);
-          if (tt) platformResults.push(tt);
-        }
-      }
-
-      return platformResults;
+      // Query all connected platforms in parallel; one failing API does not block the rest.
+      const results = await Promise.allSettled(
+        accounts.map((account) => {
+          if (!account.accessToken) return Promise.resolve(null);
+          if (account.platform === 'youtube') return this.fetchYouTubeMetrics(account.accessToken, account.channelId);
+          if (account.platform === 'tiktok') return this.fetchTikTokMetrics(account.accessToken, account.channelId);
+          return Promise.resolve(null);
+        })
+      );
+      return results
+        .map((r) => (r.status === 'fulfilled' ? r.value : null))
+        .filter((m): m is PlatformMetricItem => Boolean(m));
     } catch (err: any) {
       Logger.warn(`[PlatformAnalyticsService] aggregateUserPlatformMetrics error: ${err.message}`);
       return [];

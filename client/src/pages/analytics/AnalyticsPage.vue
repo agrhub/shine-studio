@@ -41,6 +41,8 @@ const seriesOptions = computed(() => {
   return [];
 });
 
+/** False when no real audience metrics have been synced yet. */
+const hasAudienceData = ref(true);
 const stats = ref({
   avgRetention: '0.0%',
   retentionChange: '0.0%',
@@ -218,6 +220,7 @@ async function fetchAnalytics() {
       const data = res.data;
       if (data.kpi) {
         stats.value = { ...stats.value, ...data.kpi };
+        hasAudienceData.value = data.hasData !== false;
       }
       if (data.retentionChart) {
         chartData.value = data.retentionChart;
@@ -341,6 +344,16 @@ watch(isDark, async () => {
       </div>
     </div>
 
+    <el-alert
+      v-if="!hasAudienceData"
+      class="!mb-6"
+      type="info"
+      show-icon
+      :closable="false"
+      title="No audience data yet"
+      description="Metrics appear after an episode is published and analytics are synced from the connected platforms. Shine does not show estimated or sample numbers."
+    />
+
     <!-- Top 4 Metric KPI Cards -->
     <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
       <!-- KPI 1 -->
@@ -352,7 +365,7 @@ watch(isDark, async () => {
           {{ stats.avgRetention }}
         </div>
         <div class="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-[#3bcf8a] dark:text-[#72e3ad]">
-          <el-icon><CaretTop /></el-icon> {{ stats.retentionChange }}
+          <el-icon v-if="stats.retentionChange !== 'N/A'"><CaretTop /></el-icon> {{ stats.retentionChange }}
         </div>
       </div>
 
@@ -365,7 +378,7 @@ watch(isDark, async () => {
           {{ stats.watchTime }} <span class="text-sm text-[var(--el-text-color-secondary)] font-normal">{{ t('analytics.hrs') }}</span>
         </div>
         <div class="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-[#3bcf8a] dark:text-[#72e3ad]">
-          <el-icon><CaretTop /></el-icon> {{ stats.watchTimeChange }}
+          <el-icon v-if="stats.watchTimeChange !== 'N/A'"><CaretTop /></el-icon> {{ stats.watchTimeChange }}
         </div>
       </div>
 
@@ -378,7 +391,7 @@ watch(isDark, async () => {
           {{ stats.completionRate }}
         </div>
         <div class="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-amber-500 dark:text-amber-400">
-          <el-icon><CaretBottom /></el-icon> {{ stats.completionChange }}
+          <el-icon v-if="stats.completionChange !== 'N/A'"><CaretBottom /></el-icon> {{ stats.completionChange }}
         </div>
       </div>
 
@@ -391,7 +404,7 @@ watch(isDark, async () => {
           {{ stats.peakConcurrent }}
         </div>
         <div class="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-[#3bcf8a] dark:text-[#72e3ad]">
-          <el-icon><CaretTop /></el-icon> {{ stats.peakChange }}
+          <el-icon v-if="stats.peakChange !== 'N/A'"><CaretTop /></el-icon> {{ stats.peakChange }}
         </div>
       </div>
     </section>
