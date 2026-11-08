@@ -1,4 +1,6 @@
 import { getDatabaseProvider } from '@/database/index.js';
+import { EnvConfig } from '@/config/env.js';
+import { getStudioConfig } from '@/services/StudioConfigCache.js';
 
 export type CreditTaskKey =
   | 'scriptGeneration'
@@ -11,41 +13,34 @@ export type CreditTaskKey =
   | 'cliffhangerHook'
   | 'subtitleTranslate';
 
+type CreditResult = { success: boolean; balance: number; error?: string };
+
 export class CreditService {
+  /**
+   * Credit price of a task: admin-configured rate (Settings → saved under the
+   * "studio_config" system setting) or the env/default rate.
+   */
+  static async getRate(taskKey: CreditTaskKey): Promise<number> {
+    const defaults = EnvConfig.defaultCreditRates as Record<CreditTaskKey, number>;
+    let configured: unknown;
+    try {
+      configured = ((await getStudioConfig()) as any)?.creditRates?.[taskKey];
+    } catch {
+      configured = undefined;
+    }
+    const rate = Number(configured ?? defaults[taskKey] ?? 10);
+    return Number.isFinite(rate) && rate >= 0 ? rate : defaults[taskKey] ?? 10;
+  }
+
   static async deductUserCredits(
     user_id: string | undefined,
     taskKey: CreditTaskKey,
     activityName: string,
     details: string
-  ): Promise<{ success: boolean; balance: number; error?: string }> {
-    if (!user_id) {
-      throw new Error('user_id is required for credit transactions');
-    }
+  ): Promise<CreditResult> {
+    if (!user_id) throw new Error('user_id is required for credit transactions');
     const db = await getDatabaseProvider();
-    const effectiveUserId = user_id;
-
-    // Fetch dynamic rates configured by Admin
-    let amount = 10;
-    try {
-      const studioConfig = await db.getSystemSetting<any>('studio_infrastructure_config');
-      const rates = studioConfig?.creditRates || {};
-      const defaultRates: Record<CreditTaskKey, number> = {
-        scriptGeneration: 15,
-        characterAnchors: 10,
-        sceneImage: 15,
-        videoGeneration: 50,
-        voiceoverTts: 10,
-        bgmMusic: 10,
-        videoRender: 30,
-        cliffhangerHook: 5,
-        subtitleTranslate: 5,
-      };
-      amount = Number(rates[taskKey] ?? defaultRates[taskKey] ?? 10);
-    } catch {
-      amount = 10;
-    }
-
-    return await db.deductCredits(effectiveUserId, amount, activityName, details);
+    return db.deductCredits(user_id, await this.getRate(taskKey), activityName, details);
   }
 
   static async refundUserCredits(
@@ -53,34 +48,9 @@ export class CreditService {
     taskKey: CreditTaskKey,
     activityName: string,
     details: string
-  ): Promise<{ success: boolean; balance: number; error?: string }> {
-    if (!user_id) {
-      throw new Error('user_id is required for credit transactions');
-    }
+  ): Promise<CreditResult> {
+    if (!user_id) throw new Error('user_id is required for credit transactions');
     const db = await getDatabaseProvider();
-    const effectiveUserId = user_id;
-
-    // Fetch dynamic rates configured by Admin
-    let amount = 10;
-    try {
-      const studioConfig = await db.getSystemSetting<any>('studio_infrastructure_config');
-      const rates = studioConfig?.creditRates || {};
-      const defaultRates: Record<CreditTaskKey, number> = {
-        scriptGeneration: 15,
-        characterAnchors: 10,
-        sceneImage: 15,
-        videoGeneration: 50,
-        voiceoverTts: 10,
-        bgmMusic: 10,
-        videoRender: 30,
-        cliffhangerHook: 5,
-        subtitleTranslate: 5,
-      };
-      amount = Number(rates[taskKey] ?? defaultRates[taskKey] ?? 10);
-    } catch {
-      amount = 10;
-    }
-
-    return await db.refundCredits(effectiveUserId, amount, activityName, details);
+    return db.refundCredits(user_id, await this.getRate(taskKey), activityName, details);
   }
 }
