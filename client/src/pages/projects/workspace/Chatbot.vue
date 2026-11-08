@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useChatStore } from '@/stores/chatStore';
 import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -499,6 +500,7 @@ async function sendMessage(customText?: string) {
         series_id: seriesId.value,
         episode_id: episodeId.value,
         message: text,
+        model: useChatStore().selectedChatModel || undefined,
       },
       {
         timeout: 0, // Disables the timeout for this request

@@ -299,6 +299,7 @@ aiAssistantRouter.post('/chat-stream', async (req: Request, res: Response) => {
       seriesId,
       episodeId,
       userMessage: message,
+      model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       onChunk: (chunk: string) => {
         sendEvent('chunk', { text: chunk });
       },

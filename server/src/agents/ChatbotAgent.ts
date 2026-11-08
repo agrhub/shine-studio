@@ -22,6 +22,7 @@ import { createUserContent } from '@google/genai';
 import { InMemoryRunner, LlmAgent, StreamingMode, isFinalResponse } from '@google/adk';
 import { afterTool, beforeTool, rateLimitCallback } from './chatbot/callback.js';
 import { aiProviderRouter } from '~/integrations/ai/router/AIProviderRouter.js';
+import { registerChatModelAdapters, resolveChatModel } from '~/integrations/ai/llm/chatModels.js';
 import { resolveChatLanguage } from '~/utils/LanguageMapping.js';
 
 import { ChatMessage, EpisodeChatSession } from '~/types.js';
@@ -40,12 +41,14 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ─── Singleton Agent & Runner Instances (Persistent across app lifecycle) ────
-let copilotRunnerInstance: InMemoryRunner | null = null;
-let wizardRunnerInstance: InMemoryRunner | null = null;
+// One runner per chat model (Gemini, Claude, OpenAI); each keeps its own session history.
+registerChatModelAdapters();
+const copilotRunners = new Map<string, InMemoryRunner>();
+const wizardRunners = new Map<string, InMemoryRunner>();
 
-function getOrInitCopilotRunner(): InMemoryRunner {
+function getOrInitCopilotRunner(modelName: string = resolveChatModel().id): InMemoryRunner {
+  let copilotRunnerInstance = copilotRunners.get(modelName);
   if (!copilotRunnerInstance) {
-    const modelName = EnvConfig.geminiModelAgent || EnvConfig.geminiModelText || 'gemini-2.5-pro';
 
     // Sub-Agent 1: Master Plan & Story Architect
     const masterPlanAgent = new LlmAgent({
@@ -101,14 +104,15 @@ function getOrInitCopilotRunner(): InMemoryRunner {
       appName: 'shine_copilot',
     });
 
-    Logger.info(`[ChatbotAgent] Initialized singleton Copilot Runner (${modelName})`);
+    copilotRunners.set(modelName, copilotRunnerInstance);
+    Logger.info(`[ChatbotAgent] Initialized Copilot Runner (${modelName})`);
   }
   return copilotRunnerInstance;
 }
 
-function getOrInitWizardRunner(): InMemoryRunner {
+function getOrInitWizardRunner(modelName: string = resolveChatModel().id): InMemoryRunner {
+  let wizardRunnerInstance = wizardRunners.get(modelName);
   if (!wizardRunnerInstance) {
-    const modelName = EnvConfig.geminiModelAgent || EnvConfig.geminiModelText || 'gemini-2.5-pro';
 
     const wizardAgent = new LlmAgent({
       name: 'shine_master_plan_architect',
@@ -126,7 +130,8 @@ function getOrInitWizardRunner(): InMemoryRunner {
       appName: 'shine_wizard',
     });
 
-    Logger.info(`[ChatbotAgent] Initialized singleton Series Wizard Runner (${modelName})`);
+    wizardRunners.set(modelName, wizardRunnerInstance);
+    Logger.info(`[ChatbotAgent] Initialized Series Wizard Runner (${modelName})`);
   }
   return wizardRunnerInstance;
 }
@@ -181,7 +186,7 @@ export class ChatbotAgent {
     }
 
     try {
-      const runners = [getOrInitCopilotRunner(), getOrInitWizardRunner()];
+      const runners = [...copilotRunners.values(), ...wizardRunners.values()];
       for (const runner of runners) {
         try {
           await (runner as any).sessionService.deleteSession({
@@ -387,9 +392,12 @@ export class ChatbotAgent {
     onItemUpdated?: (event: any) => void;
     onProgress?: (progress: any) => void;
     onSuggestions?: (suggestions: Array<{ label: string; prompt: string }>) => void;
+    /** Chat model id or provider ("gemini" | "anthropic" | "openai"); falls back to the default. */
+    model?: string;
   }): Promise<{ fullText: string; toolCalls: any[] }> {
     const isWizard = !params.seriesId || params.seriesId.startsWith('wiz_') || params.seriesId.startsWith('temp_');
-    const runner = isWizard ? getOrInitWizardRunner() : getOrInitCopilotRunner();
+    const chatModel = resolveChatModel(params.model).id;
+    const runner = isWizard ? getOrInitWizardRunner(chatModel) : getOrInitCopilotRunner(chatModel);
     const appName = (runner as any).appName;
     const sessionId = `${params.userId}_${params.seriesId}_${params.episodeId}`;
 

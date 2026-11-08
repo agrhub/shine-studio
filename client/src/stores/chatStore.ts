@@ -91,6 +91,16 @@ export const useChatStore = defineStore('chat', {
     isStreaming: false,
     isLoadingHistory: false,
     loadedUserId: null as string | null,
+    /** Chat models the server can use (providers with configured credentials). */
+    chatModels: [] as Array<{ id: string; provider: 'gemini' | 'anthropic' | 'openai'; label: string }>,
+    /** Selected chat model id ('' = server default); remembered per browser. */
+    selectedChatModel: (() => {
+      try {
+        return localStorage.getItem('shine_chat_model') || '';
+      } catch {
+        return '';
+      }
+    })(),
     costGuardrails: {
       max_budget_usd: 3.50,
       current_spend_usd: 1.25,
@@ -314,6 +324,7 @@ export const useChatStore = defineStore('chat', {
             series_id: seriesId,
             episode_id: episodeId,
             message: text,
+            model: this.selectedChatModel || undefined,
             context: {
               pageContext: this.currentPageContext,
               scope: this.scope,
@@ -435,6 +446,28 @@ export const useChatStore = defineStore('chat', {
       } catch (err: any) {
         ElMessage.error('Memory search failed');
         return [];
+      }
+    },
+
+    async fetchChatModels() {
+      try {
+        const res = (await http.get('/ai/agentic/models')) as any;
+        this.chatModels = res?.data?.models || [];
+        if (this.selectedChatModel && !this.chatModels.some((m) => m.id === this.selectedChatModel)) {
+          this.setChatModel(''); // stored choice no longer available on the server
+        }
+      } catch {
+        this.chatModels = [];
+      }
+    },
+
+    setChatModel(id: string) {
+      this.selectedChatModel = id;
+      try {
+        if (id) localStorage.setItem('shine_chat_model', id);
+        else localStorage.removeItem('shine_chat_model');
+      } catch {
+        /* storage unavailable */
       }
     },
 
