@@ -27,7 +27,7 @@ export class EmailService {
   }
 
   public async sendPasswordRecovery(email: string, resetToken: string) {
-    const resetUrl = `${EnvConfig.appUrl}/reset-password?token=${resetToken}`;
+    const resetUrl = `${EnvConfig.appUrl.replace(/\/+$/, '')}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
     const mailOptions = {
       from: this.fromEmail,
       to: email,
@@ -39,6 +39,7 @@ export class EmailService {
           <p>Hello,</p>
           <p>You recently requested to reset your password for your Shine Studio account.</p>
           <p><a href="${resetUrl}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
+          <p>This link expires in 30 minutes and can be used once.</p>
           <p>If you didn't request this, you can safely ignore this email.</p>
         </div>
       `

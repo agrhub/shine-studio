@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '@/database/index.js';
 import type { PlatformAccount } from '@/types.js';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { nanoid } from 'nanoid';
 import { emailService } from '@/services/EmailService.js';
@@ -572,24 +573,75 @@ router.post('/logout', async (_req: Request, res: Response): Promise<void> => {
   ok(res, null, 'Logged out successfully');
 });
 
-// POST /api/auth/forgot-password - Send password reset email
+// ─── Password reset ─────────────────────────────────────────────────────────
+// Stateless, single-use reset tokens: a short-lived JWT bound to a fingerprint
+// of the user's current password hash. Once the password changes, every
+// outstanding link stops working. The `purpose` claim means verifyAccessToken
+// never accepts it as a login session.
+const RESET_PURPOSE = 'password_reset';
+const passwordFingerprint = (hash: string | undefined) =>
+  crypto.createHash('sha256').update(String(hash || '')).digest('hex').slice(0, 24);
+
+// POST /api/auth/forgot-password - Email a password reset link
 router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
-  const { email } = req.body;
+  const email = String(req.body?.email || '').trim();
   if (!email) {
     fail(res, 400, 'Email is required'); return;
   }
-  
-  // Simulate token generation and send email
-  const resetToken = nanoid(32);
-  await emailService.sendPasswordRecovery(email, resetToken);
-  
-  ok(res, { email }, `Password reset instructions sent to ${email}`);
+
+  // Same response whether or not the account exists (no account enumeration).
+  const genericMessage = 'If an account exists for this email, password reset instructions have been sent.';
+  try {
+    const db = await getDatabaseProvider();
+    const user = (await db.getUserByEmail(email)) || (await db.getUserByEmail(email.toLowerCase()));
+    if (user) {
+      const resetToken = jwt.sign(
+        { purpose: RESET_PURPOSE, userId: user.id, fp: passwordFingerprint(user.password_hash) },
+        JWT_SECRET,
+        { expiresIn: '30m' }
+      );
+      emailService.sendPasswordRecovery(user.email, resetToken).catch((err) =>
+        Logger.error(`[Auth] Failed to send password reset email: ${err?.message}`)
+      );
+    }
+  } catch (err: any) {
+    Logger.error(`[Auth] forgot-password error: ${err?.message}`);
+  }
+  ok(res, null, genericMessage);
 });
 
-// POST /api/auth/reset-password - Apply password reset with token
-router.post('/reset-password', async (_req: Request, res: Response): Promise<void> => {
-  // Mock reset successful
-  ok(res, null, 'Password reset successfully');
+// POST /api/auth/reset-password - Set a new password with a reset token
+router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) {
+    fail(res, 400, 'Reset token and new password are required'); return;
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
+    fail(res, 400, 'Password must be at least 6 characters'); return;
+  }
+
+  let decoded: any;
+  try {
+    decoded = jwt.verify(String(token), JWT_SECRET);
+  } catch {
+    fail(res, 400, 'This reset link is invalid or has expired. Please request a new one.'); return;
+  }
+  if (decoded?.purpose !== RESET_PURPOSE || !decoded.userId) {
+    fail(res, 400, 'This reset link is invalid or has expired. Please request a new one.'); return;
+  }
+
+  try {
+    const db = await getDatabaseProvider();
+    const user = await db.getUserById(decoded.userId);
+    if (!user || decoded.fp !== passwordFingerprint(user.password_hash)) {
+      fail(res, 400, 'This reset link has already been used. Please request a new one.'); return;
+    }
+    user.password_hash = await bcrypt.hash(newPassword, 10);
+    await db.updateUser(user);
+    ok(res, null, 'Password reset successfully');
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Failed to reset password');
+  }
 });
 
 // POST /api/auth/change-password - Change current user password
