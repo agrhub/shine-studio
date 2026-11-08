@@ -28,9 +28,11 @@ import type {
   SceneAudioPipelineResult,
 } from '@/types.js';
 import { CreditService } from './CreditService';
+import { TtlMap } from '@/utils/TtlMap.js';
 
 export class VideoService {
-  private jobs: Map<string, VideoRenderJob> = new Map();
+  // Status is polled for a while after completion, then dropped.
+  private jobs = new TtlMap<string, VideoRenderJob>(6 * 60 * 60 * 1000, 500);
 
   /**
    * Dedicated Scene & Background Image Generation (Step B2)

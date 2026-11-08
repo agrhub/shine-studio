@@ -2,6 +2,7 @@ import { getDatabaseProvider } from '@/database/index.js';
 import { mcpClient } from '@/integrations/mcp/ParallelMCPClient.js';
 import { platformAnalyticsService } from '@/services/PlatformAnalyticsService.js';
 import { Logger } from '@/utils/logger.js';
+import { TtlMap } from '@/utils/TtlMap.js';
 import { nanoid } from 'nanoid';
 import type {
   EpisodeEntity,
@@ -12,7 +13,8 @@ import type {
 } from '@/types.js';
 
 // In-memory cache for recent harvested comments (keyed by episodeId)
-const episodeCommentsCache = new Map<string, EpisodeCommentItem[]>();
+// Re-harvested after an hour so the comment list does not go stale or grow forever.
+const episodeCommentsCache = new TtlMap<string, EpisodeCommentItem[]>(60 * 60 * 1000, 500);
 
 export class EpisodeHarvesterService {
   /**

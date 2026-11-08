@@ -7,6 +7,7 @@ import { TimelineService } from '../TimelineService.js';
 import { PubSubService } from '../pubsub/PubSubService.js';
 import { videoRendererPool } from './VideoRendererPool.js';
 import { Logger } from '../../utils/logger.js';
+import { TtlMap } from '../../utils/TtlMap.js';
 import { PatchSyncService } from '@/realtime/PatchSyncService.js';
 import type {
   IProject,
@@ -26,7 +27,8 @@ export type { CompositorClip, CompositorTrack, CompositorPayload, RenderJobState
  * @see https://docs.openvideo.dev/core/04-advanced/rendering
  */
 export class CompositorWorker extends EventEmitter {
-  private jobs: Map<string, RenderJobState> = new Map();
+  // Status is polled for a while after completion, then dropped (the DB keeps the record).
+  private jobs = new TtlMap<string, RenderJobState>(6 * 60 * 60 * 1000, 500);
 
   createJob(payload: CompositorPayload): RenderJobState {
     const jobId = payload.pipeline_job_id || `job_${Date.now()}_${nanoid(6)}`;

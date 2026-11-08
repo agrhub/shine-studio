@@ -16,11 +16,12 @@ import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js'
 import { OAuthService } from '../services/OAuthService.js';
 import { StorageFactory } from '../services/storage/StorageFactory.js';
 import { PatchSyncService } from '../realtime/PatchSyncService.js';
+import { TtlMap } from '../utils/TtlMap.js';
 
 export const publishRouter = Router();
 
-// In-memory job progress tracker for SSE streaming
-const activePublishJobs = new Map<string, {
+// In-memory job progress tracker for SSE streaming; finished jobs expire after 6 hours.
+const activePublishJobs = new TtlMap<string, {
   jobId: string;
   userId?: string;
   status: 'queued' | 'rendering' | 'uploading' | 'published' | 'failed';
@@ -28,7 +29,7 @@ const activePublishJobs = new Map<string, {
   currentPlatform: string;
   publishedUrls: Record<string, string>;
   error?: string;
-}>();
+}>(6 * 60 * 60 * 1000, 500);
 
 const LANGUAGE_NAMES: Record<string, string> = {
   'en-US': 'English',
