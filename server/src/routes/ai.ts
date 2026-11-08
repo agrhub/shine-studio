@@ -89,7 +89,7 @@ aiRouter.post('/generate-master-plan', async (req, res) => {
 
     const userId = getUserId(req);
     const deduct = await CreditService.deductUserCredits(userId, 'scriptGeneration', 'Script Master Plan Generation', `Series: ${title || 'Untitled'}`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    if (!deduct.success) {
       return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     }
 
@@ -130,7 +130,7 @@ aiRouter.post('/generate-outline', async (req, res) => {
     const { title, genre, visual_style, synopsis, total_episodes } = req.body;
     const userId = getUserId(req);
     const deduct = await CreditService.deductUserCredits(userId, 'scriptGeneration', 'Story Outline Generation', `Series: ${title || 'Untitled'}`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    if (!deduct.success) {
       return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     }
 
@@ -167,7 +167,7 @@ aiRouter.post('/refine-master-plan', async (req, res) => {
 
     const userId = getUserId(req);
     const deduct = await CreditService.deductUserCredits(userId, 'scriptGeneration', 'Master Plan Refine', `Plan: ${current_plan?.title || 'Series'}`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    if (!deduct.success) {
       return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     }
 
@@ -195,7 +195,7 @@ aiRouter.post('/generate-script', async (req, res) => {
     const { title, genre, visual_style, synopsis, episode_number, total_episodes } = req.body;
     const userId = getUserId(req);
     const deduct = await CreditService.deductUserCredits(userId, 'scriptGeneration', 'Screenplay Script Generation', `Series: ${title || 'Untitled'} (Ep ${episode_number || 1})`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    if (!deduct.success) {
       return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     }
 

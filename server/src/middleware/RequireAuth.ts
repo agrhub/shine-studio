@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { EnvConfig } from '@/config/env.js';
 import { verifyAccessToken, extractBearerToken, safeEqual } from '@/utils/token.js';
+import { runWithAiContext } from '@/services/ai/AiUsageGuard.js';
 
 const ADMIN_ROLES = new Set(['admin', 'owner', 'superadmin']);
 
@@ -28,7 +29,9 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
   }
 
   (req as any).user = user;
-  next();
+  // Make the acting user visible to AI cost guards for this request and any
+  // async work it starts (see services/ai/AiUsageGuard.ts).
+  runWithAiContext({ userId: user.id, role: user.role }, () => next());
 };
 
 export const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
@@ -53,7 +56,7 @@ export function hasInternalSecret(req: Request): boolean {
 export const requireInternalOrAdmin = (req: Request, res: Response, next: NextFunction) => {
   if (hasInternalSecret(req)) {
     (req as any).user = { id: 'system', userId: 'system', role: 'system', tier: 'INTERNAL' };
-    return next();
+    return runWithAiContext({ userId: 'system', role: 'system' }, () => next());
   }
   requireAuth(req, res, () => requireAdmin(req, res, next));
 };

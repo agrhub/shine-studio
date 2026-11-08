@@ -3,25 +3,25 @@
  * Provides rate limiting, tool logging hooks for the ADK LlmAgent.
  */
 
-// Simple in-memory rate limiter
-const requestTimestamps: number[] = [];
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const MAX_REQUESTS_PER_WINDOW = 50;
+import { aiUsageGuard, AiLimitError } from '@/services/ai/AiUsageGuard.js';
 
 /**
- * Rate limit callback — prevents hammering the Gemini API.
+ * Before-model callback for every ADK LlmAgent call: enforces the same per-user
+ * daily caps / credits / global budget as the rest of the app (AiUsageGuard).
+ * Returning an LlmResponse short-circuits the model call with a readable message.
  * Matches SingleBeforeModelCallback signature: (params: { context, request }) => LlmResponse | undefined
  */
-export const rateLimitCallback = async (params: { context: any; request: any }): Promise<any> => {
-  const now = Date.now();
-  while (requestTimestamps.length > 0 && requestTimestamps[0] < now - RATE_LIMIT_WINDOW_MS) {
-    requestTimestamps.shift();
+export const rateLimitCallback = async (_params: { context: any; request: any }): Promise<any> => {
+  try {
+    await aiUsageGuard.assertAllowed('TEXT');
+    await aiUsageGuard.record('TEXT');
+    return undefined; // Proceed normally
+  } catch (err) {
+    if (err instanceof AiLimitError) {
+      return { content: { role: 'model', parts: [{ text: `⚠️ ${err.message}` }] } };
+    }
+    throw err;
   }
-  if (requestTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
-    console.warn('[RateLimit] Too many requests, throttling...');
-  }
-  requestTimestamps.push(now);
-  return undefined; // Proceed normally
 };
 
 /**

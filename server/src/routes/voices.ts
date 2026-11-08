@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
 import { geminiClient, GEMINI_SUPPORTED_VOICES, type GeminiVoiceMetadata } from '@/integrations/ai/gemini/GeminiClient.js';
 import { ttsService } from '@/services/TtsService.js';
 import { StorageFactory } from '@/services/storage/StorageFactory.js';
@@ -142,13 +143,13 @@ export async function generateDialogueVoiceSynthesis(params: {
     audioMimeType = 'audio/mpeg';
   } else {
     // Fallback to Gemini Native Audio neural voice synthesis
-    const generatedAudio = await geminiClient.generateAudio(text, selectedVoiceId, undefined, {
+    const generatedAudio = await aiUsageGuard.track('VOICE', () => geminiClient.generateAudio(text, selectedVoiceId, undefined, {
       speed: calculatedSpeed,
       pitch: calculatedPitch,
       emotion: extractedEmotion || undefined,
       speech_tone: extractedSpeechTone || undefined,
       multiSpeaker,
-    });
+    }));
 
     if (!generatedAudio?.url) {
       throw new Error('Voice synthesis failed: Both primary TTS and Gemini Audio fallback could not generate audio.');
@@ -230,7 +231,7 @@ router.post('/tts', async (req: Request, res: Response) => {
 
     const userId = getUserId(req);
     const deduct = await CreditService.deductUserCredits(userId, 'voiceoverTts', 'Voiceover Synthesis', `Scene: ${scene_id || 'voice'}`);
-    if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    if (!deduct.success) {
       return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     }
 

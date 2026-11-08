@@ -61,9 +61,12 @@ import { requireAuth, requireAdmin, requireInternalOrAdmin } from './middleware/
 import { corsMiddleware, securityHeaders, rateLimit, isOriginAllowed } from './middleware/Security.js';
 import { verifyAccessToken } from './utils/token.js';
 import { bodySeriesOwnershipGuard } from './middleware/Ownership.js';
+import { aiPrecheck } from './services/ai/AiUsageGuard.js';
 
 /** Authenticated user + ownership check for series/episode ids passed in body/query. */
 const authed = [requireAuth, bodySeriesOwnershipGuard];
+/** authed + account-level AI cost pre-check (credits, daily budget, kill switch) for AI-generation routes. */
+const aiAuthed = [...authed, aiPrecheck];
 
 // Cloud Run / load balancers append the real client IP as the last X-Forwarded-For hop.
 app.set('trust proxy', process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY : 1);
@@ -90,7 +93,10 @@ app.use('/api/antigravity-accounts', antigravityOAuthCallbackRouter);
 // Only GET /api/assets/file/* is public; every other /api/assets route requires a session.
 app.use('/api/assets', (req, res, next) => {
   if (req.method === 'GET' && req.path.startsWith('/file/')) return next();
-  return requireAuth(req, res, () => bodySeriesOwnershipGuard(req, res, next));
+  const isAiGeneration = /generate|sheet|screenplay|customize|breakdown/.test(req.path);
+  return requireAuth(req, res, () =>
+    bodySeriesOwnershipGuard(req, res, isAiGeneration ? () => aiPrecheck(req, res, next) : next)
+  );
 }, assetsRouter);
 
 // ─── Authenticated API Routes (Requires Valid JWT Token) ──────────────────────
@@ -99,28 +105,28 @@ app.use('/api/jobs', authed, jobsRouter);
 app.use('/api/series', authed, seriesRoutes);
 app.use('/api/episodes', authed, episodesRouter);
 app.use('/api/visual-styles', authed, visualStylesRouter);
-app.use('/api/ai', authed, aiRouter);
+app.use('/api/ai', aiAuthed, aiRouter);
 app.use('/api/characters', authed, characterRouter);
 app.use('/api/export', authed, exportRouter);
-app.use('/api/voices', authed, voicesRoutes);
-app.use('/api/captions', authed, captionsRoutes);
-app.use('/api/audio', authed, audioRoutes);
-app.use('/api/transcribe', authed, (req, res, next) => {
+app.use('/api/voices', aiAuthed, voicesRoutes);
+app.use('/api/captions', aiAuthed, captionsRoutes);
+app.use('/api/audio', aiAuthed, audioRoutes);
+app.use('/api/transcribe', aiAuthed, (req, res, next) => {
   req.url = '/transcribe';
   audioRoutes(req, res, next);
 });
-app.use('/api/ai/cliffhanger', authed, cliffhangerRoutes);
-app.use('/api/ai/assistant', authed, aiAssistantRouter);
-app.use('/api/chat/editor', authed, (req, res, next) => {
+app.use('/api/ai/cliffhanger', aiAuthed, cliffhangerRoutes);
+app.use('/api/ai/assistant', aiAuthed, aiAssistantRouter);
+app.use('/api/chat/editor', aiAuthed, (req, res, next) => {
   req.url = '/chat';
   aiAssistantRouter(req, res, next);
 });
-app.use('/api/ai/agentic', authed, aiAgenticRouter);
+app.use('/api/ai/agentic', aiAuthed, aiAgenticRouter);
 // Feature routers that were implemented but never mounted (paths are defined inside each router).
-app.use('/api/ai', authed, viralCoverRouter);       // POST /api/ai/viral-cover/generate
-app.use('/api/ai', authed, novelConverterRouter);   // POST /api/ai/convert-novel
-app.use('/api/ai', authed, culturalAdaptRouter);    // POST /api/ai/cultural-adapt
-app.use('/api/audio', authed, copyrightRouter);     // POST /api/audio/copyright-verify
+app.use('/api/ai', aiAuthed, viralCoverRouter);       // POST /api/ai/viral-cover/generate
+app.use('/api/ai', aiAuthed, novelConverterRouter);   // POST /api/ai/convert-novel
+app.use('/api/ai', aiAuthed, culturalAdaptRouter);    // POST /api/ai/cultural-adapt
+app.use('/api/audio', aiAuthed, copyrightRouter);     // POST /api/audio/copyright-verify
 app.use('/api/publish', authed, publishRouter);
 app.use('/api/projects', authed, publishRouter);
 app.use('/api/social', authed, socialAuthRouter);
