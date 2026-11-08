@@ -1,4 +1,5 @@
 import { seriesParamGuard, episodeParamGuard } from '@/middleware/Ownership.js';
+import { scoreStoryboard, storyboardGateMode } from '@/services/StoryboardQualityService.js';
 import { Router, Request, Response } from 'express';
 import { getDatabaseProvider } from '../database/index.js';
 import { scriptAgent } from '../agents/ScriptAgent.js';
@@ -547,6 +548,20 @@ router.patch('/:id/episodes/:epId', async (req: Request, res: Response): Promise
 });
 
 // GET /api/series/:id/episodes/:epId - Get or auto-generate full screenplay for episode
+// GET /api/series/:id/episodes/:epId/storyboard-quality — pre-video shot-plan score (no AI calls, free)
+router.get('/:id/episodes/:epId/storyboard-quality', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const db = await getDatabaseProvider();
+    const ep = await db.getEpisodeById(req.params.epId as string);
+    if (!ep || ep.series_id !== req.params.id) {
+      fail(res, 404, 'Episode not found'); return;
+    }
+    ok(res, { report: scoreStoryboard(ep.scenes || []), gate: storyboardGateMode() });
+  } catch (err: any) {
+    fail(res, 500, err.message || 'Internal server error');
+  }
+});
+
 router.get('/:id/episodes/:epId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: seriesId, epId } = req.params;
