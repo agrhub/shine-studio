@@ -20,6 +20,7 @@ import { VideoToolExecutors } from '@/agents/chatbot/tools/video.tools.js';
 import { AudioToolExecutors } from '@/agents/chatbot/tools/audio.tools.js';
 import { CaptionToolExecutors } from '@/agents/chatbot/tools/caption.tools.js';
 import { RenderToolExecutors } from '@/agents/chatbot/tools/render.tools.js';
+import { scoreStoryboard, storyboardGateMode } from '@/services/StoryboardQualityService.js';
 import { PatchSyncService } from '@/realtime/PatchSyncService.js';
 import { ChatbotAgent } from '@/agents/ChatbotAgent.js';
 
@@ -458,6 +459,22 @@ export class PipelineJobService {
         if (!this.activeRuns.get(job_id)) return;
         await updateStep('b3', 'running', 40, 55, 'Step B3: Synthesizing AI Video Clips from Storyboards...');
         await addLog('info', 'Executing Step B3: AI Video Clips');
+
+        // Storyboard quality gate: score the shot plan before paying for Veo video.
+        const gateMode = storyboardGateMode();
+        if (gateMode !== 'off') {
+          const epForGate: EpisodeEntity | null = await db.getEpisodeById(episode_id);
+          const quality = scoreStoryboard(epForGate?.scenes || []);
+          const summary = `Storyboard quality ${quality.average}/5 (${quality.verdict})`;
+          await addLog(quality.verdict === 'fail' || quality.verdict === 'revise' ? 'warn' : 'info', summary);
+          if (quality.verdict === 'fail' && gateMode === 'block') {
+            const top = quality.scene_issues.slice(0, 5).map((s) => `#${s.scene}: ${s.issues[0]}`).join('; ');
+            await updateStep('b3', 'failed', 0, 55, `${summary} — video generation blocked`, { storyboard_quality: quality });
+            throw new Error(
+              `Step B3 blocked by the storyboard quality gate (${summary}). Fix the storyboard first: ${quality.suggestions.join(' ')}${top ? ` Issues: ${top}` : ''}`
+            );
+          }
+        }
 
         const vidForce = type === 'step_b3' ? force_regenerate : false;
         const vidRes = await VideoToolExecutors.generateSceneVideo({
