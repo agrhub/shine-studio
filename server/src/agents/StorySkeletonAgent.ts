@@ -5,7 +5,7 @@ import { PromptLoader } from '../utils/PromptLoader.js';
 import { Logger } from '../utils/logger.js';
 import { getLanguageInfo, assertValidBCP47 } from '@/utils/LanguageMapping.js';
 import { getVisualStylePrompt } from '@/constants/VisualStyles.js';
-import { MasterPlanSchema, validateAiJson } from '@/schemas/AISchemas.js';
+import { MasterPlanSchema, validateAiJson } from '@/schemas/aiSchemas.js';
 import { EpisodeSkeleton, MasterPlanOutput, PaywallHook, StorySkeletonInput } from '~/types.js';
 
 // export interface StorySkeletonInput {
