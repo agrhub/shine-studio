@@ -3,23 +3,29 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
 import { Message, ArrowLeft } from '@element-plus/icons-vue';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 const { t } = useI18n();
+const authStore = useAuthStore();
 const email = ref('');
 const isLoading = ref(false);
 const isSubmitted = ref(false);
 
-function handleSendReset() {
+async function handleSendReset() {
   if (!email.value) {
     ElMessage.error(t('toast.loginRequiredFields'));
     return;
   }
   isLoading.value = true;
-  setTimeout(() => {
-    isLoading.value = false;
+  try {
+    await authStore.forgotPassword(email.value.trim());
     isSubmitted.value = true;
     ElMessage.success(t('toast.resetSent'));
-  }, 1000);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message || err?.message || 'Could not send the reset email');
+  } finally {
+    isLoading.value = false;
+  }
 }
 </script>
 

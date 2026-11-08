@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
+import http from '@/utils/http';
 import { ElMessage } from 'element-plus';
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
 
+const token = computed(() => (typeof route.query.token === 'string' ? route.query.token : ''));
 const newPassword = ref('');
 const confirmPassword = ref('');
 const isLoading = ref(false);
 
-function handleResetPassword() {
+async function handleResetPassword() {
+  if (!token.value) {
+    ElMessage.error('This reset link is missing its token. Please request a new one.');
+    return;
+  }
   if (!newPassword.value || !confirmPassword.value) {
     ElMessage.error(t('toast.loginRequiredFields'));
     return;
@@ -21,11 +28,15 @@ function handleResetPassword() {
     return;
   }
   isLoading.value = true;
-  setTimeout(() => {
-    isLoading.value = false;
+  try {
+    await http.post('/auth/reset-password', { token: token.value, newPassword: newPassword.value });
     ElMessage.success(t('toast.passwordResetSuccess'));
     router.push('/auth/login');
-  }, 1000);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message || err?.message || 'Password reset failed');
+  } finally {
+    isLoading.value = false;
+  }
 }
 </script>
 
