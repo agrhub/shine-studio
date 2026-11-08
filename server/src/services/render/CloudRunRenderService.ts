@@ -58,13 +58,27 @@ export class CloudRunRenderService {
     // 3. Publish to Pub/Sub for background worker pickup
     const messageId = await this.pubsub.publishRenderJob(job);
 
-    // Simulate async pipeline progress updates if in local/development mode
-    this.simulateLocalRenderPipeline(job);
+    if (messageId.startsWith('local')) {
+      // No Pub/Sub topic and no reachable worker: nothing will consume this job.
+      // Report it as failed instead of pretending it rendered (previously a
+      // timer emitted "completed" with a non-existent output URL).
+      const error = 'No render worker available: set RENDER_WORKER_URL or configure the Pub/Sub render topic.';
+      Logger.warn(`[CloudRunRenderService] Job ${job.jobId}: ${error}`);
+      this.pubsub.emitProgress({
+        jobId: job.jobId,
+        episodeId: job.episodeId,
+        status: 'failed',
+        progressPercent: 0,
+        error,
+        timestamp: new Date().toISOString(),
+      });
+      return { job_id: job.jobId, status: 'failed', queue_type: 'unavailable' };
+    }
 
     return {
       job_id: job.jobId,
       status: 'queued',
-      queue_type: messageId.startsWith('local') ? 'local_event_queue' : 'gcp_pubsub',
+      queue_type: 'gcp_pubsub',
     };
   }
 
@@ -110,42 +124,5 @@ export class CloudRunRenderService {
         totalMemoryMb: Math.round(totalMem / (1024 * 1024)),
       },
     };
-  }
-
-  /**
-   * In local development, progresses the job smoothly through lifecycle states.
-   */
-  private simulateLocalRenderPipeline(job: RenderJobPayload) {
-    setTimeout(() => {
-      this.pubsub.emitProgress({
-        jobId: job.jobId,
-        episodeId: job.episodeId,
-        status: 'rendering',
-        progressPercent: 35,
-        timestamp: new Date().toISOString(),
-      });
-    }, 1500);
-
-    setTimeout(() => {
-      this.pubsub.emitProgress({
-        jobId: job.jobId,
-        episodeId: job.episodeId,
-        status: 'compositing',
-        progressPercent: 75,
-        timestamp: new Date().toISOString(),
-      });
-    }, 3500);
-
-    setTimeout(async () => {
-      this.pubsub.emitProgress({
-        jobId: job.jobId,
-        episodeId: job.episodeId,
-        status: 'completed',
-        progressPercent: 100,
-        outputUrl: `/api/assets/file/assets/videos/render_${job.jobId}.mp4`,
-        s3Key: `assets/videos/render_${job.jobId}.mp4`,
-        timestamp: new Date().toISOString(),
-      });
-    }, 5500);
   }
 }
