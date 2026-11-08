@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
 import { geminiClient } from '../integrations/ai/gemini/GeminiClient.js';
 import { aiProviderRouter } from '../integrations/ai/router/AIProviderRouter.js';
 import { PromptLoader } from '../utils/PromptLoader.js';
@@ -563,11 +564,11 @@ captionsRouter.post('/batch-dubbing', async (req: Request, res: Response) => {
       const resolvedVoiceId = matchedChar?.voice_id || default_voice_id || defaultVoiceId || 'Puck';
 
       try {
-        const audioRes = await geminiClient.generateAudio(textToVoice, resolvedVoiceId, undefined, {
+        const audioRes = await aiUsageGuard.track('VOICE', () => geminiClient.generateAudio(textToVoice, resolvedVoiceId, undefined, {
           emotion,
           speech_tone: speechTone,
           speed: speechSpeed,
-        });
+        }));
         if (audioRes?.url) {
           let audioUrl = audioRes.url;
           if (audioUrl.startsWith('data:')) {

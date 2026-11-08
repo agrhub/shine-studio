@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import fs from 'fs';
@@ -334,10 +335,10 @@ Respond with ONLY a JSON object matching this schema:
 
     let response: any;
     try {
-      response = await geminiClient.generateContent(parts, EnvConfig.geminiModelText, {
+      response = await aiUsageGuard.track('TEXT', () => geminiClient.generateContent(parts, EnvConfig.geminiModelText, {
         systemPrompt: 'You are a high-precision audio speech-to-text transcription engine. Output valid JSON matching word timestamp format with start and end in seconds.',
         generationConfig: { responseMimeType: 'application/json' },
-      });
+      }));
     } catch (apiErr: any) {
       throw new Error(`Gemini Multimodal Transcription failed: ${apiErr.message}`);
     }
@@ -497,11 +498,11 @@ Respond with ONLY a JSON object matching this schema:
         } else {
           // Fallback to Gemini Audio
           Logger.info(`[CaptionService] Primary TTS not ready, falling back to Gemini Native Audio for: "${dialogueText.substring(0, 50)}..."`);
-          const generated = await geminiClient.generateAudio(dialogueText, targetVoiceId, undefined, {
+          const generated = await aiUsageGuard.track('VOICE', () => geminiClient.generateAudio(dialogueText, targetVoiceId, undefined, {
             speed: speechSpeed,
             emotion: emotion || undefined,
             speech_tone: speechTone || undefined,
-          });
+          }));
           if (generated?.url) {
             const s3Res = await StorageFactory.uploadMedia(generated.url, 'audio', 'wav', generated.mimeType || 'audio/wav');
             voiceoverUrl = `/api/assets/file/${s3Res.key}`;

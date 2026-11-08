@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
 import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../gemini/GeminiClient.js';
 import { flowAdapter } from '../flow/FlowAdapter.js';
 import { antigravityClient } from '../antigravity/AntigravityClient.js';
@@ -33,7 +34,16 @@ export class AIProviderRouter {
    * Uses Google Flow Account pool for Image and Video if available.
    * If Flow generation fails or no Flow accounts are available, falls back to GeminiClient.
    */
+  /**
+   * Single funnel for every routed AI call: enforces per-user daily caps, credit
+   * balance and the global AI budget before any provider (Gemini / Antigravity /
+   * Flow fallbacks) is contacted, and records the call once it succeeds.
+   */
   private async routeGeneration(options: RouteGenerationOptions) {
+    return aiUsageGuard.track(options.type, () => this.routeGenerationInner(options));
+  }
+
+  private async routeGenerationInner(options: RouteGenerationOptions) {
     const isCommercial = options.userTier === 'ENTERPRISE' || options.mode === 'COMMERCIAL_EXPORT';
 
     if (isCommercial || options.type === 'TEXT') {
@@ -670,12 +680,12 @@ export class AIProviderRouter {
       // Proactively retry directly with GeminiClient to recover from non-JSON or malformed responses
       try {
         Logger.warn(`[AIProviderRouter] generateJSON parse error (${err.message}). Proactively retrying via GeminiClient...`);
-        const geminiText = await geminiClient.generateText({
+        const geminiText = await aiUsageGuard.track('TEXT', () => geminiClient.generateText({
           prompt,
           model: targetModel,
           jsonMode: true,
           systemInstruction,
-        });
+        }));
         if (geminiText) {
           return this.parseJsonWithRepair<T>(geminiText, fallbackData);
         }

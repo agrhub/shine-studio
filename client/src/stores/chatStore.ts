@@ -431,7 +431,7 @@ export const useChatStore = defineStore('chat', {
       try {
         const res = (await http.get(`/ai/assistant/memory/search?query=${encodeURIComponent(query)}`)) as any;
         ElMessage.info(i18n.global.t('toast.memorySearched') || 'Searched series knowledge base.');
-        return res.data?.data?.results || [];
+        return res.data?.results || [];
       } catch (err: any) {
         ElMessage.error('Memory search failed');
         return [];
@@ -441,8 +441,8 @@ export const useChatStore = defineStore('chat', {
     async fetchCostGuardrails() {
       try {
         const res = (await http.get('/admin/cost-guardrails')) as any;
-        if (res.data?.data) {
-          this.costGuardrails = res.data.data;
+        if (res?.data) {
+          this.costGuardrails = res.data;
         }
       } catch (e) {
         // Keep default guardrails

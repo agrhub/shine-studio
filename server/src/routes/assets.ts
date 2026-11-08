@@ -484,7 +484,7 @@ assetsRouter.post('/image-generate', async (req: Request, res: Response) => {
     const userId = getUserId(req);
 
     // const deduct = await CreditService.deductUserCredits(userId, 'sceneImage', 'Scene Background Generation', `Scene: ${scene_id || 'frame'}`);
-    // if (!deduct.success && deduct.error?.includes('Insufficient')) {
+    // if (!deduct.success) {
     //   return res.status(402).json({ code: 402, data: null, message: deduct.error, error: 'INSUFFICIENT_CREDITS' });
     // }
     const result = await AssetService.generateStoryboardShot({
