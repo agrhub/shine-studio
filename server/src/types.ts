@@ -452,6 +452,8 @@ export interface EpisodeAnalyticsSummary {
   retention_rate_pct?: number;
   top_countries: EpisodeTopCountry[];
   synced_at: string;
+  /** 'live' = numbers came from a platform API or public pages; 'unavailable' = nothing could be measured. */
+  data_status?: 'live' | 'unavailable';
 }
 
 export interface EpisodeCommentItem {
