@@ -177,10 +177,20 @@ export class CompositorWorker extends EventEmitter {
 
       Logger.info(`[CompositorWorker] Episode #${episode?.episode_number || 1} rendering ${combinations.length} language version(s): [${combinations.map(c => c.key).join(', ')}]`);
 
+      // The renderer reports progress on every frame; persisting + broadcasting
+      // each one meant a DB read, a DB write and a socket emit per frame.
+      // In-memory progress stays live; the job record is written at most ~1/s
+      // or when progress moves by >= 5 points.
+      let lastPersistAt = 0;
+      let lastPersistPct = -1;
       const updatePipelineProgress = async (percent: number, stepMsg: string) => {
         const safePct = Math.min(99, Math.max(5, Math.round(percent)));
         job.progress = safePct;
         this.emit('progress', { jobId, progress: safePct, stage: stepMsg });
+        const now = Date.now();
+        if (now - lastPersistAt < 1000 && Math.abs(safePct - lastPersistPct) < 5) return;
+        lastPersistAt = now;
+        lastPersistPct = safePct;
         try {
           const activeJob = await db.getPipelineJobById(jobId);
           if (activeJob && activeJob.status === 'running') {

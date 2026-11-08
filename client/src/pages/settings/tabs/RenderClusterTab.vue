@@ -155,6 +155,13 @@ async function handleTestBatchRender() {
       episodeIds: ['ep-001', 'ep-002'],
       outputFormat: 'mp4',
     });
+    const jobs: any[] = res?.data?.jobs || [];
+    if (jobs.length > 0 && jobs.every((j) => j?.status === 'failed')) {
+      toast.error('No render worker is available. Configure RENDER_WORKER_URL or the Pub/Sub render topic.');
+      batchRenderProgress.value = { ...batchRenderProgress.value, status: 'failed', progressPercent: 0 };
+      isTestingBatchRender.value = false;
+      return;
+    }
     toast.success(res?.message || 'Batch render dispatched to Cloud Run / PubSub');
 
     // Connect to SSE stream
@@ -169,6 +176,10 @@ async function handleTestBatchRender() {
             eventSource.close();
             isTestingBatchRender.value = false;
             refreshAll();
+          } else if (data.status === 'failed') {
+            toast.error(data.error || 'Render failed');
+            eventSource.close();
+            isTestingBatchRender.value = false;
           }
         }
       } catch {}
