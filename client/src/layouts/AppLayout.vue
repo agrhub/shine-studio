@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, defineAsyncComponent } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { Bot } from 'lucide-vue-next';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useChatStore } from '@/stores/chatStore';
 import LanguageSelect from '@/components/shared/LanguageSelect.vue';
-import SeriesWizardModal from '@/components/modals/SeriesWizardModal.vue';
+// The wizard is large and only needed when opened: load it on demand.
+const SeriesWizardModal = defineAsyncComponent(() => import('@/components/modals/SeriesWizardModal.vue'));
 import ShineAssistantSidebar from '@/components/assistant/ShineAssistantSidebar.vue';
 import JobStatusPopover from '@/components/workspace/JobStatusPopover.vue';
 import { usePipelineStore } from '@/stores/usePipelineStore';
