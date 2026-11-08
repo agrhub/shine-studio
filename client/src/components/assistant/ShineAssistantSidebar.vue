@@ -27,7 +27,13 @@ const {
   activeProgress,
   scope,
   currentPageContext,
+  chatModels,
+  selectedChatModel,
 } = storeToRefs(chatStore);
+
+onMounted(() => {
+  chatStore.fetchChatModels();
+});
 
 const inputQuery = ref('');
 const scrollContainer = ref<HTMLDivElement | null>(null);
@@ -221,6 +227,19 @@ onMounted(() => {
 
       <!-- Action Buttons -->
       <div class="flex items-center gap-1 shrink-0">
+        <!-- Chat model picker (shown when more than one provider is configured) -->
+        <el-select
+          v-if="chatModels.length > 1"
+          :model-value="selectedChatModel"
+          size="small"
+          class="!w-[92px]"
+          placeholder="Model"
+          title="Chat model"
+          @update:model-value="(v: string) => chatStore.setChatModel(v)"
+        >
+          <el-option label="Default" value="" />
+          <el-option v-for="m in chatModels" :key="m.id" :label="m.label" :value="m.id" />
+        </el-select>
         <button
           @click="handleReset"
           class="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--el-text-color-secondary)] hover:text-[var(--el-text-color-primary)] hover:bg-[var(--el-fill-color-light)] transition-colors cursor-pointer"

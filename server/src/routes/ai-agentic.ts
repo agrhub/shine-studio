@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { listChatModels, resolveChatModel } from '@/integrations/ai/llm/chatModels.js';
 import { ChatbotAgent } from '../agents/ChatbotAgent.js';
 import { Logger } from '../utils/logger.js';
 import { getUserId } from '@/utils/auth.js';
@@ -43,6 +44,7 @@ const handleAgenticStream = async (req: Request, res: Response): Promise<void> =
       episodeId: episode_id || 'main',
       userMessage: message,
       context,
+      model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       onChunk: (chunk: string) => {
         sendEvent('chunk', { text: chunk });
       },
@@ -68,6 +70,12 @@ const handleAgenticStream = async (req: Request, res: Response): Promise<void> =
     res.end();
   }
 };
+
+// GET /api/ai/agentic/models — chat models the user can pick (only providers with credentials).
+aiAgenticRouter.get('/models', (_req: Request, res: Response) => {
+  const models = listChatModels();
+  res.json({ code: 200, data: { models, default: resolveChatModel().id }, message: 'Chat models', error: null });
+});
 
 aiAgenticRouter.post('/stream', handleAgenticStream);
 aiAgenticRouter.post('/', handleAgenticStream);
