@@ -1547,6 +1547,8 @@ export interface DeepResearch {
 export interface ComplianceVerificationResult {
   overall_score: number;
   is_compliant: boolean;
+  /** 'verified' = every category was audited; 'partial' = some missing; 'unverified' = the audit failed. */
+  verification_status?: 'verified' | 'partial' | 'unverified';
   market_research?: {
     country: string;
     copyright_findings: string;

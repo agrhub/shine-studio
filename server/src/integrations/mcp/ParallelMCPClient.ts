@@ -349,28 +349,57 @@ Return 3 concise bullet summaries:
     };
   }
 
-  public async checkCopyrightSafety(content: string, contentType: 'script' | 'audio' | 'video'): Promise<{ safe: boolean; issues: string[] }> {
-    if (!this.isConnected) {
-      await this.connect();
+  /**
+   * Looks for published works similar to a script excerpt (web search + model
+   * judgement over the search snippets). `verified: false` means the check
+   * could not run, which callers must not present as "cleared".
+   */
+  public async checkCopyrightSafety(
+    content: string,
+    contentType: 'script' | 'audio' | 'video'
+  ): Promise<{ safe: boolean; verified: boolean; issues: string[]; sources: string[] }> {
+    const excerpt = content.trim();
+    if (contentType !== 'script' || excerpt.length < 20) {
+      // Audio/video need fingerprinting (not available); very short text cannot be compared.
+      return { safe: false, verified: false, issues: [], sources: [] };
     }
 
-    const complianceSkill = loadSkill('compliance_check');
-    if (complianceSkill) {
-      Logger.info(`[ParallelMCP] Loaded "compliance_check.md" skill for copyright verification.`);
-    }
-
-    Logger.info(`[ParallelMCP] Checking copyright and safety for ${contentType} content...`);
-    
     try {
+      if (!this.isConnected) await this.connect();
       const response = await this.executeParallelSearch(
-        `Following Compliance Check skill redlines, verify copyright and similarity for: ${content.slice(0, 150)}`,
-        [`"${content.slice(0, 60)}" short drama copyright`]
+        `Find published films, dramas, novels or scripts similar to this story excerpt: ${excerpt.slice(0, 300)}`,
+        [`"${excerpt.slice(0, 60)}"`, `${excerpt.slice(0, 120)} drama plot`]
       );
+      const contentItems = response?.result?.content || [];
+      const snippets = Array.isArray(contentItems)
+        ? contentItems.map((c: any) => c.text || (typeof c === 'string' ? c : '')).filter(Boolean).join('\n')
+        : typeof contentItems === 'string' ? contentItems : '';
+      if (!snippets.trim()) return { safe: false, verified: false, issues: [], sources: [] };
 
-      return { safe: true, issues: [] };
+      const verdict: any = await aiProviderRouter.generateJSON<any>(
+        `Compare the STORY EXCERPT with the SEARCH RESULTS. Report only concrete, specific overlaps with an identifiable published work
+(same distinctive characters, names, plot sequence or verbatim lines). Generic genre tropes (revenge, hidden heir, contract marriage) are NOT issues.
+
+STORY EXCERPT:
+${excerpt.slice(0, 4000)}
+
+SEARCH RESULTS:
+${snippets.slice(0, 10000)}
+
+Return ONLY JSON: { "issues": [ { "work": string, "overlap": string } ], "sources": [string] }`,
+        null,
+        { systemInstruction: 'You are a cautious copyright analyst. Never invent works that are not in the search results.' }
+      );
+      if (!verdict || !Array.isArray(verdict.issues)) return { safe: false, verified: false, issues: [], sources: [] };
+
+      const issues = verdict.issues
+        .filter((i: any) => i && (i.work || i.overlap))
+        .map((i: any) => `${i.work || 'Unknown work'}: ${i.overlap || 'similar content'}`);
+      const sources = Array.isArray(verdict.sources) ? verdict.sources.filter((s: unknown) => typeof s === 'string') : [];
+      return { safe: issues.length === 0, verified: true, issues, sources };
     } catch (error: any) {
-      Logger.error(`[ParallelMCP] Error calling MCP server for copyright check: ${error.message}`);
-      return { safe: true, issues: [] };
+      Logger.error(`[ParallelMCP] Copyright check failed: ${error.message}`);
+      return { safe: false, verified: false, issues: [], sources: [] };
     }
   }
 

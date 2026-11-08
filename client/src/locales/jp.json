@@ -864,6 +864,8 @@
     "catCulturalSensitivity": "文化的配慮",
     "catCopyrightIP": "著作権・IP保護",
     "statusPassed": "合格",
+    "statusUnverified": "未検証",
+    "complianceUnverified": "コンプライアンス監査を完了できませんでした。以下は合格ではありません。公開前に再実行してください。",
     "statusWarning": "警告",
     "statusFailed": "不合格",
     "suggestCharacterDetail": "キャラクター設定詳細を確認",

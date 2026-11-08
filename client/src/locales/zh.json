@@ -864,6 +864,8 @@
     "catCulturalSensitivity": "文化敏感度",
     "catCopyrightIP": "版权与知识产权",
     "statusPassed": "已通过",
+    "statusUnverified": "未验证",
+    "complianceUnverified": "合规审核未能完成，以下结果不代表通过。发布前请重新检查。",
     "statusWarning": "警告",
     "statusFailed": "未通过",
     "suggestCharacterDetail": "查看角色设定详情",

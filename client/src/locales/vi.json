@@ -799,6 +799,8 @@
     "catCulturalSensitivity": "Nhạy cảm văn hóa",
     "catCopyrightIP": "Bản quyền / Trùng lặp IP",
     "statusPassed": "Đạt chuẩn",
+    "statusUnverified": "Chưa kiểm tra được",
+    "complianceUnverified": "Không thể hoàn tất kiểm tra tuân thủ — kết quả bên dưới không phải là \"đạt\". Hãy chạy lại trước khi phát hành.",
     "statusWarning": "Cảnh báo",
     "statusFailed": "Không đạt",
     "suggestCharacterDetail": "Xem Chi Tiết Nhân Vật",
