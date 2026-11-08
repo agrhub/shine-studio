@@ -30,6 +30,9 @@ jobs:
       # typechecking and unit tests do not need.
       - name: Install
         run: pnpm install --filter shine-server --no-frozen-lockfile --ignore-scripts
+      # Media tests run real FFmpeg (the ffmpeg-static download is skipped above).
+      - name: Install FFmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Typecheck
         run: pnpm --filter shine-server typecheck
       - name: Test

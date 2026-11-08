@@ -37,6 +37,7 @@ import { visualStylesRouter } from './routes/visualStyles';
 import { assetsRouter } from './routes/assets';
 import { uploadsRouter } from './routes/uploads';
 import { pexelsRouter } from './routes/pexels';
+import { clipsRouter } from './routes/clips';
 import { PatchSyncService } from './realtime/PatchSyncService';
 import flowSyncRouter from './routes/flow-sync';
 import { flowSyncService } from './integrations/ai/flow/FlowSyncService';
@@ -127,6 +128,7 @@ app.use('/api/ai', aiAuthed, viralCoverRouter);       // POST /api/ai/viral-cove
 app.use('/api/ai', aiAuthed, novelConverterRouter);   // POST /api/ai/convert-novel
 app.use('/api/ai', aiAuthed, culturalAdaptRouter);    // POST /api/ai/cultural-adapt
 app.use('/api/audio', aiAuthed, copyrightRouter);     // POST /api/audio/copyright-verify
+app.use('/api/clips', aiAuthed, clipsRouter);         // POST/GET /api/clips/teasers
 app.use('/api/publish', authed, publishRouter);
 app.use('/api/projects', authed, publishRouter);
 app.use('/api/social', authed, socialAuthRouter);
