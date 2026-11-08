@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
+import http from '@/utils/http';
 
 const { t } = useI18n();
 
@@ -10,6 +11,7 @@ const form = ref({
   email: '',
   subject: '',
   message: '',
+  website: '', // honeypot: hidden from people, filled by bots
 });
 const isSent = ref(false);
 const isLoading = ref(false);
@@ -20,10 +22,15 @@ const handleSubmit = async () => {
     return;
   }
   isLoading.value = true;
-  await new Promise(r => setTimeout(r, 800));
-  isLoading.value = false;
-  isSent.value = true;
-  ElMessage.success(t('toast.contactMsgSent'));
+  try {
+    await http.post('/contact', form.value);
+    isSent.value = true;
+    ElMessage.success(t('toast.contactMsgSent'));
+  } catch {
+    // The shared http interceptor already shows the server's error message.
+  } finally {
+    isLoading.value = false;
+  }
 };
 </script>
 
@@ -63,6 +70,17 @@ const handleSubmit = async () => {
             :placeholder="t('contact.messagePlaceholder')"
           />
         </el-form-item>
+
+        <!-- Honeypot: off-screen and skipped by keyboard and screen readers -->
+        <input
+          v-model="form.website"
+          type="text"
+          name="website"
+          tabindex="-1"
+          autocomplete="off"
+          aria-hidden="true"
+          style="position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0;"
+        />
 
         <el-button
           id="contact-submit-btn"
