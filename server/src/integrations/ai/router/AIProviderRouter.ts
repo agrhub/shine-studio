@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { aiUsageGuard } from '@/services/ai/AiUsageGuard.js';
+import { gmiCloudVideoClient, gmiModelFromId, isGmiConfigured } from '@/integrations/ai/gmicloud/GmiCloudVideoClient.js';
 import { getStudioConfig } from '@/services/StudioConfigCache.js';
 import { geminiClient, GEMINI_SUPPORTED_VOICES } from '../gemini/GeminiClient.js';
 import { flowAdapter } from '../flow/FlowAdapter.js';
@@ -150,6 +151,19 @@ export class AIProviderRouter {
     }
 
     if (options.type === 'VIDEO') {
+      const gmiOptions = {
+        aspectRatio: (options.aspectRatio === '1:1' || options.aspectRatio === '16:9' ? options.aspectRatio : '9:16') as '9:16' | '1:1' | '16:9',
+        durationSeconds: options.extraOptions?.duration || options.extraOptions?.durationSeconds,
+        imageUrl: options.imageStart,
+      };
+      // "gmi:<model>" goes straight to GMI Cloud.
+      const gmiModel = gmiModelFromId(String(options.model || ''));
+      if (gmiModel) {
+        Logger.info(`[AIProviderRouter] Generating Video via GMI Cloud (${gmiModel})`);
+        const gmi = await gmiCloudVideoClient.generateVideo(options.prompt, { ...gmiOptions, model: gmiModel });
+        return { provider: `GMI Cloud (${gmi.model})`, url: gmi.url, mimeType: 'video/mp4', data: gmi };
+      }
+
       let isWorkerOnline = await flowServiceClient.hasActiveWorkers();
       if (!isWorkerOnline) {
         const isServerUp = await flowServiceClient.isWorkerHealthy();
@@ -224,6 +238,11 @@ export class AIProviderRouter {
       });
 
       const finalUrl = videoResult?.url || videoResult?.videoUrl || (typeof videoResult === 'string' ? videoResult : '');
+      if (!finalUrl && isGmiConfigured()) {
+        Logger.warn('[AIProviderRouter] Veo returned no video, falling back to GMI Cloud.');
+        const gmi = await gmiCloudVideoClient.generateVideo(options.prompt, gmiOptions);
+        return { provider: `GMI Cloud (${gmi.model})`, url: gmi.url, mimeType: 'video/mp4', data: gmi };
+      }
       return {
         provider: 'Gemini (Veo)',
         url: finalUrl,
