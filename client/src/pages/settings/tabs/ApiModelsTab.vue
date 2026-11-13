@@ -588,6 +588,7 @@ function handleCaptchaMethodChange(val: string) {
             <el-option label="veo-3.0-fast-generate-001 (Veo 3.0 Fast)" value="veo-3.0-fast-generate-001" />
             <el-option label="gemini-omni-1.1-flash (Gemini Omni Video Gen)" value="gemini-omni-1.1-flash" />
             <el-option label="veo-2.0-generate-001 (Veo 2.0 Legacy)" value="veo-2.0-generate-001" />
+            <el-option label="gmi:seedance-2-0-260128 (GMI Cloud Seedance 2.0, needs GMI_API_KEY)" value="gmi:seedance-2-0-260128" />
           </el-select>
         </div>
         <div>

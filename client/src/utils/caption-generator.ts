@@ -1,4 +1,5 @@
 import { groupWordsByWidth } from "@/utils/schema-converter";
+import { pickCaptionKeywords } from "@/utils/caption-keywords";
 
 interface CaptionClipOptions {
   videoWidth: number;
@@ -62,7 +63,7 @@ export async function generateCaptionClips(options: CaptionClipOptions): Promise
             text,
             from: 0,
             to: ((word.end || word.to / 1000) - (word.start || word.from / 1000)) * 1000,
-            isKeyWord: true,
+            isKeyWord: pickCaptionKeywords([text])[0],
             paragraphIndex: word.paragraphIndex ?? 0,
           },
         ],

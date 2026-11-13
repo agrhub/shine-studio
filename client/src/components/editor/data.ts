@@ -18,6 +18,7 @@ export const data = {
 
 import { normalizeTransitionKey } from '@/stores/usePipelineStore';
 import { normalizeEffectKey } from '@/constants/effects';
+import { pickCaptionKeywords } from '@/utils/caption-keywords';
 import { IProject } from '@openvideo/core';
 
 export const SILENT_AUDIO_SAMPLE = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
@@ -174,19 +175,20 @@ export function sanitizeTimelineData(timelineData: any) {
             : [];
 
           if (rawWords.length === 0) {
-            rawWords = [{ text, from: 0, to: durMs, isKeyWord: true }];
+            rawWords = [{ text, from: 0, to: durMs, isKeyWord: false }];
           } else {
             const firstFrom = rawWords[0].from || 0;
             const isMicroseconds = rawWords.some((w: any) => (w.from || 0) > 10000 || (w.to || 0) > 10000);
             const divisor = isMicroseconds ? 1000 : 1;
             const baseOffsetMs = Math.round(firstFrom / divisor);
 
+            const keywordFlags = pickCaptionKeywords(rawWords.map((w: any) => w.text || ''));
             rawWords = rawWords.map((w: any, idx: number) => {
               const rawFromMs = Math.round((w.from || 0) / divisor);
               const rawToMs = Math.round((w.to || (rawFromMs + 300)) / divisor);
               const relFromMs = baseOffsetMs > 100 ? Math.max(0, rawFromMs - baseOffsetMs) : rawFromMs;
               const relToMs = baseOffsetMs > 100 ? Math.min(durMs, Math.max(relFromMs + 50, rawToMs - baseOffsetMs)) : Math.min(durMs, rawToMs);
-              const isKeyWord = (idx === 0 || idx === rawWords.length - 1);
+              const isKeyWord = keywordFlags[idx];
               return {
                 text: w.text || '',
                 from: relFromMs,

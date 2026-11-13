@@ -7,6 +7,13 @@ import { CaptionService } from './CaptionService.js';
 import { PatchSyncService } from '~/realtime/PatchSyncService.js';
 import { normalizeTransitionKey } from '../constants/transitions.js';
 import { normalizeEffectKey } from '../constants/effects.js';
+import { pickCaptionKeywords } from '../utils/captionKeywords.js';
+
+/** Marks the emphasised words of one caption cue. */
+function withCaptionKeywords<T extends { text: string; isKeyWord?: boolean }>(words: T[]): T[] {
+  const flags = pickCaptionKeywords(words.map((w) => w.text));
+  return words.map((w, i) => ({ ...w, isKeyWord: flags[i] }));
+}
 
 export class TimelineService {
   /**
@@ -815,7 +822,7 @@ export class TimelineService {
                     isKeyWord: Boolean(w.isKeyWord),
                   }))
                 : (Array.isArray(rawSceneWords) && rawSceneWords.length > 0
-                  ? (rawSceneWords as SceneCaptionWord[]).map((w: SceneCaptionWord, idx: number) => {
+                  ? withCaptionKeywords((rawSceneWords as SceneCaptionWord[]).map((w: SceneCaptionWord) => {
                       const wText = CaptionService.cleanDialogueLine(w.punctuated_word || w.word || '', cue.character || characterDialogue);
                       const wStartMs = Math.round(Number(w.start || 0) * 1000);
                       const wEndMs = Math.round(Number(w.end || (w.start || 0) + 0.3) * 1000);
@@ -825,10 +832,10 @@ export class TimelineService {
                         text: wText,
                         from: fromMs,
                         to: toMs,
-                        isKeyWord: Boolean(idx === 0 || idx === rawSceneWords.length - 1 || wText.length > 4),
+                        isKeyWord: false,
                       };
-                    })
-                  : [{ text: cleanedCueText, from: 0, to: Math.round(cueDurUs / 1000), isKeyWord: true }]);
+                    }))
+                  : [{ text: cleanedCueText, from: 0, to: Math.round(cueDurUs / 1000), isKeyWord: false }]);
 
               const hasVoiceover = Boolean(hasDialogue && voUrl && timeline.clips[voClipId]);
               const targetSourceClipId = hasVoiceover ? voClipId : vClipId;

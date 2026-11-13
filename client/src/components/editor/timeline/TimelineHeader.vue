@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -24,6 +24,9 @@ import {
   VolumeX,
   EyeOff,
   ChevronDown,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  AudioLines,
 } from 'lucide-vue-next';
 import { useStudioStore } from '@/stores/useStudioStore';
 import { usePlaybackStore } from '@/composables/usePlaybackStore';
@@ -34,6 +37,7 @@ import {
   getLanguageByCode,
 } from '@/constants/geminiLanguages';
 import { core } from '@/utils/project';
+import { trimClipAtTime, separatedAudioClip } from './clip-edits';
 import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
 
@@ -109,6 +113,62 @@ const handleSplit = async () => {
   }
 };
 
+/** Core clips for the current selection (the store holds engine clips). */
+const selectedCoreClips = () => {
+  const clips = (core.store.getState() as any).clips || {};
+  return selectedClips.value.map((c: any) => clips[c.id]).filter(Boolean);
+};
+
+const canSeparateAudio = computed(() => selectedClips.value.some((c: any) => c.type === 'Video'));
+
+/** Cut every selected clip under the playhead and keep one side (one undo step each). */
+const handleKeepSide = (keep: 'left' | 'right') => {
+  const timeUs = Math.round(currentTime.value * 1_000_000);
+  for (const clip of selectedCoreClips()) {
+    const update = trimClipAtTime(clip, timeUs, keep);
+    if (update) core.clip.update(clip.id, update as any);
+  }
+};
+
+/** Move each selected video's sound to its own audio clip and silence the video. */
+const handleSeparateAudio = async () => {
+  for (const clip of selectedCoreClips()) {
+    const audio = separatedAudioClip(clip);
+    if (!audio) continue;
+    try {
+      await core.clip.add(audio as any, { isNewTrack: true });
+      core.clip.update(clip.id, { volume: 0 } as any);
+    } catch (e) {
+      console.warn('Failed to separate audio:', e);
+    }
+  }
+};
+
+const isTyping = (target: EventTarget | null) => {
+  const el = target as HTMLElement | null;
+  return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+};
+
+// ⌘/Ctrl+B split · Q keep right (drop left) · W keep left (drop right) · ⇧⌘/Ctrl+S separate audio
+const handleShortcut = (e: KeyboardEvent) => {
+  if (e.defaultPrevented || isTyping(e.target) || selectedClips.value.length === 0) return;
+  const mod = e.metaKey || e.ctrlKey;
+  const key = e.key.toLowerCase();
+  if (mod && !e.shiftKey && !e.altKey && key === 'b') {
+    e.preventDefault();
+    void handleSplit();
+  } else if (mod && e.shiftKey && !e.altKey && key === 's') {
+    e.preventDefault();
+    void handleSeparateAudio();
+  } else if (!mod && !e.shiftKey && !e.altKey && (key === 'q' || key === 'w')) {
+    e.preventDefault();
+    handleKeepSide(key === 'q' ? 'right' : 'left');
+  }
+};
+
+onMounted(() => window.addEventListener('keydown', handleShortcut));
+onUnmounted(() => window.removeEventListener('keydown', handleShortcut));
+
 const handleDuplicate = async () => {
   try {
     const ids = selectedClips.value.map((c) => c.id);
@@ -174,9 +234,43 @@ const setZoom = (val: number) => emit('update:zoomLevel', val);
           variant="ghost"
           size="sm"
           class="h-8 px-2 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          :title="`${t('editor.split')} (⌘B)`"
           @click="handleSplit"
         >
           <Scissors class="size-4" />
+        </Button>
+        <Button
+          type="button"
+          :disabled="selectedClips.length === 0"
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          :title="`${t('editor.keepLeft')} (W)`"
+          @click="handleKeepSide('left')"
+        >
+          <ArrowLeftToLine class="size-4" />
+        </Button>
+        <Button
+          type="button"
+          :disabled="selectedClips.length === 0"
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          :title="`${t('editor.keepRight')} (Q)`"
+          @click="handleKeepSide('right')"
+        >
+          <ArrowRightToLine class="size-4" />
+        </Button>
+        <Button
+          type="button"
+          :disabled="!canSeparateAudio"
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          :title="`${t('editor.separateAudio')} (⇧⌘S)`"
+          @click="handleSeparateAudio"
+        >
+          <AudioLines class="size-4" />
         </Button>
         <Button
           type="button"

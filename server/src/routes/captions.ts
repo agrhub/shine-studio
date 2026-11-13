@@ -9,6 +9,7 @@ import { StorageFactory } from '../services/storage/StorageFactory.js';
 import { TimelineService } from '../services/TimelineService.js';
 import { PatchSyncService } from '../realtime/PatchSyncService.js';
 import { CaptionService } from '../services/CaptionService.js';
+import { pickCaptionKeywords } from '../utils/captionKeywords.js';
 import { EpisodeChatSession } from '~/types.js';
 
 export const captionsRouter = Router();
@@ -128,6 +129,7 @@ export async function generateCaptionsInternal(params: {
     const cues: any[] = [];
     for (let i = 0; i < words.length; i += 4) {
       const chunk = words.slice(i, i + 4);
+      const keywordFlags = pickCaptionKeywords(chunk);
       const fromUs = timeUs;
       const durationUs = chunk.length * 400000;
       const toUs = fromUs + durationUs;
@@ -141,7 +143,7 @@ export async function generateCaptionsInternal(params: {
           text: w,
           from: idx * 380,
           to: (idx + 1) * 380,
-          isKeyWord: idx === chunk.length - 1,
+          isKeyWord: keywordFlags[idx],
         })),
       });
     }

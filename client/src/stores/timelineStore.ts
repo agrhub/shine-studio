@@ -165,7 +165,7 @@ export const useTimelineStore = defineStore('timeline', {
       const splitTimeUs = Math.round(splitTime * 1_000_000);
       try {
         if ((core as any).clip && typeof (core as any).clip.split === 'function') {
-          (core as any).clip.split(clipId, splitTimeUs);
+          (core as any).clip.split(splitTimeUs, clipId);
         }
       } catch (e) {
         console.warn('[TimelineStore] OpenVideo core.clip.split notice:', e);
