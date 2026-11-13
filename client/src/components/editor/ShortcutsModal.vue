@@ -53,6 +53,8 @@ const SHORTCUTS: ShortcutCategory[] = [
     title: 'Timeline',
     items: [
       { label: 'Split', keys: ['⌘', 'B'] },
+      { label: 'Keep left of playhead', keys: ['W'] },
+      { label: 'Keep right of playhead', keys: ['Q'] },
       { label: 'Zoom in', keys: ['⌘', '+'] },
       { label: 'Zoom out', keys: ['⌘', '-'] },
       { label: 'Scroll up or down', keys: ['Scroll'], disabled: true },
@@ -61,11 +63,7 @@ const SHORTCUTS: ShortcutCategory[] = [
       { label: 'Next frame', keys: ['⌘', '→'] },
       { label: 'Turn on or off preview axis', keys: ['S'], disabled: true },
       { label: 'Attach', keys: ['N'], disabled: true },
-      {
-        label: 'Separate or restore audio',
-        keys: ['⇧', '⌘', 'S'],
-        disabled: true,
-      },
+      { label: 'Separate audio', keys: ['⇧', '⌘', 'S'] },
       { label: 'Add or remove beats', keys: ['M'], disabled: true },
     ],
   },

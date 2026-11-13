@@ -25,7 +25,7 @@ export const splitClip = async (
   splitTime: number,
 ) => {
   try {
-    await (core.clip.split as any)(clipId, splitTime * 1e6);
+    await core.clip.split(Math.round(splitTime * 1e6), clipId);
   } catch (e) {
     console.error("Failed to split clip:", e);
   }
